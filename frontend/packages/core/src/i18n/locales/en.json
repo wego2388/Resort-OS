@@ -3509,7 +3509,12 @@
       "enrollmentTokenInvalid": "The enrollment token is missing, invalid, or expired.",
       "enrollmentNotProvisioned": "Secure enrollment is not provisioned for this account. Contact an authorized operator.",
       "forgotPassword": "Forgot password?",
-      "footer": "El Kheima Beach — Resort OS v1.0"
+      "footer": "El Kheima Beach — Resort OS v1.0",
+      "showPassword": "Show password",
+      "hidePassword": "Hide password",
+      "capsLockWarning": "Caps Lock is on",
+      "rememberMe": "Remember me on this device",
+      "twoFaExpiresIn": "refreshes in {seconds}s"
     },
     "securityOnboarding": {
       "password": {

@@ -634,13 +634,23 @@ class AuthService(BaseService):
             return defaults[0]
         return memberships[0].branch_id if len(memberships) == 1 else None
 
-    def create_refresh_token(self, user_id: int, device_fingerprint: Optional[str] = None) -> str:
+    def create_refresh_token(
+        self, user_id: int, device_fingerprint: Optional[str] = None,
+        expire_days: Optional[int] = None,
+    ) -> str:
         """Start a brand-new refresh-token *family* for one login (Gate 2B3B).
 
         A fresh, random ``family_id`` (never derived from ``user_id``) and a
         separate public handle are minted here; every later rotation stays
         inside the same family so a replay can be traced to, and revoke, the
         whole lineage.
+
+        ``expire_days`` — optional override for "remember me" (defaults to
+        ``settings.REFRESH_TOKEN_EXPIRE_DAYS``, unchanged for every existing
+        caller). ``rotate_refresh_token`` below preserves whatever span the
+        family started with on every later rotation, so a remembered session
+        stays remembered rather than silently reverting to the short default
+        on the next silent refresh.
         """
         from app.core.kernel.models.user import RefreshToken
         user = self.repo.get(user_id)
@@ -649,7 +659,7 @@ class AuthService(BaseService):
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Account onboarding is not complete")
         token = secrets.token_urlsafe(32)
         now = datetime.now(timezone.utc)
-        expires_at = now + timedelta(days=self.settings.REFRESH_TOKEN_EXPIRE_DAYS)
+        expires_at = now + timedelta(days=expire_days or self.settings.REFRESH_TOKEN_EXPIRE_DAYS)
         self.db.add(RefreshToken(
             user_id=user_id,
             token_hash=self._hash_token(token),
@@ -841,6 +851,12 @@ class AuthService(BaseService):
         rt_user_agent = rt.user_agent
         active_branch_id = rt.active_branch_id
         user_id = rt.user_id
+        # "تذكرني" — الجلسة اللي بدأت بعمر أطول (remember_me عند /login)
+        # تفضل بنفس العمر ده مع كل rotation، مش ترجع للـdefault القصير كل
+        # مرة refresh يحصل. مقاس من عمر الـtoken الحالي نفسه (بلا عمود جديد
+        # في الجدول) — محدود أصلاً بالحد الأقصى اللي create_refresh_token
+        # حطّه وقت الإنشاء.
+        original_span = self._as_utc(rt.expires_at) - self._as_utc(rt.created_at)
 
         if (
             not user
@@ -890,7 +906,7 @@ class AuthService(BaseService):
             user_id=user.id,
             token_hash=new_token_hash,
             device_fingerprint=device_fingerprint,
-            expires_at=now + timedelta(days=self.settings.REFRESH_TOKEN_EXPIRE_DAYS),
+            expires_at=now + original_span,
             created_at=now,
             family_id=family_id,
             family_public_id=family_public_id,
@@ -911,6 +927,22 @@ class AuthService(BaseService):
             self.db.rollback()
             raise
         return user, new_token
+
+    def get_refresh_token_expiry(self, token: str) -> Optional[datetime]:
+        """يرجّع expires_at الحقيقي المخزَّن لتوكن refresh معيّن، أو None لو
+        مش موجود. مُستخدمة بعد create_refresh_token/rotate_refresh_token
+        عشان الـcookie's max-age يعكس العمر الفعلي المحفوظ في قاعدة
+        البيانات (بما فيه "تذكرني" الأطول لو كانت الجلسة دي)، بدل ما
+        يفترض الـdefault القصير دايمًا زي ما كان."""
+        from app.core.kernel.models.user import RefreshToken
+        if not token:
+            return None
+        rt = (
+            self.db.query(RefreshToken)
+            .filter(RefreshToken.token_hash == self._hash_token(token))
+            .first()
+        )
+        return self._as_utc(rt.expires_at) if rt else None
 
     # ── Self-service session management (Gate 2B3B) ──────────────────────
 

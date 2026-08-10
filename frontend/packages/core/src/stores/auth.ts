@@ -302,6 +302,7 @@ export const useAuthStore = defineStore('auth', () => {
     otpCode?: string,
     recoveryCode?: string,
     enrollmentToken?: string,
+    rememberMe?: boolean,
   ) {
     isLoading.value = true
     try {
@@ -311,6 +312,7 @@ export const useAuthStore = defineStore('auth', () => {
       if (otpCode) form.append('otp_code', otpCode.trim())
       if (recoveryCode) form.append('recovery_code', recoveryCode.trim())
       if (enrollmentToken) form.append('enrollment_token', enrollmentToken.trim())
+      if (rememberMe) form.append('remember_me', 'true')
       const res = await api.post(ENDPOINTS.auth.login, form, {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         withCredentials: true,

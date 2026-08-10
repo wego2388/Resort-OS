@@ -3509,7 +3509,12 @@
       "enrollmentTokenInvalid": "رمز التهيئة مفقود أو غير صحيح أو انتهت صلاحيته.",
       "enrollmentNotProvisioned": "لم تتم تهيئة التسجيل الآمن لهذا الحساب. تواصل مع مسؤول معتمد.",
       "forgotPassword": "نسيت كلمة السر؟",
-      "footer": "El Kheima Beach — Resort OS v1.0"
+      "footer": "El Kheima Beach — Resort OS v1.0",
+      "showPassword": "إظهار كلمة المرور",
+      "hidePassword": "إخفاء كلمة المرور",
+      "capsLockWarning": "زر Caps Lock مفعّل",
+      "rememberMe": "تذكرني على هذا الجهاز",
+      "twoFaExpiresIn": "يتجدد خلال {seconds} ث"
     },
     "securityOnboarding": {
       "password": {

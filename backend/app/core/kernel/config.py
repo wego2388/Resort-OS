@@ -17,6 +17,10 @@ class CoreSettings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    # "تذكرني على هذا الجهاز" — عمر أطول لجلسة refresh لو المستخدم اختارها
+    # صراحةً وقت تسجيل الدخول (POST /login's remember_me). القيمة الافتراضية
+    # (REFRESH_TOKEN_EXPIRE_DAYS) تفضل هي السلوك لأي دخول عادي.
+    REMEMBER_ME_EXPIRE_DAYS: int = 30
     ENVIRONMENT: str = "development"
     REDIS_URL: Optional[str] = None
     CORS_ORIGINS: str = "http://localhost:3000,http://localhost:5173"

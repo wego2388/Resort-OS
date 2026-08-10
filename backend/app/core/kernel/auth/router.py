@@ -16,7 +16,7 @@ Endpoints:
 """
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Body, Form, Header, Path, Query, Request, Response
 from fastapi.security import OAuth2PasswordRequestForm
@@ -530,6 +530,7 @@ def build_auth_router(
         otp_code: Optional[str] = Form(None),
         recovery_code: Optional[str] = Form(None),
         enrollment_token: Optional[str] = Form(None),
+        remember_me: bool = Form(False),
         auth: AuthService = Depends(get_auth_service),
     ):
         _mark_sensitive_response(response)
@@ -543,7 +544,14 @@ def build_auth_router(
         user = result.pop("_user", None)
         allow_refresh = result.pop("_allow_refresh", True)
         if user and allow_refresh:
-            refresh = auth.create_refresh_token(user.id)
+            # "تذكرني على هذا الجهاز" — عمر أطول للـcookie/الـtoken لو
+            # المستخدم اختارها صراحةً؛ rotate_refresh_token بيحافظ على نفس
+            # العمر ده تلقائيًا مع كل refresh لاحق (راجع service.py).
+            expire_days = (
+                auth.settings.REMEMBER_ME_EXPIRE_DAYS if remember_me
+                else auth.settings.REFRESH_TOKEN_EXPIRE_DAYS
+            )
+            refresh = auth.create_refresh_token(user.id, expire_days=expire_days)
             current = auth.current_session(refresh, expected_user_id=user.id)
             if current is None:
                 # A refresh family was just committed; failure to resolve it
@@ -558,7 +566,7 @@ def build_auth_router(
             _set_refresh_cookie(
                 response,
                 refresh,
-                auth.settings.REFRESH_TOKEN_EXPIRE_DAYS,
+                expire_days,
                 environment=auth.settings.ENVIRONMENT,
             )
         else:
@@ -618,11 +626,25 @@ def build_auth_router(
         if current is None:
             raise RuntimeError("Rotated refresh session could not be resolved")
         access = _session_bound_access_token(user, current[1], current[2])
-        # refresh_token الجديد في cookie (T-01) — لا يُعاد في body
+        # refresh_token الجديد في cookie (T-01) — لا يُعاد في body. عمر
+        # الـcookie بيتحسب من العمر الفعلي المحفوظ للتوكن الجديد (بيحافظ
+        # على "تذكرني" الأطول عبر كل rotation، بدل ما يرجع للـdefault
+        # القصير — راجع service.py's rotate_refresh_token/get_refresh_
+        # token_expiry).
+        expiry = auth.get_refresh_token_expiry(new_refresh_token)
+        # ⚠️ .days بيقطع الكسور (floor) — أي وقت معالجة بسيط بين حساب
+        # expiry وحساب الفرق هنا كان بيرجّع يوم أقل من العمر الحقيقي
+        # المخزَّن (لاحظناه فعليًا: 29 يوم بدل 30 لمجرد ملي ثانية معالجة
+        # بين الطلبين). ceil على إجمالي الثواني بيضمن الـcookie تعيش على
+        # الأقل نفس عمر التوكن الحقيقي، مش أقل منه بيوم كامل.
+        cookie_days = (
+            max(1, -(-int((expiry - datetime.now(timezone.utc)).total_seconds()) // 86_400))
+            if expiry else settings.REFRESH_TOKEN_EXPIRE_DAYS
+        )
         _set_refresh_cookie(
             response,
             new_refresh_token,
-            settings.REFRESH_TOKEN_EXPIRE_DAYS,
+            cookie_days,
             environment=settings.ENVIRONMENT,
         )
         return {
