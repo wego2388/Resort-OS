@@ -167,6 +167,31 @@ class MaintenanceFeeSuggestionResponse(BaseModel):
     rule_version:  Optional[str] = None
 
 
+class TimesharePeakSeasonCreate(BaseModel):
+    branch_id:   int
+    name:        str = Field(..., min_length=3, max_length=100)
+    name_ar:     Optional[str] = Field(None, max_length=100)
+    peak_kind:   str = Field("regular", pattern=r"^(official_holiday|regular)$")
+    season_year: int = Field(..., ge=2026, le=2100)
+    start_date:  date
+    end_date:    date
+    notes:       Optional[str] = None
+
+    @model_validator(mode="after")
+    def _validate_dates(self):
+        if self.end_date <= self.start_date:
+            raise ValueError("end_date يجب أن يكون بعد start_date")
+        return self
+
+
+class TimesharePeakSeasonRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int; branch_id: int; name: str; name_ar: Optional[str]
+    peak_kind: str; season_year: int
+    start_date: date; end_date: date; is_active: bool; notes: Optional[str]
+    created_at: datetime
+
+
 class TimeshareContractRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int; branch_id: int; contract_number: str

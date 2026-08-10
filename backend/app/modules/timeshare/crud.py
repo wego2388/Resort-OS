@@ -10,14 +10,14 @@ from sqlalchemy.orm import Session
 
 from app.modules.timeshare.models import (
     TimeshareContract, TimeshareInstallment, TimeshareMaintenanceDue,
-    TimeshareMaintenanceFeeRule,
+    TimeshareMaintenanceFeeRule, TimesharePeakSeason,
     TimeshareSupportTicket, TimeshareSupportTicketReply,
     TimeshareUnit, TimeshareVisit, TimeshareVisitRequest, TimeshareWaitlist,
 )
 from app.modules.timeshare.schemas import (
     TimeshareContractCreate, TimeshareContractUpdate,
     PayInstallmentRequest, PayMaintenanceDueRequest,
-    TimeshareMaintenanceFeeRuleCreate,
+    TimeshareMaintenanceFeeRuleCreate, TimesharePeakSeasonCreate,
     TimeshareSupportTicketCreate, TimeshareUnitCreate, TimeshareUnitUpdate,
     TimeshareVisitCreate, TimeshareVisitRequestCreate,
     TimeshareVisitUpdate, WaitlistCreate,
@@ -216,6 +216,55 @@ def create_maintenance_fee_rule(
     db.add(rule)
     db.flush()
     return rule
+
+
+# ── مواسم الذروة (OPS-DATA-02 §8 نقطة 5) ─────────────────────────────
+
+def create_peak_season(db: Session, data: TimesharePeakSeasonCreate, created_by: Optional[int]) -> TimesharePeakSeason:
+    season = TimesharePeakSeason(**data.model_dump(), created_by=created_by)
+    db.add(season)
+    db.flush()
+    return season
+
+
+def get_peak_season(db: Session, season_id: int) -> Optional[TimesharePeakSeason]:
+    return db.query(TimesharePeakSeason).filter(TimesharePeakSeason.id == season_id).first()
+
+
+def list_peak_seasons(
+    db: Session, branch_id: int, year: Optional[int] = None, active_only: bool = True,
+) -> list[TimesharePeakSeason]:
+    q = db.query(TimesharePeakSeason).filter(TimesharePeakSeason.branch_id == branch_id)
+    if year is not None:
+        q = q.filter(TimesharePeakSeason.season_year == year)
+    if active_only:
+        q = q.filter(TimesharePeakSeason.is_active.is_(True))
+    return q.order_by(TimesharePeakSeason.start_date).all()
+
+
+def deactivate_peak_season(db: Session, season: TimesharePeakSeason) -> TimesharePeakSeason:
+    """soft فقط — لا حذف حقيقي أبدًا لموسم استُخدم في أي قرار قبول/رفض
+    (راجع models.py docstring)."""
+    season.is_active = False
+    db.flush()
+    return season
+
+
+def get_overlapping_peak_seasons(
+    db: Session, branch_id: int, start: date, end: date,
+    peak_kind: Optional[str] = None, active_only: bool = True,
+) -> list[TimesharePeakSeason]:
+    """كل موسم ذروة بتتقاطع فترته مع [start, end]."""
+    q = db.query(TimesharePeakSeason).filter(
+        TimesharePeakSeason.branch_id == branch_id,
+        TimesharePeakSeason.start_date <= end,
+        TimesharePeakSeason.end_date >= start,
+    )
+    if peak_kind is not None:
+        q = q.filter(TimesharePeakSeason.peak_kind == peak_kind)
+    if active_only:
+        q = q.filter(TimesharePeakSeason.is_active.is_(True))
+    return q.order_by(TimesharePeakSeason.start_date).all()
 
 
 def get_maintenance_fee_rule(db: Session, rule_id: int) -> Optional[TimeshareMaintenanceFeeRule]:

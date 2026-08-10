@@ -1437,6 +1437,94 @@ def verify_owner_portal_token(token: str) -> int:
     return int(payload["sub"])
 
 
+# ── قواعد الذروة (OPS-DATA-02 §8 نقطة 5) ─────────────────────────────
+
+HOLIDAY_COOLDOWN_YEARS = 1
+HOLIDAY_COOLDOWN_VERSION = "timeshare-holiday-cooldown-2026-08-10.v1"
+# سياسة الـTrial المختارة (OPS-DATA-02 §18 قرار 7): مش فجوة 30 يوم — عقد
+# استخدم أسبوعًا داخل موسم peak_kind=official_holiday في سنة موسم معيّنة
+# لا يحصل على official holiday تاني في السنة التالية مباشرة؛ يقدر يقدّم
+# تاني بعد سنة فاصلة واحدة. الصيف/الموسم العادي (peak_kind=regular) مش
+# "عيد" ومعفى من القاعدة دي تمامًا (لسه خاضع لحد أسبوع الذروة الواحد سنويًا).
+
+
+def _peak_event_years_for_contract(
+    db: Session, contract: TimeshareContract, peak_kind: Optional[str] = None,
+    include_pending: bool = False,
+) -> set[int]:
+    """السنوات اللي العقد ده استخدم فيها فعليًا أسبوع ذروة (من نوع
+    peak_kind لو محدد، وإلا أي نوع) — بدون عدّ مزدوج بين الطلب المعتمد
+    والزيارة الناتجة عنه (نفس الحدث؛ راجع OPS-DATA-02 §8 نقطة 6).
+
+    include_pending=False (الافتراضي، مستخدَم لقاعدة عدم تتابع الأعياد
+    عبر السنين): بس الاستخدام المؤكَّد فعليًا (approved) — طلب pending لسه
+    ممكن يُرفض، مايستهلكش "سنة عيد" حقيقية.
+    include_pending=True (لقاعدة الأسبوع الواحد في نفس السنة): يشمل
+    pending كمان — عشان العميل ميقدرش يقدّم أكتر من طلب ذروة واحد لنفس
+    السنة أصلًا، حتى لو ولا واحد اتراجع لسه (رفض فوري بدل ما ينتظر
+    المراجعة اليدوية تكتشف التكرار)."""
+    counted_visit_ids: set[int] = set()
+    years: set[int] = set()
+    pending_statuses = ("approved", "pending") if include_pending else ("approved",)
+
+    for req in crud.list_visit_requests_for_contract(db, contract.id):
+        if req.status not in pending_statuses:
+            continue
+        if req.visit_id:
+            visit = crud.get_visit(db, req.visit_id)
+            if not visit or visit.status == "cancelled":
+                continue
+            counted_visit_ids.add(visit.id)
+            check_in, check_out = visit.check_in, visit.check_out
+        else:
+            check_in, check_out = req.preferred_start, req.preferred_end
+        seasons = crud.get_overlapping_peak_seasons(db, contract.branch_id, check_in, check_out, peak_kind)
+        if seasons:
+            years.add(seasons[0].season_year)
+
+    # زيارات اتعملت مباشرة (staff، مش من طلب عميل عبر البوابة) — عشان
+    # مايتحسبوش مرتين لو أصلًا اتعدّوا فوق من خلال visit_id.
+    for visit in crud.list_visits(db, contract.branch_id, contract_id=contract.id):
+        if visit.id in counted_visit_ids or visit.status == "cancelled":
+            continue
+        seasons = crud.get_overlapping_peak_seasons(db, contract.branch_id, visit.check_in, visit.check_out, peak_kind)
+        if seasons:
+            years.add(seasons[0].season_year)
+
+    return years
+
+
+def _check_peak_rules(db: Session, contract: TimeshareContract, start: "date", end: "date") -> None:
+    """يرفع ValueError واضح لو الطلب مخالف لقاعدة الذروة — بيتنادى من
+    request_visit قبل إنشاء الصف (نفس نمط باقي تحققات request_visit
+    المبكرة). مفيش أي تأثير لو الفترة المطلوبة مش ذروة أصلًا."""
+    seasons = crud.get_overlapping_peak_seasons(db, contract.branch_id, start, end)
+    if not seasons:
+        return
+    target_year = seasons[0].season_year
+
+    # قاعدة: أسبوع ذروة واحد بس في السنة (أي نوع — عيد أو موسم عادي) —
+    # include_pending=True عشان العميل ميقدرش يقدّم طلب تاني لنفس السنة
+    # أصلًا، حتى لو الأول لسه مراجعة مديرش عليه.
+    if target_year in _peak_event_years_for_contract(db, contract, include_pending=True):
+        raise ValueError(
+            f"تم استخدام حصة أسبوع الذروة لهذا العقد في سنة {target_year} — "
+            "لا يُسمح بأكثر من أسبوع ذروة واحد في السنة لتحقيق تكافؤ الفرص بين جميع الأعضاء"
+        )
+
+    # قاعدة عدم تتابع الأعياد — بس لو الموسم المطلوب official_holiday؛
+    # الصيف/الموسم العادي معفى تمامًا (راجع التعليق فوق HOLIDAY_COOLDOWN_YEARS)
+    if any(s.peak_kind == "official_holiday" for s in seasons):
+        holiday_years = _peak_event_years_for_contract(db, contract, peak_kind="official_holiday")
+        for used_year in holiday_years:
+            if 0 < (target_year - used_year) <= HOLIDAY_COOLDOWN_YEARS:
+                raise ValueError(
+                    f"العقد استخدم أسبوع عيد رسمي في سنة {used_year} — لا يُسمح بعيد رسمي آخر "
+                    f"قبل سنة {used_year + HOLIDAY_COOLDOWN_YEARS + 1} (سنة فاصلة واحدة على الأقل، "
+                    f"إعداد {HOLIDAY_COOLDOWN_VERSION})"
+                )
+
+
 def request_visit(db: Session, contract_id: int, data: TimeshareVisitRequestCreate) -> TimeshareVisitRequest:
     """طلب العميل نفسه — تحقق مبكر (عقد نشط، مش مجمَّد) عشان العميل ياخد
     رسالة واضحة فورًا بدل ما يقدّم طلب مصيره الرفض التلقائي عند المراجعة.
@@ -1446,7 +1534,10 @@ def request_visit(db: Session, contract_id: int, data: TimeshareVisitRequestCrea
     (Literal مطابق للنسخة الحالية بالظبط، schemas.py) بيتخزنوا كلقطة دائمة
     على الصف نفسه (crud.create_visit_request) + AuditLog صريح هنا، عشان
     ثبوت "وافق على أي نص بالظبط ومتى" ميعتمدش على بوليان وحيد قابل للتفسير
-    بعد سنين. لا يوجد user_id (العميل بيستخدم بوابة OTP، مش حساب staff)."""
+    بعد سنين. لا يوجد user_id (العميل بيستخدم بوابة OTP، مش حساب staff).
+
+    OPS-DATA-02 §8 نقطة 5: _check_peak_rules بتفحص أسبوع الذروة الواحد
+    سنويًا + عدم تتابع الأعياد الرسمية قبل ما أي صف يتخزّن أصلًا."""
     contract = get_contract_or_404(db, contract_id)
     if data.preferred_end <= data.preferred_start:
         raise ValueError("تاريخ النهاية يجب أن يكون بعد تاريخ البداية")
@@ -1454,6 +1545,7 @@ def request_visit(db: Session, contract_id: int, data: TimeshareVisitRequestCrea
         raise ValueError("هذا العقد غير نشط حاليًا — يرجى التواصل مع خدمة العملاء")
     if contract.booking_frozen:
         raise ValueError("الحجز مجمَّد حاليًا بسبب متأخرات على العقد — يرجى التواصل مع خدمة العملاء")
+    _check_peak_rules(db, contract, data.preferred_start, data.preferred_end)
     req = crud.create_visit_request(db, contract, data)
 
     from app.modules.core import crud as core_crud  # noqa: PLC0415

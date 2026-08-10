@@ -69,6 +69,7 @@ from app.modules.timeshare.schemas import (
     PayMaintenanceDueRequest, TimeshareMaintenanceDueRead,
     MaintenanceFeeSuggestionResponse,
     TimeshareMaintenanceFeeRuleCreate, TimeshareMaintenanceFeeRuleRead,
+    TimesharePeakSeasonCreate, TimesharePeakSeasonRead,
     TimeshareCancelRequest, TimeshareUnitTransferRequest,
     TimeshareContractCreate, TimeshareContractRead, TimeshareContractUpdate,
     TimeshareOwnerContractRead, TimeshareOwnerVerifyConfirm, TimeshareOwnerVerifyRequest,
@@ -354,6 +355,43 @@ def seed_maintenance_fee_rules_2026(db: DbDep, user=Depends(get_timeshare_admin_
     idempotent، آمن يتنادى أكتر من مرة."""
     _assert_timeshare_branch(db, user, branch_id, "زرع قواعد صيانة 2026")
     return services.seed_2026_maintenance_fee_rules(db, branch_id, created_by=user.id)
+
+
+# ── مواسم الذروة (OPS-DATA-02 §8 نقطة 5) ─────────────────────────────
+
+@router.get("/timeshare/peak-seasons", response_model=list[TimesharePeakSeasonRead])
+def list_peak_seasons(
+    db: DbDep, user=Depends(get_timeshare_user),
+    branch_id: int = Query(...), year: Optional[int] = Query(None),
+    active_only: bool = Query(True),
+):
+    _assert_timeshare_branch(db, user, branch_id, "عرض مواسم الذروة")
+    return crud.list_peak_seasons(db, branch_id, year, active_only)
+
+
+@router.post("/timeshare/peak-seasons", response_model=TimesharePeakSeasonRead,
+             status_code=status.HTTP_201_CREATED,
+             dependencies=[Depends(require_permission("timeshare.peak_seasons", "create", min_role_level=55))])
+def create_peak_season(data: TimesharePeakSeasonCreate, db: DbDep, user=Depends(get_timeshare_admin_user)):
+    _assert_timeshare_branch(db, user, data.branch_id, "إضافة موسم ذروة")
+    season = crud.create_peak_season(db, data, created_by=user.id)
+    db.commit()
+    db.refresh(season)
+    return season
+
+
+@router.post("/timeshare/peak-seasons/{season_id}/deactivate", response_model=TimesharePeakSeasonRead,
+             dependencies=[Depends(require_permission("timeshare.peak_seasons", "deactivate", min_role_level=55))])
+def deactivate_peak_season(season_id: int, db: DbDep, user=Depends(get_timeshare_admin_user)):
+    """soft فقط — لا حذف حقيقي (راجع models.TimesharePeakSeason)."""
+    season = crud.get_peak_season(db, season_id)
+    if not season:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"موسم الذروة {season_id} غير موجود")
+    _assert_timeshare_branch(db, user, season.branch_id, "إلغاء تفعيل موسم ذروة")
+    crud.deactivate_peak_season(db, season)
+    db.commit()
+    db.refresh(season)
+    return season
 
 
 # ── Waitlist ─────────────────────────────────────────────────────────

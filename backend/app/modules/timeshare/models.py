@@ -201,6 +201,38 @@ class TimeshareMaintenanceFeeRule(Base, TimestampMixin):
     notes:               Mapped[str | None]    = mapped_column(String(300), nullable=True)
 
 
+class TimesharePeakSeason(Base, TimestampMixin):
+    """فترة ذروة يدخلها timeshare_admin سنويًا — مثال: "صيف 2026"
+    (1 يونيو → 30 سبتمبر، peak_kind=regular) أو "عيد الأضحى 2026"
+    (peak_kind=official_holiday). الأعياد الهجرية بتتغيّر كل سنة —
+    Mohamed هو اللي يدخلها يدويًا بدل أي حساب تلقائي قد يكون غلط
+    (نفس فلسفة TIMESHARE-01_FULL_PLAN_AR.md §3-أ).
+
+    peak_kind بيفرّق مواسم العيد الرسمي عن الموسم العادي (صيف) — راجع
+    OPS-DATA-02 §8 نقطة 5: قاعدة "مفيش أعياد متتالية" بتتحقق بس لو
+    الموسم official_holiday؛ الصيف/الموسم العادي مش "عيد" ومعفى منها
+    تمامًا (بس لسه خاضع لحد أسبوع الذروة الواحد سنويًا زي أي ذروة).
+
+    created_by nullable لأن FK بتاعها ondelete=SET NULL — عمود not-null
+    مع SET NULL تناقض فعلي (OPS-DATA-02 §8 نقطة 4، باج حقيقي في الخطة
+    الأصلية). لا حذف حقيقي أبدًا لموسم استُخدم في أي قرار قبول/رفض —
+    is_active بس (soft)."""
+    __tablename__ = "timeshare_peak_seasons"
+
+    id:          Mapped[int]        = mapped_column(primary_key=True)
+    branch_id:   Mapped[int]        = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"))
+    name:        Mapped[str]        = mapped_column(String(100))
+    name_ar:     Mapped[str | None] = mapped_column(String(100), nullable=True)
+    peak_kind:   Mapped[str]        = mapped_column(String(20), default="regular")
+    # official_holiday|regular
+    season_year: Mapped[int]        = mapped_column(Integer, index=True)
+    start_date:  Mapped[date]       = mapped_column(Date, index=True)
+    end_date:    Mapped[date]       = mapped_column(Date)
+    is_active:   Mapped[bool]       = mapped_column(Boolean, default=True)
+    created_by:  Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    notes:       Mapped[str | None] = mapped_column(String(300), nullable=True)
+
+
 class TimeshareVisit(Base, TimestampMixin):
     """زيارة فعلية لصاحب التايم شير — تحجز غرفة في PMS."""
     __tablename__ = "timeshare_visits"
