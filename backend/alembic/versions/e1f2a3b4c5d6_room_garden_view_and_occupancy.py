@@ -31,12 +31,16 @@ def upgrade() -> None:
     op.drop_constraint("ck_rooms_view_type_valid", "rooms", type_="check")
 
     # 2. تحديث view_type من 'none' إلى 'garden_view' للوحدات المعتمدة
+    # psycopg3 (السائق الحالي) ما بيدعمش توسيع tuple لـ IN :param زي
+    # psycopg2 القديم — لازم bindparam(expanding=True) صراحةً، وإلا syntax
+    # error فعلي وقت upgrade على Postgres حقيقي (اتكشف حيًا 2026-08-10 وقت
+    # تشغيل dev stack — pytest ماكنش هيكشفه لأنه بيشتغل على SQLite).
     bind.execute(
         sa.text(
             "UPDATE rooms SET view_type = 'garden_view' "
             "WHERE name IN :names AND view_type = 'none'"
-        ),
-        {"names": GARDEN_VIEW_ROOMS},
+        ).bindparams(sa.bindparam("names", expanding=True)),
+        {"names": list(GARDEN_VIEW_ROOMS)},
     )
 
     # 3. إضافة الـ constraint الجديد يشمل 'garden_view'
