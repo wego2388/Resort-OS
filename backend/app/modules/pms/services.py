@@ -13,6 +13,7 @@ from sqlalchemy.exc import OperationalError
 logger = logging.getLogger(__name__)
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.modules.pms import crud
 from app.modules.pms.models import Booking, NightAuditLog, RatePlan, Room, RoomType
 from app.modules.pms.schemas import (
@@ -516,7 +517,20 @@ def _post_checkout_journal(db: "Session", booking: "Booking") -> None:
                 charge.is_settled = True
             finance_crud.close_folio(db, folio)
 
-    total_amount = (booking.total_rate or _D("0")) + extra_folio_charges_total
+    # ⚠️ باج حقيقي اتصلح (OPS-DATA-02 §11.2 FIN-TAX-01، مترتب على تصحيح
+    # _post_room_revenue_for_night_audit فوق): Night Audit بقى بيقيّد
+    # 1150 بقيمة الغرفة الأساسية + VAT + خدمة كل ليلة (base×1.26 تقريبًا)،
+    # لكن التسوية هنا كانت لسه بتقفل بس booking.total_rate (أساسي بدون
+    # VAT/خدمة خالص) — يعني 1150 كان هيفضل عليه رصيد متبقي دايم = VAT+خدمة
+    # كل إقامة، من غير أي تسوية. base_room_charge = total_rate ناقص
+    # extra_charge (رسوم وصول مبكر/مغادرة متأخرة — دي مش خاضعة لنفس النسبة،
+    # مسجّلة كـFolioCharge منفصل من غير قيد VAT/خدمة خاص بيها من الأساس).
+    base_room_charge = (booking.total_rate or _D("0")) - (booking.extra_charge or _D("0"))
+    room_vat = (base_room_charge * _D(str(settings.VAT_PERCENTAGE)) / _D("100")).quantize(_D("0.01"))
+    room_service = (
+        base_room_charge * _D(str(settings.SERVICE_CHARGE_PERCENTAGE)) / _D("100")
+    ).quantize(_D("0.01"))
+    total_amount = (booking.total_rate or _D("0")) + room_vat + room_service + extra_folio_charges_total
 
     # اختيار حساب القبض حسب طريقة دفع الضيف المسجّلة عند check-in
     _METHOD_TO_ACCOUNT = {
@@ -758,27 +772,36 @@ def _post_room_revenue_for_night_audit(
 ) -> None:
     """يُسجّل قيد إيراد الغرف اليومي وقت Night Audit.
 
-    Dr. ذمم الضيوف (1150) / Cr. إيراد الغرف (4100)
-    المبلغ = مجموع daily_rate لكل الحجوزات checked_in في audit_date.
-    لو مفيش إيراد (لا توجد غرف مشغولة) مش بيسجّل قيد فارغ.
-    بيبتلع الأخطاء عمدًا عشان فشل القيد ميمنعش إتمام الـ Night Audit —
-    لكن بيسجّل error في الـ log عشان المحاسب يعرف ويصحح يدوياً.
+    ⚠️ باج محاسبي حقيقي كان هنا (اتصلح، OPS-DATA-02 §11.2 FIN-TAX-01): كان
+    بيرحّل الإجمالي كله (daily_rate، أساسي بدون VAT/service حسب
+    RoomType.base_rate — راجع approved_room_pricing.py) مباشرة Dr.1150/
+    Cr.4100 من غير أي فصل — يعني VAT payable (2160) ورسم الخدمة المستحق
+    (2165) عمرهم ما كانوا بيتسجلوا خالص لإيراد الغرف، بالظبط نفس الباج اللي
+    اتصلح في dining/beach.services (commit e03f063) لكن الفرع ده اتفوّت
+    وقتها. اتصلح باستخدام post_taxed_sale_journal (نفس primitive
+    dining/beach) — Dr.1150 = base+VAT+service / Cr.4100=base،
+    Cr.2160=vat، Cr.2165=service. daily_rate نفسه المخزَّن base صافي
+    (base_rate الأصلي، غير شامل)، فبيتحسب VAT/service هنا فريش من
+    settings.VAT_PERCENTAGE/SERVICE_CHARGE_PERCENTAGE.
+
+    strict بالتصميم (post_taxed_sale_journal دايمًا strict) — فشل القيد
+    (حساب غير معرّف، فترة مقفولة) بيوقف Night Audit كله بدل ما يكمل بصمت
+    بدون أثر محاسبي (Finance First، CLAUDE.md §5.2).
     """
     if not total_revenue or total_revenue <= 0:
         return
-    try:
-        from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
-        post_simple_revenue_journal(
-            db, branch_id, audit_date,
-            debit_account_code="1150", credit_account_code="4100",
-            amount=total_revenue,
-            reference=f"AUDIT-{audit_date.strftime('%Y%m%d')}",
-            description=f"إيراد غرف — Night Audit {audit_date}",
-            source="pms_night_audit", source_id=None,
-            cost_center_code="ROOM",
-        )
-    except Exception:
-        logger.error(
-            "_post_room_revenue_for_night_audit فشل — branch=%s date=%s revenue=%.2f — القيد يحتاج تسجيل يدوي",
-            branch_id, audit_date, float(total_revenue), exc_info=True,
-        )
+    from app.modules.finance.services import post_taxed_sale_journal  # noqa: PLC0415
+
+    vat_amount = (total_revenue * Decimal(str(settings.VAT_PERCENTAGE)) / Decimal("100")).quantize(Decimal("0.01"))
+    service_amount = (
+        total_revenue * Decimal(str(settings.SERVICE_CHARGE_PERCENTAGE)) / Decimal("100")
+    ).quantize(Decimal("0.01"))
+    post_taxed_sale_journal(
+        db, branch_id, audit_date,
+        debit_account_code="1150", revenue_account_code="4100",
+        net_revenue_amount=total_revenue, vat_amount=vat_amount, service_charge_amount=service_amount,
+        reference=f"AUDIT-{audit_date.strftime('%Y%m%d')}",
+        description=f"إيراد غرف — Night Audit {audit_date}",
+        source="pms_night_audit", source_id=None,
+        cost_center_code="ROOM",
+    )

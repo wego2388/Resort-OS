@@ -166,7 +166,19 @@ class TestPmsNightAudit:
 
     def test_night_audit_with_checked_in_booking(self, db):
         """night audit مع حجز checked_in أمس"""
+        from app.modules.finance.models import Account
+
         branch = _make_branch(db)
+        # OPS-DATA-02 §11.2 FIN-TAX-01: قيد إيراد الغرف بقى strict (Dr 1150 /
+        # Cr 4100+2160+2165) — محتاج الحسابات الأربعة موجودة عشان الإيراد
+        # الحقيقي هنا (حجز checked_in) يترحّل.
+        db.add_all([
+            Account(branch_id=branch.id, code="1150", name="Folio AR", account_type="asset"),
+            Account(branch_id=branch.id, code="4100", name="Room Revenue", account_type="revenue"),
+            Account(branch_id=branch.id, code="2160", name="VAT Payable", account_type="liability"),
+            Account(branch_id=branch.id, code="2165", name="Service Charge Payable", account_type="liability"),
+        ])
+        db.commit()
         room = _make_room(db, branch)
         yesterday = date.today() - timedelta(days=1)
         _make_booking(

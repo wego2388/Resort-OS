@@ -11,6 +11,7 @@ from decimal import Decimal
 import pytest
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.modules.pms.schemas import BookingCreate, RatePlanCreate
 from app.modules.pms import services, crud
 
@@ -57,13 +58,17 @@ def make_finance_accounts(db, branch):
       1110 — بنك/كارت (Dr في checkout لو payment_method=card)
       1150 — ذمم الفوليو (Cr يوميًا في Night Audit Dr.1150/Cr.4100 + Dr في checkout Dr.1100/Cr.1150)
       4100 — إيراد الغرف (Cr يوميًا في Night Audit — مفيش قيد عند check-in نفسه)
+      2160/2165 — VAT/رسم خدمة مستحقين (Cr يوميًا في Night Audit — راجع
+      OPS-DATA-02 §11.2 FIN-TAX-01، post_taxed_sale_journal دايمًا strict)
     """
     from app.modules.finance.models import Account
     cash    = Account(branch_id=branch.id, code="1100", name="Cash",        account_type="asset")
     bank    = Account(branch_id=branch.id, code="1110", name="Bank/Card",   account_type="asset")
     folio   = Account(branch_id=branch.id, code="1150", name="Folio AR",    account_type="asset")
     revenue = Account(branch_id=branch.id, code="4100", name="Room Revenue",account_type="revenue")
-    db.add_all([cash, bank, folio, revenue])
+    vat     = Account(branch_id=branch.id, code="2160", name="VAT Payable", account_type="liability")
+    service = Account(branch_id=branch.id, code="2165", name="Service Charge Payable", account_type="liability")
+    db.add_all([cash, bank, folio, revenue, vat, service])
     db.commit()
     return cash, revenue
 
@@ -290,6 +295,13 @@ class TestCheckinCheckout:
         checked_in = services.checkin_booking(db, booking.id)
         assert checked_in.folio_id is not None
         room_total = checked_in.total_rate
+        # راجع OPS-DATA-02 §11.2 FIN-TAX-01: Night Audit بيقيّد 1150 بقيمة
+        # الغرفة + VAT + خدمة (مفيش early/late fee هنا فـbase_room_charge
+        # = room_total بالكامل)، فالتسوية لازم تقفل نفس المبلغ بالظبط.
+        room_vat = (room_total * Decimal(str(settings.VAT_PERCENTAGE)) / Decimal("100")).quantize(Decimal("0.01"))
+        room_service = (
+            room_total * Decimal(str(settings.SERVICE_CHARGE_PERCENTAGE)) / Decimal("100")
+        ).quantize(Decimal("0.01"))
 
         beach_charge = finance_services.add_folio_charge(db, checked_in.folio_id, FolioChargeCreate(
             charge_type="beach", description="شمسية + مظلة",
@@ -310,7 +322,7 @@ class TestCheckinCheckout:
         assert len(checkout_entries) == 1
         lines = checkout_entries[0].lines
         debit_line = next(l for l in lines if l.debit > 0)
-        expected_total = room_total + Decimal("300.00") + Decimal("42.00") + Decimal("150.00")
+        expected_total = room_total + room_vat + room_service + Decimal("300.00") + Decimal("42.00") + Decimal("150.00")
         assert debit_line.debit == expected_total
 
         db.refresh(beach_charge)
