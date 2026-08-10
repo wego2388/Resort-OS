@@ -207,7 +207,7 @@ def pay_installment(db: Session, inst_id: int, req: PayInstallmentRequest) -> Ti
         )
 
     obj = crud.pay_installment(db, inst, req)
-    _post_installment_payment_journal(db, contract, req.paid_amount, inst)
+    _post_installment_payment_journal(db, contract, req.paid_amount, inst, req.payment_method)
 
     # سجل تدقيق — تاريخ التحصيل قابل للمراجعة والتصحيح لاحقاً
     _audit_installment_payment(db, contract, inst, req)
@@ -243,19 +243,33 @@ def _has_any_overdue_balance(contract: TimeshareContract) -> bool:
     return has_overdue_installment or has_overdue_maintenance
 
 
+# ⚠️ باج حقيقي كان هنا (اتصلح، نفس فئة الباج اللي اتصلح في leasing.services
+# في نفس الجلسة — راجع OPS-DATA-02 §10.5 "لا تستخدم 1100 لكل طرق الدفع"):
+# كل تحصيل قسط/صيانة كان بيترحّل Dr.1100 (كاش) دايمًا، حتى لو الكاشير سجّل
+# payment_method="bank_transfer" أو "card" فعليًا على الصف نفسه — يعني رصيد
+# حساب الكاش الفعلي كان بيتضخّم بمبالغ حوّلتها البنك، ورصيد البنك/الكارت
+# مايتحرّكش خالص رغم إن التحصيل الحقيقي مكانش نقدية.
+_PAYMENT_METHOD_DEBIT_ACCOUNT = {
+    "cash": "1100", "bank_transfer": "1110", "card": "1120", "other": "1100",
+}
+
+
 def _post_installment_payment_journal(
     db: "Session", contract: "TimeshareContract", paid_amount, inst: "TimeshareInstallment",
+    payment_method: str | None = None,
 ) -> None:
-    """Dr. Cash (1100) / Cr. إيرادات عقود التايم شير (4600) عند تحصيل أي
-    قسط — نفس منطق _post_deferred_revenue_journal بالظبط بس لكل تحصيل قسط،
-    مش الدفعة الأولى بس (راجع تعليق تلك الدالة لتفاصيل باج حساب 2300)."""
+    """Dr. Cash/Bank/Card (حسب طريقة الدفع الفعلية) / Cr. إيرادات عقود
+    التايم شير (4600) عند تحصيل أي قسط — نفس منطق _post_deferred_revenue_
+    journal بالظبط بس لكل تحصيل قسط، مش الدفعة الأولى بس (راجع تعليق تلك
+    الدالة لتفاصيل باج حساب 2300)."""
     from app.core.config import settings  # noqa: PLC0415
     from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
     from app.resort_os.timezone_utils import business_today  # noqa: PLC0415
 
+    debit_code = _PAYMENT_METHOD_DEBIT_ACCOUNT.get(payment_method or "cash", "1100")
     post_simple_revenue_journal(
         db, contract.branch_id, business_today(settings.TIMEZONE),
-        debit_account_code="1100", credit_account_code="4600",
+        debit_account_code=debit_code, credit_account_code="4600",
         amount=paid_amount,
         reference=f"TS-INST-{contract.contract_number}-{inst.installment_no}",
         description=f"تحصيل قسط رقم {inst.installment_no} — {contract.contract_number}",
@@ -328,7 +342,7 @@ def pay_maintenance_due(db: Session, due_id: int, req: PayMaintenanceDueRequest)
         )
 
     obj = crud.pay_maintenance_due(db, due, req)
-    _post_maintenance_payment_journal(db, contract, req.paid_amount, due)
+    _post_maintenance_payment_journal(db, contract, req.paid_amount, due, req.payment_method)
     _audit_maintenance_payment(db, contract, due, req)
 
     if contract.booking_frozen and not _has_any_overdue_balance(contract):
@@ -341,18 +355,20 @@ def pay_maintenance_due(db: Session, due_id: int, req: PayMaintenanceDueRequest)
 
 def _post_maintenance_payment_journal(
     db: "Session", contract: "TimeshareContract", paid_amount, due: "TimeshareMaintenanceDue",
+    payment_method: str | None = None,
 ) -> None:
-    """Dr. Cash (1100) / Cr. إيرادات صيانة عقود التايم شير (4650) — حساب
-    منفصل عمدًا عن 4600 (إيراد سعر الشراء): إيراد الصيانة رسم خدمة سنوي
-    مرتبط بسنة محدَّدة (fee_year)، مختلف في طبيعته المحاسبية عن إيراد بيع
-    العقد لمرة واحدة."""
+    """Dr. Cash/Bank/Card (حسب طريقة الدفع الفعلية) / Cr. إيرادات صيانة
+    عقود التايم شير (4650) — حساب منفصل عمدًا عن 4600 (إيراد سعر الشراء):
+    إيراد الصيانة رسم خدمة سنوي مرتبط بسنة محدَّدة (fee_year)، مختلف في
+    طبيعته المحاسبية عن إيراد بيع العقد لمرة واحدة."""
     from app.core.config import settings  # noqa: PLC0415
     from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
     from app.resort_os.timezone_utils import business_today  # noqa: PLC0415
 
+    debit_code = _PAYMENT_METHOD_DEBIT_ACCOUNT.get(payment_method or "cash", "1100")
     post_simple_revenue_journal(
         db, contract.branch_id, business_today(settings.TIMEZONE),
-        debit_account_code="1100", credit_account_code="4650",
+        debit_account_code=debit_code, credit_account_code="4650",
         amount=paid_amount,
         reference=f"TS-MAINT-{contract.contract_number}-{due.fee_year}",
         description=f"تحصيل صيانة سنة {due.fee_year} — {contract.contract_number}",

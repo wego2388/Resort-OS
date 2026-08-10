@@ -158,6 +158,36 @@ class TestPayInstallment:
         paid = services.pay_installment(db, inst.id, req)
         assert paid.status == "partial"
 
+    def test_payment_method_routes_to_correct_gl_account(self, db, branch, contract):
+        """⚠️ باج حقيقي اتصلح (OPS-DATA-02، Phase 7): تحصيل قسط بطريقة
+        bank_transfer/card كان بيترحّل Dr.1100 (كاش) دايمًا زي أي تحصيل —
+        نفس فئة الباج اللي اتصلح في leasing.services في نفس الجلسة. هنا
+        نتأكد إن bank_transfer فعليًا بيقيّد 1110، مش 1100."""
+        from app.modules.finance.models import Account, JournalLine
+
+        db.add_all([
+            Account(branch_id=branch.id, code="1100", name="Cash", account_type="asset"),
+            Account(branch_id=branch.id, code="1110", name="Bank", account_type="asset"),
+            Account(branch_id=branch.id, code="4600", name="Timeshare Revenue", account_type="revenue"),
+        ])
+        db.commit()
+
+        inst = contract.installments_list[0]
+        services.pay_installment(db, inst.id, PayInstallmentRequest(
+            paid_amount=inst.amount, payment_method="bank_transfer",
+        ))
+
+        bank_account = db.query(Account).filter_by(branch_id=branch.id, code="1110").first()
+        cash_account = db.query(Account).filter_by(branch_id=branch.id, code="1100").first()
+        bank_debit = sum(
+            l.debit for l in db.query(JournalLine).filter(JournalLine.account_id == bank_account.id).all()
+        )
+        cash_debit = sum(
+            l.debit for l in db.query(JournalLine).filter(JournalLine.account_id == cash_account.id).all()
+        )
+        assert bank_debit == inst.amount
+        assert cash_debit == Decimal("0")
+
     def test_cannot_pay_already_paid(self, db, contract):
         inst = contract.installments_list[0]
         req = PayInstallmentRequest(paid_amount=inst.amount, payment_method="cash")

@@ -23,7 +23,8 @@ def branch(db: Session):
 def _seed_accounts(db: Session, branch):
     from app.modules.finance.models import Account
     for code, name, acc_type in [
-        ("1100", "Cash", "asset"), ("4600", "Timeshare Contract Revenue", "revenue"),
+        ("1100", "Cash", "asset"), ("1110", "Bank", "asset"), ("1120", "Card Clearing", "asset"),
+        ("4600", "Timeshare Contract Revenue", "revenue"),
         ("4650", "Timeshare Maintenance Revenue", "revenue"),
     ]:
         db.add(Account(branch_id=branch.id, code=code, name=name, account_type=acc_type))
