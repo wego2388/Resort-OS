@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import date, datetime
 from decimal import Decimal
 
 import pytest
@@ -24,6 +25,7 @@ def _seed_accounts(db: Session, branch):
     from app.modules.finance.models import Account
     for code, name, acc_type in [
         ("1100", "Cash", "asset"), ("1110", "Bank/Card", "asset"),
+        ("1150", "Folio AR", "asset"),
         ("2160", "VAT Payable", "liability"), ("2165", "Service Charge Payable", "liability"),
         ("4200", "Restaurant Revenue", "revenue"), ("4300", "Beach Revenue", "revenue"),
         ("4400", "Cafe Revenue", "revenue"),
@@ -153,3 +155,68 @@ class TestHistDiningBeachGenerator:
         shifts1 = db.query(CashierShift).filter(CashierShift.branch_id == branch.id).count()
         shifts2 = db.query(CashierShift).filter(CashierShift.branch_id == branch2.id).count()
         assert shifts1 == shifts2 == 62
+
+    def test_room_charge_settles_against_real_room_not_folio_id(self, db: Session, branch):
+        """⚠️ باج حقيقي اتصلح (اتكشف وقت Phase 8 Local apply ضد PostgreSQL
+        حقيقي — مش من التستات دي، اللي عمرها ما كانت بتجهّز أي حجز
+        checked_in خالص فمسار room-charge كان دايمًا مُتخطّى بصمت هنا).
+        settle_order's "room" tender محتاج Room.id فعليًا (charge_to_room_id)
+        عشان يلاقي الفوليو بنفسه عبر find_active_folio_for_room — مش
+        Folio.id. بنجبر Folio.id ≠ Room.id عمدًا هنا (بإنشاء صفوف زيادة
+        الأول) عشان لو الباج القديم رجع (تمرير Folio.id غلط) التست يفشل،
+        مش ينجح بالصدفة زي ما كان ممكن يحصل لو الاتنين اتساووا رقميًا."""
+        from sqlalchemy import func
+
+        from app.modules.core.models import Branch
+        from app.modules.finance.models import Folio
+        from app.modules.pms.models import Booking, BookingRoom, Room, RoomType
+
+        # صفوف Folio زيادة قبل الحقيقيين — تضمن Folio.id > أي Room.id
+        # موجود لحد دلوقتي، بغض النظر عن ترتيب تشغيل باقي التستات في
+        # الـsuite كله (عدد ثابت من الديكوي كان fragile ومعتمد على الترتيب
+        # — فشل فعليًا لما اتشغّل جوه الـsuite الكامل، راجع الـcommit).
+        decoy_branch = Branch(name="Decoy", name_ar="زيادة",
+                               code=f"DEC-{uuid.uuid4().hex[:6].upper()}")
+        db.add(decoy_branch)
+        db.commit()
+        current_room_max = db.query(func.max(Room.id)).scalar() or 0
+        current_folio_max = db.query(func.max(Folio.id)).scalar() or 0
+        decoys_needed = max(0, current_room_max - current_folio_max) + 3
+        for _ in range(decoys_needed):
+            db.add(Folio(branch_id=decoy_branch.id, guest_name="Decoy",
+                          check_in=datetime(2026, 1, 1), check_out=datetime(2026, 1, 2)))
+        db.commit()
+
+        room_type = RoomType(branch_id=branch.id, name="Studio", base_rate=Decimal("2500.00"),
+                              max_occupancy=2)
+        db.add(room_type)
+        db.commit()
+        room = Room(branch_id=branch.id, room_type_id=room_type.id, name="101")
+        db.add(room)
+        db.commit()
+
+        folio = Folio(branch_id=branch.id, guest_name="ضيف HIST تست",
+                       check_in=datetime(2026, 7, 1), check_out=datetime(2026, 7, 5))
+        db.add(folio)
+        db.commit()
+        assert folio.id > room.id, "الديكوي المفروض يضمن Folio.id أكبر من Room.id"
+
+        booking = Booking(
+            branch_id=branch.id, booking_number=f"BKG-TEST-{uuid.uuid4().hex[:8]}",
+            guest_name="ضيف HIST تست", check_in=date(2026, 7, 1), check_out=date(2026, 7, 5),
+            status="checked_in", folio_id=folio.id,
+        )
+        db.add(booking)
+        db.commit()
+        db.add(BookingRoom(booking_id=booking.id, room_id=room.id,
+                            daily_rate=Decimal("2500.00"), nights=4, total=Decimal("10000.00")))
+        db.commit()
+
+        _seed_accounts(db, branch)
+        result = generate_dining_beach(db, _Ctx(branch.id))
+        db.commit()
+
+        assert result["counts"]["room_charge_orders"] == 1
+        # لو الباج القديم رجع، settle_order كان هيفشل بـValueError قبل ما
+        # يوصل هنا خالص (الاستثناء كان هيوقف الدالة كلها) — نجاح الوصول
+        # هنا + العداد=1 يثبت إن charge_to_room_id اتحل صح فعليًا.

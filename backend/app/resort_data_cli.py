@@ -430,6 +430,16 @@ def _build_parser() -> argparse.ArgumentParser:
 def main(argv: Optional[list[str]] = None) -> int:
     args = _build_parser().parse_args(argv)
     try:
+        # ⚠️ باج حقيقي اتكشف واتصلح وقت أول تشغيلة حقيقية (Phase 8 Local
+        # apply): جداول زي bookings.customer_id → crm_customers محتاجة كل
+        # الـmodels متسجّلة في SQLAlchemy's mapper registry قبل أي ORM
+        # query/flush — بيحصل تلقائيًا وقت تشغيل الـFastAPI app الحقيقي
+        # (app.main بيستورد كل الموديولات)، لكن الأداة دي standalone،
+        # مبتعديش على app.main أبدًا. نفس المصدر الجاهز الوحيد الموجود:
+        # app.seed._import_all_models().
+        from app.seed import _import_all_models  # noqa: PLC0415
+        _import_all_models()
+
         target = resolve_target(args.target)
 
         if args.command == "backup":

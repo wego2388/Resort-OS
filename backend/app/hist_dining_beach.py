@@ -63,7 +63,7 @@ def generate(db: "Session", ctx: "ScenarioContext") -> dict:
     from app.modules.dining import services as dining_services
     from app.modules.dining.schemas import OrderCreate, OrderItemCreate, OutletCreate, DiningItemCreate
     from app.modules.finance import services as finance_services
-    from app.modules.finance.models import Folio
+    from app.modules.pms.models import Booking, BookingRoom
     from app.modules.finance.schemas import CashierShiftClose, CashierShiftOpen
 
     branch_id = ctx.branch_id
@@ -114,9 +114,27 @@ def generate(db: "Session", ctx: "ScenarioContext") -> dict:
         ))
         db.flush()
 
-    # فوليو حقيقي مفتوح (لو pms_bookings اشتغل قبل كده في نفس الدفعة) —
-    # لـ"الدفع على حساب الغرفة" (راجع docstring الملف).
-    open_folio = db.query(Folio).filter(Folio.branch_id == branch_id, Folio.status == "open").first()
+    # فوليو حقيقي مفتوح لضيف checked_in فعليًا (لو pms_bookings اشتغل قبل
+    # كده في نفس الدفعة) — لـ"الدفع على حساب الغرفة" (راجع docstring
+    # الملف). ⚠️ باج حقيقي اتصلح هنا (اتكشف وقت Phase 8 Local apply ضد
+    # PostgreSQL حقيقي — مش SQLite tests): dining.services.settle_order's
+    # "room" tender محتاج charge_to_room_id = Room.id فعليًا (بيستخدمه في
+    # find_active_folio_for_room(db, branch_id, room_id) عشان يلاقي
+    # الفوليو بنفسه)، مش Folio.id مباشرة زي ما كان مكتوب هنا. في تستات
+    # SQLite الأصلية كان Folio.id بيتساوي بالصدفة برقم Room.id صغير
+    # (بيانات قليلة، IDs متتالية من واحد) فالباج كان مستخبي — أول تشغيلة
+    # حقيقية ضد قاعدة فيها حجوزات/فواتير أكتر (Folio.id="34" مثلاً) كشفته
+    # فورًا: "مفيش ضيف مسجّل دخول في الغرفة 34".
+    open_booking = (
+        db.query(Booking)
+        .filter(Booking.branch_id == branch_id, Booking.status == "checked_in",
+                Booking.folio_id.isnot(None))
+        .first()
+    )
+    open_folio_room_id = (
+        db.query(BookingRoom.room_id).filter(BookingRoom.booking_id == open_booking.id).scalar()
+        if open_booking else None
+    )
 
     restaurant_remaining = _RESTAURANT_ORDERS
     cafe_remaining = _CAFE_ORDERS
@@ -149,7 +167,7 @@ def generate(db: "Session", ctx: "ScenarioContext") -> dict:
                     db, dining_services, OrderCreate, OrderItemCreate,
                     branch_id, restaurant.id, restaurant_item.id, qty=5,
                     order_no=global_order_index, cashier_id=cashier.id, state=state,
-                    open_folio=open_folio, outlet_kind="restaurant_orders",
+                    open_folio_room_id=open_folio_room_id, outlet_kind="restaurant_orders",
                 )
                 restaurant_remaining -= 1
 
@@ -159,7 +177,7 @@ def generate(db: "Session", ctx: "ScenarioContext") -> dict:
                     db, dining_services, OrderCreate, OrderItemCreate,
                     branch_id, cafe.id, cafe_item.id, qty=6,
                     order_no=global_order_index, cashier_id=cashier.id, state=state,
-                    open_folio=open_folio, outlet_kind="cafe_orders",
+                    open_folio_room_id=open_folio_room_id, outlet_kind="cafe_orders",
                 )
                 cafe_remaining -= 1
 
@@ -210,7 +228,7 @@ def _run_dining_order(
     db, dining_services, OrderCreate, OrderItemCreate,
     branch_id: int, outlet_id: int, item_id: int, qty: int,
     order_no: int, cashier_id: int, state: _RunningState,
-    open_folio, outlet_kind: str,
+    open_folio_room_id, outlet_kind: str,
 ) -> None:
     order = dining_services.create_order(db, branch_id, OrderCreate(
         outlet_id=outlet_id, order_type="dine_in",
@@ -233,10 +251,13 @@ def _run_dining_order(
         state.counts["voids"] += 1
         return  # الطلب بقى بلا أصناف فعلية — مفيش تسوية له
 
-    if order_no == 50 and open_folio is not None:
-        # سيناريو "الدفع على حساب الغرفة"
+    if order_no == 50 and open_folio_room_id is not None:
+        # سيناريو "الدفع على حساب الغرفة" — charge_to_room_id لازم يكون
+        # Room.id حقيقي (settle_order بيستخدمه في find_active_folio_for_
+        # room داخليًا)، مش Folio.id (راجع الباج الموثّق في generate()).
         dining_services.settle_order(
-            db, order.id, tenders=[{"method": "room", "amount": None, "charge_to_room_id": open_folio.id}],
+            db, order.id,
+            tenders=[{"method": "room", "amount": None, "charge_to_room_id": open_folio_room_id}],
             settled_by=cashier_id,
         )
         state.counts["room_charge_orders"] += 1

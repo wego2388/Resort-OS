@@ -458,7 +458,22 @@ def run_seed_against_engine(
     لوحدها، وبعدين transaction تانية (savepoint mode برضو) للشغل الفعلي؛
     لو فشلت، transaction ثالثة قصيرة تسجّل "failed" + السبب بشكل دائم.
     dry-run فضل زي ما هو (transaction واحدة، rollback شامل حتى للbatch
-    نفسه — دري-ران المفروض ميسيبش أي أثر خالص)."""
+    نفسه — دري-ران المفروض ميسيبش أي أثر خالص).
+
+    ⚠️ باج حقيقي اتكشف واتصلح وقت أول تشغيلة حقيقية (Phase 8 Local apply):
+    `bookings.customer_id` عنده FK لـ`crm_customers`، بس مفيش أي مولّد في
+    السلسلة (pms_bookings/leasing/...) بيستورد app.modules.crm.models
+    بشكل مباشر — SQLAlchemy بيسجّل الجداول/الـmappers بس وقت ما الـmodule
+    بتاعها يتستورد فعليًا في نفس الـprocess. وقت تشغيل عادي عبر الـFastAPI
+    app (app.main.create_app())، كل الموديولات بتتستورد أوتوماتيك، فالباج
+    ده كان مخفي. لكن أي عملية standalone (زي الأداة دي أو resort_data_cli)
+    بتشتغل من غير ما تعدي على app.main أبدًا — أول db.flush() حقيقي كان
+    بيفشل بـNoReferencedTableError لأي جدول لسه ماتسجّلش. الحل: نفس
+    الدالة الجاهزة اللي app.seed._import_all_models() بتستخدمها بالظبط —
+    مش نكرر قايمة استيراد تانية، دي المصدر الوحيد الموجود فعليًا."""
+    from app.seed import _import_all_models  # noqa: PLC0415
+
+    _import_all_models()
     from app.modules.core.models import ImportBatch  # noqa: PLC0415
 
     if not apply:
