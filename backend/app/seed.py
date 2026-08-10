@@ -495,12 +495,12 @@ def _seed_payroll(db: Session) -> None:
 def _seed_chart_of_accounts(db: Session) -> None:
     """حسابات الرواتب والتأمينات الضرورية للقيود.
 
-    Batch 3 (تفعيل تسلسل الحسابات — Account.parent_id): 4 حسابات أب (رؤوس
-    مجموعات) بمستوى واحد بس — الأصول/الخصوم/الإيرادات/المصروفات — كل حساب
-    من الـ 22 المزروعين تحته بيتبع أبوه حسب account_type. مفيش مستوى تاني
-    (زي "أصول متداولة" تحت "الأصول") — الشجرة المزروعة (22 حساب) مش
-    مبررة لتسلسل أعمق من ده (توصية البحث الصريحة بعدم بناء هرمية عميقة).
-    equity مالهاش حساب مزروع لحد دلوقتي فمفيهوش حساب أب equity."""
+    Batch 3 (تفعيل تسلسل الحسابات — Account.parent_id): رؤوس مجموعات بمستوى
+    واحد بس — الأصول/الخصوم/الإيرادات/المصروفات، زائد equity (OPS-DATA-02
+    §11.1 — أول حساب equity حقيقي، كان مفيش قبل كده). كل حساب مزروع تحته
+    بيتبع أبوه حسب account_type. مفيش مستوى تاني (زي "أصول متداولة" تحت
+    "الأصول") — الشجرة المزروعة مش مبررة لتسلسل أعمق من ده (توصية البحث
+    الصريحة بعدم بناء هرمية عميقة)."""
     try:
         from app.modules.finance.models import Account
         from app.modules.core.models import Branch
@@ -516,6 +516,9 @@ def _seed_chart_of_accounts(db: Session) -> None:
         "liability": {"code": "2000", "name": "الخصوم",      "account_type": "liability"},
         "revenue":   {"code": "4000", "name": "الإيرادات",   "account_type": "revenue"},
         "expense":   {"code": "5000", "name": "المصروفات",   "account_type": "expense"},
+        # OPS-DATA-02 §11.1 — أول حساب equity حقيقي في المشروع (كانت
+        # الملاحظة القديمة هنا بتقول "equity مالهاش حساب مزروع لحد دلوقتي").
+        "equity":    {"code": "3000", "name": "حقوق الملكية", "account_type": "equity"},
     }
 
     accounts = [
@@ -544,6 +547,25 @@ def _seed_chart_of_accounts(db: Session) -> None:
         {"code": "5500", "name": "مصروف إهلاك الأصول الثابتة",     "account_type": "expense"},
         {"code": "1590", "name": "مجمّع إهلاك الأصول الثابتة",     "account_type": "asset"},
         {"code": "2200", "name": "موردون — ذمم دائنة",            "account_type": "liability"},
+        # OPS-DATA-02 §11.1 — GL-01: توسيع دليل الحسابات لدعم فصل الضريبة/
+        # الخدمة عن الإيراد الصافي (FIN-TAX-01) والرصيد الافتتاحي والأصول.
+        {"code": "1120", "name": "حساب وسيط تحصيلات الكارت",     "account_type": "asset"},
+        {"code": "1130", "name": "حساب وسيط تحصيلات إلكترونية",  "account_type": "asset"},
+        {"code": "1170", "name": "ذمم أقساط التايم شير",         "account_type": "asset"},
+        {"code": "1210", "name": "مصروفات مدفوعة مقدمًا",        "account_type": "asset"},
+        {"code": "1500", "name": "أرض",                          "account_type": "asset"},
+        {"code": "1510", "name": "مباني",                         "account_type": "asset"},
+        {"code": "1515", "name": "مسبح ومناظر طبيعية",           "account_type": "asset"},
+        {"code": "1520", "name": "معدات",                         "account_type": "asset"},
+        {"code": "1530", "name": "أثاث",                          "account_type": "asset"},
+        {"code": "1540", "name": "أجهزة تقنية",                   "account_type": "asset"},
+        {"code": "2160", "name": "ضريبة القيمة المضافة مستحقة",  "account_type": "liability"},
+        {"code": "2165", "name": "رسم خدمة مستحق",                "account_type": "liability"},
+        {"code": "2170", "name": "دفعات مقدمة من نزلاء",         "account_type": "liability"},
+        {"code": "2180", "name": "مصروفات مستحقة",                "account_type": "liability"},
+        {"code": "2310", "name": "التزام عقود التايم شير",       "account_type": "liability"},
+        {"code": "3100", "name": "رأس المال",                     "account_type": "equity"},
+        {"code": "3200", "name": "أرباح مرحّلة",                  "account_type": "equity"},
     ]
 
     existing = {

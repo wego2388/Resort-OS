@@ -455,6 +455,154 @@ class TestAccounting:
         )
         assert result is None
 
+
+class TestPostTaxedSaleJournal:
+    """OPS-DATA-02 §11.2 (FIN-TAX-01) — post_taxed_sale_journal splits a
+    taxed sale into net revenue + VAT payable + service charge payable,
+    replacing the old post_simple_revenue_journal(amount=gross) pattern
+    that posted the whole VAT/service-inclusive total straight to revenue."""
+
+    def _accounts(self, db: Session, branch, revenue_code="4200"):
+        from app.modules.finance.schemas import AccountCreate as AC
+        cash = crud.create_account(db, AC(branch_id=branch.id, code="1100", name="Cash", account_type="asset"))
+        rev = crud.create_account(db, AC(branch_id=branch.id, code=revenue_code, name="Revenue", account_type="revenue"))
+        vat = crud.create_account(db, AC(branch_id=branch.id, code="2160", name="VAT Payable", account_type="liability"))
+        svc = crud.create_account(db, AC(branch_id=branch.id, code="2165", name="Service Payable", account_type="liability"))
+        db.commit()
+        return cash, rev, vat, svc
+
+    def test_splits_net_revenue_vat_and_service_into_separate_lines(self, db: Session, branch):
+        cash, rev, vat, svc = self._accounts(db, branch)
+        entry = services.post_taxed_sale_journal(
+            db, branch.id, date.today(),
+            debit_account_code="1100", revenue_account_code="4200",
+            net_revenue_amount=Decimal("1000.00"),
+            vat_amount=Decimal("140.00"), service_charge_amount=Decimal("120.00"),
+            reference="ORD-TAX-001", description="اختبار فصل الضريبة",
+            source="dining", source_id=1,
+        )
+        lines = {l.account_id: (l.debit, l.credit) for l in entry.lines}
+        # gross = 1000 + 140 + 120 = 1260, all on the debit side only
+        assert lines[cash.id] == (Decimal("1260.00"), Decimal("0"))
+        assert lines[rev.id] == (Decimal("0"), Decimal("1000.00"))
+        assert lines[vat.id] == (Decimal("0"), Decimal("140.00"))
+        assert lines[svc.id] == (Decimal("0"), Decimal("120.00"))
+        total_debit = sum(l.debit for l in entry.lines)
+        total_credit = sum(l.credit for l in entry.lines)
+        assert total_debit == total_credit == Decimal("1260.00")
+
+    def test_no_service_line_when_beach_has_no_service_charge(self, db: Session, branch):
+        """Beach uses VAT only (§10.4) — no 2165 line, no 2165 account needed."""
+        from app.modules.finance.schemas import AccountCreate as AC
+        cash = crud.create_account(db, AC(branch_id=branch.id, code="1100", name="Cash", account_type="asset"))
+        rev = crud.create_account(db, AC(branch_id=branch.id, code="4300", name="Beach Revenue", account_type="revenue"))
+        vat = crud.create_account(db, AC(branch_id=branch.id, code="2160", name="VAT Payable", account_type="liability"))
+        db.commit()
+        entry = services.post_taxed_sale_journal(
+            db, branch.id, date.today(),
+            debit_account_code="1100", revenue_account_code="4300",
+            net_revenue_amount=Decimal("200.00"), vat_amount=Decimal("28.00"),
+            reference="BCH-TAX-001", description="اختبار الشاطئ",
+            source="beach", source_id=1, cost_center_code="BEACH",
+        )
+        assert len(entry.lines) == 3
+        lines = {l.account_id: (l.debit, l.credit) for l in entry.lines}
+        assert lines[cash.id] == (Decimal("228.00"), Decimal("0"))
+        assert lines[rev.id] == (Decimal("0"), Decimal("200.00"))
+        assert lines[vat.id] == (Decimal("0"), Decimal("28.00"))
+
+    def test_idempotent_retry_returns_existing_entry_not_a_duplicate(self, db: Session, branch):
+        self._accounts(db, branch)
+        first = services.post_taxed_sale_journal(
+            db, branch.id, date.today(),
+            debit_account_code="1100", revenue_account_code="4200",
+            net_revenue_amount=Decimal("100.00"), vat_amount=Decimal("14.00"),
+            reference="ORD-DUP-001", description="x", source="dining", source_id=5,
+        )
+        second = services.post_taxed_sale_journal(
+            db, branch.id, date.today(),
+            debit_account_code="1100", revenue_account_code="4200",
+            net_revenue_amount=Decimal("100.00"), vat_amount=Decimal("14.00"),
+            reference="ORD-DUP-001", description="retried", source="dining", source_id=5,
+        )
+        assert second.id == first.id
+        count = db.query(services.JournalEntry).filter(
+            services.JournalEntry.source == "dining", services.JournalEntry.source_id == 5,
+        ).count()
+        assert count == 1
+
+    def test_raises_on_missing_vat_account(self, db: Session, branch):
+        from app.modules.finance.schemas import AccountCreate as AC
+        crud.create_account(db, AC(branch_id=branch.id, code="1100", name="Cash", account_type="asset"))
+        crud.create_account(db, AC(branch_id=branch.id, code="4200", name="Revenue", account_type="revenue"))
+        db.commit()
+        with pytest.raises(services.FinancialConfigurationError, match="2160"):
+            services.post_taxed_sale_journal(
+                db, branch.id, date.today(),
+                debit_account_code="1100", revenue_account_code="4200",
+                net_revenue_amount=Decimal("100.00"), vat_amount=Decimal("14.00"),
+                reference="X", description="x", source="dining", source_id=None,
+            )
+
+    def test_raises_on_zero_gross_amount(self, db: Session, branch):
+        self._accounts(db, branch)
+        with pytest.raises(ValueError, match="غير صالح"):
+            services.post_taxed_sale_journal(
+                db, branch.id, date.today(),
+                debit_account_code="1100", revenue_account_code="4200",
+                net_revenue_amount=Decimal("0"),
+                reference="X", description="x", source="dining", source_id=None,
+            )
+
+    def test_raises_when_accounting_period_is_closed(self, db: Session, branch):
+        """post_simple_revenue_journal (legacy) deliberately skips this check
+        — post_taxed_sale_journal must not: FIN-TAX-01 requires it to respect
+        the accounting-period lock."""
+        self._accounts(db, branch)
+        from app.core.kernel.models.user import User
+        from app.core.kernel.security import get_password_hash
+        user = User(email=f"closer2-{uuid.uuid4().hex[:6]}@test.local",
+                    password_hash=get_password_hash("Test@12345"),
+                    full_name="Closer", role="admin", is_active=True)
+        db.add(user); db.flush()
+        today = date.today()
+        services.close_accounting_period(db, branch.id, today.year, today.month, closed_by=user.id)
+        with pytest.raises(ValueError, match="مقفولة"):
+            services.post_taxed_sale_journal(
+                db, branch.id, today,
+                debit_account_code="1100", revenue_account_code="4200",
+                net_revenue_amount=Decimal("100.00"), vat_amount=Decimal("14.00"),
+                reference="X", description="x", source="dining", source_id=None,
+            )
+
+    def test_tax_profile_version_recorded_in_description(self, db: Session, branch):
+        self._accounts(db, branch)
+        entry = services.post_taxed_sale_journal(
+            db, branch.id, date.today(),
+            debit_account_code="1100", revenue_account_code="4200",
+            net_revenue_amount=Decimal("100.00"), vat_amount=Decimal("14.00"),
+            reference="ORD-TP-001", description="طلب عادي", source="dining", source_id=9,
+            tax_profile_version="EG-TRIAL-2026-07-v1",
+        )
+        assert "EG-TRIAL-2026-07-v1" in entry.description
+
+    def test_does_not_commit_internally(self, db: Session, branch):
+        """لا يعمل commit داخليًا — المسؤولية على المستدعي (زي الأصل)."""
+        self._accounts(db, branch)
+        services.post_taxed_sale_journal(
+            db, branch.id, date.today(),
+            debit_account_code="1100", revenue_account_code="4200",
+            net_revenue_amount=Decimal("100.00"), vat_amount=Decimal("14.00"),
+            reference="ORD-NOCOMMIT-001", description="x", source="dining", source_id=None,
+        )
+        db.rollback()
+        count = db.query(services.JournalEntry).filter(
+            services.JournalEntry.reference == "ORD-NOCOMMIT-001",
+        ).count()
+        assert count == 0
+
+
+class TestAccountingPeriodAndShiftHandover:
     def test_close_period_writes_audit_log(self, db: Session, branch):
         from app.modules.core.crud import list_audit_logs
         from app.core.kernel.models.user import User
@@ -1235,15 +1383,18 @@ class TestCostCenterReport:
 
     def test_default_cost_centers_seeded_idempotently(self, db: Session, branch):
         first = services.ensure_default_cost_centers(db, branch.id)
-        assert {c.code for c in first} == {"ROOM", "REST", "CAFE", "BEACH", "TS"}
+        # OPS-DATA-02 §11.1 added LEASE/MAINT/ADMIN alongside the original 5.
+        assert {c.code for c in first} == {
+            "ROOM", "REST", "CAFE", "BEACH", "TS", "LEASE", "MAINT", "ADMIN",
+        }
         second = services.ensure_default_cost_centers(db, branch.id)
-        assert len(second) == 5  # مفيش تكرار
+        assert len(second) == 8  # مفيش تكرار
 
     def test_empty_report_all_zero(self, db: Session, branch):
         report = services.get_cost_center_report(
             db, branch.id, date(2026, 1, 1), date(2026, 1, 31),
         )
-        assert len(report.lines) == 5
+        assert len(report.lines) == 8
         assert report.total_revenue == Decimal("0")
         assert report.total_expense == Decimal("0")
         assert all(l.revenue == Decimal("0") and l.expense == Decimal("0") for l in report.lines)

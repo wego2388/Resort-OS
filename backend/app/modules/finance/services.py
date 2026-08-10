@@ -1294,6 +1294,144 @@ def post_simple_revenue_journal(
         return None
 
 
+def post_taxed_sale_journal(
+    db: Session,
+    branch_id: int,
+    entry_date: date,
+    *,
+    debit_account_code: str,
+    revenue_account_code: str,
+    net_revenue_amount: Decimal,
+    vat_amount: Decimal = Decimal("0"),
+    service_charge_amount: Decimal = Decimal("0"),
+    reference: str,
+    description: str,
+    source: str,
+    source_id: Optional[int],
+    created_by: int = 0,
+    cost_center_code: Optional[str] = None,
+    tax_profile_version: Optional[str] = None,
+    commit_cost_centers: bool = True,
+) -> JournalEntry:
+    """OPS-DATA-02 §11.2 (FIN-TAX-01) — يرحّل بيع خاضع للضريبة/الخدمة بفصل
+    حقيقي عن الإيراد، بدل ما dining/beach.services يرحّلوا الإجمالي كله
+    (أساسي + VAT + خدمة) على حساب الإيراد زي ما كانوا بيعملوا (باج حقيقي:
+    الربح وVAT payable كانوا غلط لأي بيع فيه ضريبة/رسم خدمة).
+
+    ```
+    Dr <debit_account_code>              = net_revenue_amount + vat + service
+        Cr <revenue_account_code>            = net_revenue_amount   (بعد الخصم)
+        Cr 2160 ضريبة القيمة المضافة مستحقة  = vat_amount    (لو > 0)
+        Cr 2165 رسم خدمة مستحق                = service_charge_amount (لو > 0)
+    ```
+
+    على عكس post_simple_revenue_journal القديمة: **دايمًا strict** — لا
+    ابتلاع صامت لأي فشل (حساب غير معرّف، فترة مقفولة، مبلغ غير صالح)، كلها
+    بترفع استثناء حقيقي يوقف العملية المالية اللي استدعتها. لازم يحترم قفل
+    الفترة المحاسبية (post_simple_revenue_journal القديمة كانت بتتخطى الفحص
+    ده عمدًا — هنا لأ). مفيش commit داخلي — المسؤولية على المستدعي، زي
+    الأصل.
+
+    idempotency: لو قيد بنفس (branch_id, source, source_id, reference)
+    موجود بالفعل، بيرجّعه من غير ما ينشئ نسخة تانية (إعادة محاولة آمنة بعد
+    فشل شبكة/timeout، مش خطأ). مفيش unique constraint على مستوى الداتابيز
+    لسه على الحقول دي (يشمل كل نقاط الترحيل القديمة، تغيير أوسع من نطاق
+    هذه الدفعة) — الفحص هنا شبكة أمان تطبيقية إضافية فوق الحماية التشغيلية
+    الموجودة بالفعل في كل مسار استدعاء (حالة الطلب/الدفعة نفسها بتمنع
+    استدعاء التسوية مرتين أصلاً)، مش الخط الدفاعي الوحيد.
+
+    tax_profile_version: يتحفظ كنص داخل description للتدقيق (مفيش عمود
+    مخصص على JournalEntry — إضافة عمود جديد قرار migration أوسع من نطاق
+    هذه الدفعة). يدعم splits حسب outlet/cost-center عن طريق استدعاء الدالة
+    دي مرة لكل outlet (زي ما dining.services بتعمل بالفعل مع
+    post_simple_revenue_journal اليوم) — كل استدعاء قيد متوازن مستقل بحد
+    ذاته، لا حاجة لتعقيد إضافي هنا.
+    """
+    validate_period_open(db, branch_id, entry_date)
+
+    gross_amount = (net_revenue_amount + vat_amount + service_charge_amount).quantize(Decimal("0.01"))
+    if gross_amount <= 0:
+        raise ValueError("إجمالي القيد المحاسبي غير صالح (صفر أو سالب)")
+    if net_revenue_amount < 0 or vat_amount < 0 or service_charge_amount < 0:
+        raise ValueError("مكوّنات القيد (الإيراد/الضريبة/الخدمة) لا يجوز أن تكون سالبة")
+
+    existing = (
+        db.query(JournalEntry)
+        .filter(
+            JournalEntry.branch_id == branch_id,
+            JournalEntry.source == source,
+            JournalEntry.source_id == source_id,
+            JournalEntry.reference == reference,
+        )
+        .first()
+    )
+    if existing:
+        logger.info(
+            "post_taxed_sale_journal: entry already posted for source=%s source_id=%s "
+            "reference=%s — returning existing entry %s (idempotent no-op)",
+            source, source_id, reference, existing.id,
+        )
+        return existing
+
+    debit_acc = crud.get_account_by_code(db, branch_id, debit_account_code)
+    revenue_acc = crud.get_account_by_code(db, branch_id, revenue_account_code)
+    if not debit_acc:
+        raise FinancialConfigurationError(f"حساب محاسبي غير معرّف للفرع: {debit_account_code}")
+    if not revenue_acc:
+        raise FinancialConfigurationError(f"حساب محاسبي غير معرّف للفرع: {revenue_account_code}")
+
+    vat_acc = None
+    if vat_amount > 0:
+        vat_acc = crud.get_account_by_code(db, branch_id, "2160")
+        if not vat_acc:
+            raise FinancialConfigurationError("حساب محاسبي غير معرّف للفرع: 2160")
+
+    service_acc = None
+    if service_charge_amount > 0:
+        service_acc = crud.get_account_by_code(db, branch_id, "2165")
+        if not service_acc:
+            raise FinancialConfigurationError("حساب محاسبي غير معرّف للفرع: 2165")
+
+    cost_center_id = None
+    if cost_center_code:
+        cc = crud.get_cost_center_by_code(db, branch_id, cost_center_code)
+        if not cc:
+            ensure_default_cost_centers(db, branch_id, commit=commit_cost_centers)
+            cc = crud.get_cost_center_by_code(db, branch_id, cost_center_code)
+        if not cc:
+            raise FinancialConfigurationError(f"تعذّر تجهيز مركز التكلفة: {cost_center_code}")
+        cost_center_id = cc.id
+
+    full_description = description
+    if tax_profile_version:
+        full_description = f"{description} [tax_profile={tax_profile_version}]"
+
+    lines = [
+        JournalLineCreate(account_id=debit_acc.id, debit=gross_amount, credit=Decimal("0"),
+                           cost_center_id=cost_center_id),
+        JournalLineCreate(account_id=revenue_acc.id, debit=Decimal("0"), credit=net_revenue_amount,
+                           cost_center_id=cost_center_id),
+    ]
+    if vat_amount > 0:
+        lines.append(JournalLineCreate(account_id=vat_acc.id, debit=Decimal("0"), credit=vat_amount,
+                                        cost_center_id=cost_center_id))
+    if service_charge_amount > 0:
+        lines.append(JournalLineCreate(account_id=service_acc.id, debit=Decimal("0"),
+                                        credit=service_charge_amount, cost_center_id=cost_center_id))
+
+    total_debit = sum((ln.debit for ln in lines), Decimal("0"))
+    total_credit = sum((ln.credit for ln in lines), Decimal("0"))
+    if abs(total_debit - total_credit) > Decimal("0.01"):
+        raise ValueError(f"القيد غير متوازن: مدين={total_debit}, دائن={total_credit}")
+
+    entry_data = JournalEntryCreate(
+        branch_id=branch_id, entry_date=entry_date, reference=reference,
+        description=full_description, source=source, source_id=source_id,
+        lines=lines,
+    )
+    return crud.create_journal_entry(db, entry_data, created_by)
+
+
 def close_accounting_period(
     db: Session,
     branch_id: int,
@@ -1488,6 +1626,10 @@ DEFAULT_COST_CENTERS = [
     {"code": "CAFE",  "name": "الكافيه"},
     {"code": "BEACH", "name": "الشاطئ"},
     {"code": "TS",    "name": "التايم شير"},
+    # OPS-DATA-02 §11.1
+    {"code": "LEASE", "name": "الإيجارات"},
+    {"code": "MAINT", "name": "الصيانة"},
+    {"code": "ADMIN", "name": "الإدارة"},
 ]
 
 
