@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -95,7 +96,12 @@ def cmd_backup(target: TargetConfig, *, apply: bool) -> dict:
         raise ResetToolError(f"backup_db.sh failed (exit {result.returncode}): {result.stderr[-2000:]}")
 
     dump_line = next((ln for ln in result.stdout.splitlines() if "Backup complete" in ln), None)
-    return {"mode": "apply", "target": target.name, "stdout_tail": result.stdout[-500:], "summary": dump_line}
+    dump_file_match = re.search(r"Backup complete:\s*(\S+\.dump)", dump_line or "")
+    dump_file = dump_file_match.group(1) if dump_file_match else None
+    return {
+        "mode": "apply", "target": target.name, "stdout_tail": result.stdout[-500:],
+        "summary": dump_line, "dump_file": dump_file,
+    }
 
 
 # ── seed-july / validate ────────────────────────────────────────────
@@ -249,8 +255,10 @@ def cmd_rebuild_trial(target: TargetConfig, *, apply: bool, confirm: Optional[st
             "this tool never executes destructive operations against a remote host."
         )
 
-    import sqlalchemy as sa
+    import uuid
     from datetime import date
+
+    import sqlalchemy as sa
 
     # ⚠️ باج حقيقي اتكشف وقت كتابة test_rebuild_trial_apply_creates_
     # migrated_db_with_accounts_and_branch: اسم عشوائي (uuid4) هنا كان
@@ -284,6 +292,48 @@ def cmd_rebuild_trial(target: TargetConfig, *, apply: bool, confirm: Optional[st
     expected = f"REBUILD-TRIAL {target.name} {new_db_name}"
     if confirm != expected:
         raise ResetToolError(f"--apply requires --confirm {expected!r}")
+
+    # ── الخطوتين 1-2 (backup + اختبار استعادة) — لازم يتنفذوا فعليًا هنا،
+    # مش بس يتوصفوا في dry-run — وإلا الـpreview بيكدب على اللي --apply
+    # بيعمله فعليًا. بيرجّعوا نتيجة حقيقية (dump_file/restore_verified)
+    # جوه manual_next_steps's سياق، مش مجرد نص. ─────────────────────────
+    backup_result = cmd_backup(target, apply=True)
+    dump_file = backup_result.get("dump_file")
+    if not dump_file:
+        raise ResetToolError(
+            f"backup succeeded but the dump file path could not be parsed from its output "
+            f"— refusing to proceed without a verifiable backup: {backup_result.get('summary')!r}"
+        )
+
+    restore_test_db = f"resort_os_backup_verify_{uuid.uuid4().hex[:8]}"
+    restore_script = _REPO_ROOT / "scripts" / "restore_db.sh"
+    restore_result = subprocess.run(
+        ["bash", str(restore_script), dump_file, restore_test_db],
+        cwd=str(_REPO_ROOT), capture_output=True, text=True, check=False,
+    )
+    verify_engine = sa.create_engine(admin_url_base + f"/{restore_test_db}")
+    try:
+        with verify_engine.connect() as conn:
+            table_count = conn.execute(
+                sa.text("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public'")
+            ).scalar()
+    finally:
+        verify_engine.dispose()
+    cleanup_engine = sa.create_engine(admin_url_base + "/postgres", isolation_level="AUTOCOMMIT")
+    try:
+        with cleanup_engine.connect() as conn:
+            conn.execute(sa.text(
+                f"SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                f"WHERE datname = '{restore_test_db}' AND pid <> pg_backend_pid()"
+            ))
+            conn.execute(sa.text(f'DROP DATABASE IF EXISTS "{restore_test_db}"'))
+    finally:
+        cleanup_engine.dispose()
+    if restore_result.returncode != 0 or not table_count:
+        raise ResetToolError(
+            f"backup integrity check failed — restore_db.sh exit={restore_result.returncode}, "
+            f"table_count={table_count}: {restore_result.stderr[-2000:]}"
+        )
 
     admin_engine = sa.create_engine(admin_url_base + "/postgres", isolation_level="AUTOCOMMIT")
     try:
