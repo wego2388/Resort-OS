@@ -34,15 +34,32 @@
      root cascades to `body`, so components use logical properties and inherit
      the correct direction automatically. The Cairo family renders Arabic
      comfortably and falls back cleanly for Latin text. */
+  /* OPS-DATA-02 UX-API-01 §6.7: the off-canvas mobile sidebar
+     (BackOfficeLayout.vue's <aside class="sidebar-shell">) is
+     `position: fixed` + a CSS transform (translateX) to slide off-screen
+     when closed. Real, reproduced-live bug: Chromium still counts that
+     fixed element's *pre-transform* layout box toward
+     document.documentElement.scrollWidth (a known fixed+transform cross-
+     browser quirk, the same family of issue as the 2026-07-13 Drawer
+     transform-stacking incident) — every /admin/* and /ops/* screen
+     showed a phantom ~576px-wide document at narrow viewports (measured
+     390px clientWidth vs 576px scrollWidth) even though nothing was
+     visually overflowing. html/body already correctly own no horizontal
+     content of their own, so clip defensively at the viewport boundary
+     instead of chasing the sidebar's exact transform math — any
+     screen-specific wide content (tables etc.) must scroll in its own
+     container per this same section, never the document. */
   html {
     color-scheme: light;
     background-color: rgb(var(--color-background));
+    overflow-x: hidden;
   }
 
   html.dark { color-scheme: dark; }
 
   body {
     min-width: 320px;
+    overflow-x: hidden;
     font-family: 'Cairo', sans-serif;
     background-color: rgb(var(--color-background));
     color: rgb(var(--color-dark));

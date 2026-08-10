@@ -35,6 +35,12 @@ frontend/apps/*/dist/
 **/.vite/
 *.tsbuildinfo
 
+# Playwright (OPS-DATA-02 UX-API-01 §6.7 — frontend/apps/el-kheima/e2e)
+**/test-results/
+**/playwright-report/
+**/blob-report/
+**/playwright/.cache/
+
 # ── Logs ───────────────────────────────────────────────────────────────────────
 *.log
 npm-debug.log*
