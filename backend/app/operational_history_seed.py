@@ -426,65 +426,49 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> int:
-    args = _parse_args()
-    if args.apply and args.validate_only:
-        raise SystemExit("--apply and --validate-only are mutually exclusive")
+def run_seed_against_engine(
+    engine, *, branch_code: str, period: str, apply: bool, actor_id: Optional[int] = None,
+) -> SeedResult:
+    """المنطق القابل لإعادة الاستخدام (dry-run بـsavepoint mode، أو --apply
+    بـcheckpoint حقيقي 3 مراحل) — بياخد `engine` صراحةً بدل ما يفترض
+    `app.core.database.get_engine()` الثابتة، عشان أدوات تانية (زي
+    `app.resort_data_cli`'s `seed-july` — RESET-01 §9.4) تقدر تستخدم نفس
+    الـtransaction handling الدقيق ده ضد أي target تاني (local/vps) من
+    غير ما تكرر المنطق ده تاني. `main()` تحت هو المستهلك المباشر الوحيد
+    اللي بيستخدم `get_engine()` (بيئة التطبيق الحقيقية).
 
-    if args.validate_only:
-        with SessionLocal() as db:
-            report = validate_only(db, branch_code=args.branch_code, period=args.period)
-            db.rollback()
-            print(json.dumps(report, ensure_ascii=False, sort_keys=True, default=str))
-            return 0
+    ⚠️ باج أمان حقيقي اتصلح هنا: كل موديول HIST-01 بينادي services حقيقية
+    (create_employee/confirm_booking/receive_purchase_order/post_journal_
+    entry...)، وكل service بينادي db.commit() داخليًا — نفس اصطلاح
+    المشروع كله. يعني db.rollback() العادية في وضع dry-run كانت بترجع بس
+    آخر جزء لسه pending، مش أي حاجة اتكتبت فعليًا طول التشغيلة — "dry-run
+    افتراضي" (§9.1، أول بند في الحزمة) كان مكسور فعليًا من أول commit لأي
+    مولّد. اتأكد بريبرو حي ضد PostgreSQL حقيقي قبل الإصلاح (14 موظف فضلوا
+    في الداتابيز بعد db.rollback() العادي)، وبعد الإصلاح (صفر بعد
+    rollback الـconnection الخارجية). الحل: نربط الـSession بـconnection
+    واحدة صريحة عبر join_transaction_mode="create_savepoint" — أي
+    db.commit() داخل أي service بقى بيقفل SAVEPOINT بس.
 
-    expected_confirm = confirmation_phrase(args.branch_code, args.period)
-    if args.apply and args.confirm != expected_confirm:
-        raise SystemExit(f"--apply requires --confirm {expected_confirm!r}")
-
-    # ⚠️ باج أمان حقيقي اتصلح هنا: كل موديول HIST-01 بينادي services حقيقية
-    # (create_employee/confirm_booking/receive_purchase_order/post_journal_
-    # entry...)، وكل service بينادي db.commit() داخليًا — نفس اصطلاح
-    # المشروع كله (راجع أي services.py). يعني `db.rollback()` القديمة في
-    # وضع dry-run (الافتراضي!) كانت بترجع بس آخر جزء لسه pending، مش أي
-    # حاجة اتكتبت فعليًا في التشغيلة كلها — "dry-run افتراضي" (§9.1، أول
-    # بند في الحزمة) كان مكسور فعليًا من أول commit لأي مولّد، وبيانات
-    # حقيقية كانت بتتكتب بصمت حتى من غير --apply خالص. اتأكد بريبرو حي ضد
-    # PostgreSQL حقيقي قبل الإصلاح (14 موظف فضلوا في الداتابيز بعد
-    # db.rollback() العادي)، وبعد الإصلاح (صفر بعد rollback الـconnection
-    # الخارجية). الحل: نربط الـSession بـconnection واحدة صريحة عبر
-    # join_transaction_mode="create_savepoint" — أي db.commit() داخل أي
-    # service بقى بيقفل SAVEPOINT بس، مش الـtransaction الفعلية على مستوى
-    # الـconnection.
-    #
-    # ⚠️ لكن ده كشف تعارض حقيقي تاني مع متطلب منفصل من §9.1: "منع rerun
-    # حتى بعد crash باستخدام import batch/checkpoints" — لو كل التشغيلة
-    # (بما فيها إنشاء ImportBatch(status="running") نفسه) جوه transaction
-    # واحدة هترجع بالكامل عند أي استثناء، فأي crash حقيقي أثناء --apply
-    # هيمسح علامة "running"/"failed" نفسها كمان، ويرجع الحماية من الـrerun
-    # عديمة الفائدة بالظبط في اللحظة اللي محتاجينها فيها. الحل: لـ--apply
-    # بس، بنعمل checkpoint حقيقي منفصل — نلتزم (commit فوري) بعلامة
-    # "running" في transaction قصيرة لوحدها الأول، وبعدين نبدأ transaction
-    # تانية (savepoint mode برضو) للشغل الفعلي؛ لو فشلت، نفتح transaction
-    # ثالثة قصيرة تسجّل "failed" + السبب بشكل دائم. dry-run فضل زي ما هو
-    # (transaction واحدة، rollback شامل حتى لو للـbatch نفسه — دري-ران
-    # المفروض ميسيبش أي أثر خالص، مش حتى علامة).
-    from app.core.database import get_engine  # noqa: PLC0415
+    ⚠️ ده كشف تعارض حقيقي تاني مع متطلب منفصل من §9.1: "منع rerun حتى بعد
+    crash باستخدام import batch/checkpoints" — لو كل التشغيلة (بما فيها
+    إنشاء ImportBatch(status="running") نفسه) جوه transaction واحدة
+    هترجع بالكامل عند أي استثناء، فأي crash حقيقي أثناء --apply هيمسح
+    علامة "running"/"failed" نفسها كمان. الحل: لـ--apply بس، checkpoint
+    حقيقي منفصل — commit فوري بعلامة "running" في transaction قصيرة
+    لوحدها، وبعدين transaction تانية (savepoint mode برضو) للشغل الفعلي؛
+    لو فشلت، transaction ثالثة قصيرة تسجّل "failed" + السبب بشكل دائم.
+    dry-run فضل زي ما هو (transaction واحدة، rollback شامل حتى للbatch
+    نفسه — دري-ران المفروض ميسيبش أي أثر خالص)."""
     from app.modules.core.models import ImportBatch  # noqa: PLC0415
 
-    engine = get_engine()
-
-    if not args.apply:
+    if not apply:
         connection = engine.connect()
         outer_txn = connection.begin()
         db = Session(bind=connection, join_transaction_mode="create_savepoint")
         try:
-            result = run_seed(
-                db, branch_code=args.branch_code, period=args.period, actor_id=args.actor_id,
-            )
+            result = run_seed(db, branch_code=branch_code, period=period, actor_id=actor_id)
             outer_txn.rollback()
-            _print_seed_result("dry-run", args, result)
-            return 0
+            return result
         except Exception:
             outer_txn.rollback()
             raise
@@ -498,7 +482,7 @@ def main() -> int:
     checkpoint_db = Session(bind=connection)
     try:
         prepared = prepare_batch(
-            checkpoint_db, branch_code=args.branch_code, period=args.period, actor_id=args.actor_id,
+            checkpoint_db, branch_code=branch_code, period=period, actor_id=actor_id,
         )
         checkpoint_txn.commit()
     except Exception:
@@ -510,8 +494,7 @@ def main() -> int:
 
     if prepared.already_completed_result:
         connection.close()
-        _print_seed_result("apply", args, prepared.already_completed_result)
-        return 0
+        return prepared.already_completed_result
 
     batch_id = prepared.batch.id
     ctx = prepared.ctx
@@ -520,8 +503,7 @@ def main() -> int:
     # ⚠️ pg_advisory_xact_lock مربوط بعمر الـtransaction اللي اتاخد فيها —
     # القفل اتحرر تلقائيًا لما checkpoint_txn.commit() فوق حصل. لازم نعيد
     # أخذه هنا من جديد لحماية المرحلة الأطول والأهم (الشغل الفعلي) من أي
-    # تشغيلة تانية متزامنة — وإلا الحماية بتفضل شغالة بس في أقصر/أقل جزء
-    # حرج من العملية كلها.
+    # تشغيلة تانية متزامنة.
     work_txn = connection.begin()
     db = Session(bind=connection, join_transaction_mode="create_savepoint")
     try:
@@ -529,11 +511,10 @@ def main() -> int:
         batch = db.get(ImportBatch, batch_id)
         result = run_modules(db, batch, ctx)
         work_txn.commit()
-        _print_seed_result("apply", args, SeedResult(
-            args.branch_code, args.period, DATASET_VERSION, "apply", False,
+        return SeedResult(
+            branch_code, period, DATASET_VERSION, "apply", False,
             result.modules_run, result.counts, result.totals,
-        ))
-        return 0
+        )
     except Exception as exc:
         work_txn.rollback()
         # ── مرحلة 3 — تسجيل "failed" بشكل دائم في transaction قصيرة منفصلة ──
@@ -550,9 +531,8 @@ def main() -> int:
             # التعديلات على failed_batch فوق (ORM attribute assignment)
             # كانت لسه staged جوه fail_db's unit-of-work، من غير flush،
             # يعني fail_txn.commit() كان بيقفل transaction فاضية فعليًا،
-            # وعلامة "failed" عمرها ما كانت بتتسجّل حقيقي — بالظبط الباج
-            # اللي checkpoint marker المفروض يحميه منه. لازم flush صريح
-            # قبل الـcommit على مستوى الـTransaction.
+            # وعلامة "failed" عمرها ما كانت بتتسجّل حقيقي. لازم flush
+            # صريح قبل الـcommit على مستوى الـTransaction.
             fail_db.flush()
             fail_txn.commit()
         except Exception:
@@ -566,11 +546,32 @@ def main() -> int:
         connection.close()
 
 
-def _print_seed_result(mode: str, args: argparse.Namespace, result: SeedResult) -> None:
+def main() -> int:
+    args = _parse_args()
+    if args.apply and args.validate_only:
+        raise SystemExit("--apply and --validate-only are mutually exclusive")
+
+    if args.validate_only:
+        with SessionLocal() as db:
+            report = validate_only(db, branch_code=args.branch_code, period=args.period)
+            db.rollback()
+            print(json.dumps(report, ensure_ascii=False, sort_keys=True, default=str))
+            return 0
+
+    expected_confirm = confirmation_phrase(args.branch_code, args.period)
+    if args.apply and args.confirm != expected_confirm:
+        raise SystemExit(f"--apply requires --confirm {expected_confirm!r}")
+
+    from app.core.database import get_engine  # noqa: PLC0415
+
+    result = run_seed_against_engine(
+        get_engine(), branch_code=args.branch_code, period=args.period,
+        apply=args.apply, actor_id=args.actor_id,
+    )
     print(
         json.dumps(
             {
-                "mode": mode,
+                "mode": "apply" if args.apply else "dry-run",
                 "branch_code": args.branch_code,
                 "period": args.period,
                 "version": result.version,
@@ -583,6 +584,7 @@ def _print_seed_result(mode: str, args: argparse.Namespace, result: SeedResult) 
             ensure_ascii=False, sort_keys=True, default=str,
         )
     )
+    return 0
 
 
 if __name__ == "__main__":

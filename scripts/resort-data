@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# ─────────────────────────────────────────────────────────────────────────────
+#  scripts/resort-data — RESET-01 unified data-lifecycle tool (OPS-DATA-02 §9.4)
+#
+#  Thin dispatcher — all real logic lives in backend/app/resort_data_cli.py.
+#  This wrapper only makes sure we run inside the backend venv with the repo
+#  root as cwd, so relative paths (scripts/backup_db.sh, alembic.ini) resolve
+#  the same way regardless of where this script is invoked from.
+#
+#  Usage:
+#      ./scripts/resort-data backup        --target local|vps
+#      ./scripts/resort-data seed-july     --target local|vps --period 2026-07 [--apply --confirm "..."] [--validate-only]
+#      ./scripts/resort-data validate      --target local|vps --period 2026-07
+#      ./scripts/resort-data reset-dataset --target local|vps --period 2026-07 [--apply --confirm "..."]
+#      ./scripts/resort-data rebuild-trial --target local|vps [--apply --confirm "..."]
+#
+#  Connection details are read from environment/secrets only — never pass a
+#  DB URL or password as a CLI argument here (see backend/app/
+#  resort_data_targets.py's docstring for the RESORT_DATA_<TARGET>_* env vars).
+# ─────────────────────────────────────────────────────────────────────────────
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT/backend"
+
+if [[ -x ".venv/bin/python" ]]; then
+  PYTHON=".venv/bin/python"
+else
+  PYTHON="python3"
+fi
+
+exec "$PYTHON" -m app.resort_data_cli "$@"
