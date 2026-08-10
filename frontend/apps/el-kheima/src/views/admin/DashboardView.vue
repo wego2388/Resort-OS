@@ -31,20 +31,31 @@ const loadError = ref(false)
 // (مخزون/صيانة/تايم شير/حسابات) عشان يعرف فيه مشكلة. كل رقم هنا بيجي من
 // endpoint موجود بالفعل (مفيش منطق عمل جديد، بس تجميع للعرض).
 interface UrgentAlerts {
-  lowStock: number; overdueMaintenance: number; overdueInstallments: number; bouncedChecks: number
+  lowStock: number; overdueMaintenance: number; overdueInstallments: number | null; bouncedChecks: number
 }
 const alerts = ref<UrgentAlerts>({ lowStock: 0, overdueMaintenance: 0, overdueInstallments: 0, bouncedChecks: 0 })
-const alertsTotal = () => alerts.value.lowStock + alerts.value.overdueMaintenance + alerts.value.overdueInstallments + alerts.value.bouncedChecks
+const alertsTotal = () => alerts.value.lowStock + alerts.value.overdueMaintenance + (alerts.value.overdueInstallments ?? 0) + alerts.value.bouncedChecks
+// timeshare.cs-summary is behind a deliberately strict, isolated gate
+// (deps.py get_timeshare_user — only super_admin/timeshare_admin, or a
+// timeshare_agent with an explicit grant) — a manager/admin opening this
+// dashboard always gets 403 there. That used to be silently read as
+// overdueInstallments=0, i.e. "confirmed no overdue installments", which
+// is not true — it means "we don't know, no access". Only ask (and only
+// show a number) when the current role can actually see it.
+const canSeeTimeshareCS = computed(() => auth.role === 'super_admin' || auth.role === 'timeshare_admin')
 
 async function fetchUrgentAlerts() {
   const today = isoDate(new Date())
-  const [stockRes, maintOpenRes, maintInProgressRes, tsRes, checksRes] = await Promise.allSettled([
+  const calls: Promise<any>[] = [
     api.get(ENDPOINTS.inventory.products, { params: { branch_id: branchId.value, low_stock_only: true, size: 1 } }),
     api.get(ENDPOINTS.maintenance.workOrders, { params: { branch_id: branchId.value, status: 'open', size: 100 } }),
     api.get(ENDPOINTS.maintenance.workOrders, { params: { branch_id: branchId.value, status: 'in_progress', size: 100 } }),
-    api.get(ENDPOINTS.timeshare.csSummary, { params: { branch_id: branchId.value } }),
+    canSeeTimeshareCS.value
+      ? api.get(ENDPOINTS.timeshare.csSummary, { params: { branch_id: branchId.value } })
+      : Promise.reject(new Error('no-timeshare-access')),
     api.get(ENDPOINTS.finance.checks, { params: { branch_id: branchId.value, status: 'bounced' } }),
-  ])
+  ]
+  const [stockRes, maintOpenRes, maintInProgressRes, tsRes, checksRes] = await Promise.allSettled(calls)
 
   // أوامر صيانة متأخرة — نفس تعريف notify_overdue_work_orders (scheduled_date
   // < النهاردة، status لسه open/in_progress). الباك إند مالوش فلتر "متأخر"
@@ -57,7 +68,7 @@ async function fetchUrgentAlerts() {
   alerts.value = {
     lowStock: stockRes.status === 'fulfilled' ? (stockRes.value.data?.total ?? 0) : 0,
     overdueMaintenance,
-    overdueInstallments: tsRes.status === 'fulfilled' ? (tsRes.value.data?.overdue_contracts_count ?? 0) : 0,
+    overdueInstallments: tsRes.status === 'fulfilled' ? (tsRes.value.data?.overdue_contracts_count ?? 0) : null,
     bouncedChecks: checksRes.status === 'fulfilled' ? (checksRes.value.data?.length ?? 0) : 0,
   }
 }
@@ -125,11 +136,21 @@ async function fetchDashboard() {
       active_bookings: bookingsRes.status === 'fulfilled' ? (bookingsRes.value.data.total ?? 0) : 0,
       pending_hk_tasks: hkRes.status === 'fulfilled' ? (hkRes.value.data?.length ?? 0) : 0,
     }
+
+    // Promise.allSettled never rejects, so a real network/API failure on
+    // every underlying call used to sail straight through this try block
+    // with data.value quietly full of 0s and no error surfaced at all. The
+    // "today" KPI in particular has two independent sources (nightly
+    // snapshot + live fallback) — only treat it as a real load failure if
+    // *both* of those failed, not just whichever one loses the race.
+    loadError.value = todayRes.status === 'rejected' && liveRevenueRes.status === 'rejected'
+    const anySucceeded = [todayRes, yesterdayRes, bookingsRes, hkRes, liveRevenueRes]
+      .some(r => r.status === 'fulfilled')
+    if (anySucceeded) { lastUpdatedAt.value = new Date() }
   } catch {
     loadError.value = true
   } finally {
     loading.value = false
-    lastUpdatedAt.value = new Date()
     updateLastUpdatedLabel()
   }
 }
