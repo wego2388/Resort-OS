@@ -602,6 +602,60 @@ class TestPostTaxedSaleJournal:
         assert count == 0
 
 
+class TestReverseTaxedSaleJournal:
+    """void/refund must reverse the exact original tax-split lines, not
+    post a fresh Dr Revenue = gross entry (OPS-DATA-02 §11.2)."""
+
+    def _accounts(self, db: Session, branch, revenue_code="4200"):
+        from app.modules.finance.schemas import AccountCreate as AC
+        cash = crud.create_account(db, AC(branch_id=branch.id, code="1100", name="Cash", account_type="asset"))
+        rev = crud.create_account(db, AC(branch_id=branch.id, code=revenue_code, name="Revenue", account_type="revenue"))
+        vat = crud.create_account(db, AC(branch_id=branch.id, code="2160", name="VAT Payable", account_type="liability"))
+        svc = crud.create_account(db, AC(branch_id=branch.id, code="2165", name="Service Payable", account_type="liability"))
+        db.commit()
+        return cash, rev, vat, svc
+
+    def test_reversal_debits_revenue_vat_service_and_credits_cash(self, db: Session, branch):
+        cash, rev, vat, svc = self._accounts(db, branch)
+        services.post_taxed_sale_journal(
+            db, branch.id, date.today(),
+            debit_account_code="1100", revenue_account_code="4200",
+            net_revenue_amount=Decimal("1000.00"),
+            vat_amount=Decimal("140.00"), service_charge_amount=Decimal("120.00"),
+            reference="ORD-REV-001", description="بيع أصلي",
+            source="dining", source_id=1,
+        )
+        reversal = services.reverse_taxed_sale_journal(
+            db, branch.id, date.today(),
+            debit_account_code="1100", revenue_account_code="4200",
+            net_revenue_amount=Decimal("1000.00"),
+            vat_amount=Decimal("140.00"), service_charge_amount=Decimal("120.00"),
+            reference="ORD-REV-001-VOID", description="إلغاء",
+            source="dining_void", source_id=1,
+        )
+        lines = {l.account_id: (l.debit, l.credit) for l in reversal.lines}
+        assert lines[cash.id] == (Decimal("0"), Decimal("1260.00"))
+        assert lines[rev.id] == (Decimal("1000.00"), Decimal("0"))
+        assert lines[vat.id] == (Decimal("140.00"), Decimal("0"))
+        assert lines[svc.id] == (Decimal("120.00"), Decimal("0"))
+
+    def test_reversal_is_also_idempotent(self, db: Session, branch):
+        self._accounts(db, branch)
+        first = services.reverse_taxed_sale_journal(
+            db, branch.id, date.today(),
+            debit_account_code="1100", revenue_account_code="4200",
+            net_revenue_amount=Decimal("100.00"), vat_amount=Decimal("14.00"),
+            reference="ORD-REV-DUP", description="x", source="dining_void", source_id=2,
+        )
+        second = services.reverse_taxed_sale_journal(
+            db, branch.id, date.today(),
+            debit_account_code="1100", revenue_account_code="4200",
+            net_revenue_amount=Decimal("100.00"), vat_amount=Decimal("14.00"),
+            reference="ORD-REV-DUP", description="retry", source="dining_void", source_id=2,
+        )
+        assert second.id == first.id
+
+
 class TestAccountingPeriodAndShiftHandover:
     def test_close_period_writes_audit_log(self, db: Session, branch):
         from app.modules.core.crud import list_audit_logs
@@ -1372,6 +1426,9 @@ def _seed_full_chart_of_accounts(db: Session, branch_id: int) -> None:
         ("4300", "Beach Revenue", "revenue"), ("4400", "Cafe Revenue", "revenue"),
         ("4600", "Timeshare Revenue", "revenue"),
         ("5200", "COGS", "expense"),
+        # FIN-TAX-01 — post_taxed_sale_journal (strict) needs these for any
+        # real dining/beach sale, which always has vat_amount > 0.
+        ("2160", "VAT Payable", "liability"), ("2165", "Service Charge Payable", "liability"),
     ]
     for code, name, acc_type in codes:
         if not crud.get_account_by_code(db, branch_id, code):
@@ -1410,7 +1467,10 @@ class TestCostCenterReport:
         tx = beach_services.sell_ticket(
             db, branch.id, BeachSellRequest(tx_type="entry", quantity=2), tx_date=today,
         )
-        expected = (tx.total_amount or Decimal("0")) + (tx.vat_amount or Decimal("0"))
+        # FIN-TAX-01: the revenue-account line (what this report sums) is
+        # net-only now — VAT posts to its own 2160 payable line instead of
+        # being folded into revenue.
+        expected = tx.total_amount or Decimal("0")
 
         report = services.get_cost_center_report(db, branch.id, date(2026, 6, 1), date(2026, 6, 30))
         by_code = {l.code: l for l in report.lines}
@@ -1511,7 +1571,8 @@ class TestCostCenterReport:
         tx = beach_services.sell_ticket(
             db, branch.id, BeachSellRequest(tx_type="entry", quantity=1), tx_date=date(2026, 6, 5),
         )
-        expected_beach = (tx.total_amount or Decimal("0")) + (tx.vat_amount or Decimal("0"))
+        # FIN-TAX-01: net revenue only — VAT is a payable, not revenue.
+        expected_beach = tx.total_amount or Decimal("0")
 
         report = services.get_cost_center_report(db, branch.id, date(2026, 6, 1), date(2026, 6, 30))
         assert report.total_revenue == sum((l.revenue for l in report.lines), Decimal("0"))

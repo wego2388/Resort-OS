@@ -29,6 +29,14 @@ def make_branch(db):
     )
     db.add(b)
     db.commit()
+    # OPS-DATA-02 FIN-TAX-01: post_taxed_sale_journal (replacing the old
+    # silently-best-effort post_simple_revenue_journal) is strict — every
+    # real beach sale has vat_amount > 0, so any branch without 2160 seeded
+    # now genuinely fails the sale instead of quietly posting nothing.
+    # Every test in this file that does a real sell/checkin/void needs
+    # these accounts to exist; seed them here once instead of repeating
+    # make_finance_accounts(db, branch) at every call site.
+    make_finance_accounts(db, b)
     return b
 
 
@@ -1148,16 +1156,33 @@ class TestEODReport:
 
 
 def make_finance_accounts(db, branch):
-    """يزرع 1100 (نقدية) و4300 (إيرادات الشاطئ) و1150 (ذمم الفوليو) —
-    الحسابات اللي beach.services بيدوّر عليها بالكود عند ترحيل قيد الإيراد
-    (كاش فوري أو محمّل على فوليو غرفة)."""
+    """يزرع 1100 (نقدية) و4300 (إيرادات الشاطئ) و1150 (ذمم الفوليو) و2160
+    (ضريبة القيمة المضافة مستحقة — FIN-TAX-01، post_taxed_sale_journal
+    الصارمة محتاجاه لأي بيع فيه vat_amount > 0، وكل بيع شاطئ حقيقي فيه) —
+    الحسابات اللي beach.services بيدوّر عليها بالكود عند ترحيل قيد الإيراد.
+    Idempotent (بيتخطى أي كود موجود بالفعل) — make_branch بينادي الدالة دي
+    تلقائيًا، فالاستدعاء الصريح القديم في بعض التستات بقى no-op آمن."""
     from app.modules.finance.models import Account
-    cash = Account(branch_id=branch.id, code="1100", name="Cash", account_type="asset")
-    revenue = Account(branch_id=branch.id, code="4300", name="Beach Revenue", account_type="revenue")
-    guest_ledger = Account(branch_id=branch.id, code="1150", name="ذمم الفوليو", account_type="asset")
-    db.add_all([cash, revenue, guest_ledger])
-    db.commit()
-    return cash, revenue
+    existing_codes = {
+        a.code for a in db.query(Account).filter(Account.branch_id == branch.id).all()
+    }
+    wanted = [
+        ("1100", "Cash", "asset"),
+        ("4300", "Beach Revenue", "revenue"),
+        ("1150", "ذمم الفوليو", "asset"),
+        ("2160", "ضريبة القيمة المضافة مستحقة", "liability"),
+    ]
+    added = [
+        Account(branch_id=branch.id, code=code, name=name, account_type=account_type)
+        for code, name, account_type in wanted if code not in existing_codes
+    ]
+    if added:
+        db.add_all(added)
+        db.commit()
+    accounts = {
+        a.code: a for a in db.query(Account).filter(Account.branch_id == branch.id).all()
+    }
+    return accounts["1100"], accounts["4300"]
 
 
 class TestBeachRevenueJournalPosting:
@@ -1178,15 +1203,21 @@ class TestBeachRevenueJournalPosting:
         total_debit = sum(l.debit for l in entry.lines)
         total_credit = sum(l.credit for l in entry.lines)
         assert total_debit == total_credit
-        expected_amount = tx.total_amount + tx.vat_amount
-        assert total_debit == expected_amount
+        expected_gross = tx.total_amount + tx.vat_amount
+        assert total_debit == expected_gross
 
         db.refresh(cash)
         db.refresh(revenue)
+        # OPS-DATA-02 FIN-TAX-01: cash carries the gross (net + VAT), but the
+        # revenue line now only carries the net amount — VAT goes to its own
+        # 2160 line instead of being folded into revenue like it used to be.
         cash_line = next(l for l in entry.lines if l.account_id == cash.id)
         revenue_line = next(l for l in entry.lines if l.account_id == revenue.id)
-        assert cash_line.debit == expected_amount
-        assert revenue_line.credit == expected_amount
+        assert cash_line.debit == expected_gross
+        assert revenue_line.credit == tx.total_amount
+        vat_account = finance_crud.get_account_by_code(db, branch.id, "2160")
+        vat_line = next(l for l in entry.lines if l.account_id == vat_account.id)
+        assert vat_line.credit == tx.vat_amount
 
     def test_sell_ticket_updates_linked_customer_stats(self, db):
         from app.modules.crm import services as crm_services
@@ -1215,16 +1246,35 @@ class TestBeachRevenueJournalPosting:
         assert total == 1
         assert entries[0].source_id == tx.id
 
-    def test_missing_accounts_does_not_block_sale(self, db):
-        """لو الحسابات مش موجودة في الفرع، البيع لازم ينجح عادي (نفس فلسفة
-        pms._post_checkout_journal — الفشل المحاسبي ميوقفش العملية الأساسية)."""
-        branch = make_branch(db)
-        tx = services.sell_ticket(db, branch.id, BeachSellRequest(tx_type="entry", quantity=1))
-        assert tx.id is not None
+    def test_missing_accounts_blocks_sale(self, db):
+        """OPS-DATA-02 FIN-TAX-01: عكس السلوك القديم تمامًا (كان اسم هذا
+        الاختبار test_missing_accounts_does_not_block_sale ويؤكد إن الفشل
+        المحاسبي لا يوقف البيع — post_simple_revenue_journal القديمة كانت
+        تبتلع الفشل بصمت). post_taxed_sale_journal الجديدة strict عمدًا:
+        حساب غير معرّف يفشل العملية المالية كلها، مش يكمل البيع من غير أي
+        أثر محاسبي. هنا بنبني فرع خام بدون استدعاء make_branch (اللي بقى
+        يزرع الحسابات تلقائيًا) عشان نثبت غياب الحسابات فعليًا."""
+        from app.modules.core.models import Branch
+        branch = Branch(
+            name=f"No-Accounts Branch {uuid.uuid4().hex[:6]}",
+            name_ar="فرع بدون حسابات",
+            code=f"BCH-NOACC-{uuid.uuid4().hex[:8].upper()}",
+        )
+        db.add(branch)
+        db.commit()
+
+        from app.modules.finance.services import FinancialConfigurationError
+        with pytest.raises(FinancialConfigurationError):
+            services.sell_ticket(db, branch.id, BeachSellRequest(tx_type="entry", quantity=1))
 
         from app.modules.finance import crud as finance_crud
         _, total = finance_crud.list_journal_entries(db, branch.id, source="beach")
         assert total == 0
+        # لا تذكرة اتسجّلت برضو — sell_ticket بيعمل rollback كامل عند أي
+        # استثناء (راجع try/except: db.rollback(); raise في الدالة نفسها).
+        _, tx_total = finance_crud.list_journal_entries(db, branch.id)
+        assert tx_total == 0
+        assert crud.list_transactions(db, branch.id)[1] == 0
 
     def test_towel_return_zero_amount_does_not_post(self, db):
         """towel_return مفهوش قيمة مالية (إعادة فوطة) — من غير المفروض
@@ -1270,7 +1320,12 @@ class TestBeachVoidReversesFinancials:
         cash_line = next(l for l in entry.lines if l.account_id == cash.id)
         revenue_line = next(l for l in entry.lines if l.account_id == revenue.id)
         assert cash_line.credit == expected_amount  # عكس البيع: دلوقتي دائن مش مدين
-        assert revenue_line.debit == expected_amount  # عكس البيع: دلوقتي مدين مش دائن
+        # FIN-TAX-01: العكس بيرد نفس الإيراد الصافي (مش الإجمالي) + VAT في
+        # سطره الخاص — راجع تعليق test_sell_ticket_posts_balanced_journal_entry.
+        assert revenue_line.debit == tx.total_amount
+        vat_account = finance_crud.get_account_by_code(db, branch.id, "2160")
+        vat_line = next(l for l in entry.lines if l.account_id == vat_account.id)
+        assert vat_line.debit == tx.vat_amount
 
     def test_void_room_charged_ticket_removes_folio_charge(self, db):
         from app.modules.finance import crud as finance_crud
@@ -1327,7 +1382,15 @@ class TestBeachVoidReversesFinancials:
         void_credit = next(l for l in void_lines if l.credit > 0)
         assert finance_crud.get_account_by_code(db, branch.id, "4300").id == void_debit.account_id
         assert finance_crud.get_account_by_code(db, branch.id, "1150").id == void_credit.account_id
-        assert void_debit.debit == expected_amount
+        # FIN-TAX-01: revenue debit line is net-only now — VAT reverses in
+        # its own 2160 debit line instead of being folded into revenue.
+        assert void_debit.debit == tx.total_amount
+        void_vat = next(
+            l for l in void_lines
+            if l.account_id == finance_crud.get_account_by_code(db, branch.id, "2160").id
+        )
+        assert void_vat.debit == tx.vat_amount
+        assert void_credit.credit == expected_amount
 
     def test_void_rejected_on_closed_folio(self, db):
         from app.modules.finance.models import Folio

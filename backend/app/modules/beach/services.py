@@ -340,6 +340,13 @@ def _sell_ticket_no_commit(
             raise ValueError(
                 "لا يوجد حساب آجل مطابق في هذا الفرع"
             )
+        # ⚠️ فجوة معروفة، غير مغطاة بهذه الدفعة (FIN-TAX-01 غطّت direct
+        # tender وfolio charge فقط): revenue_allocations هنا لسه بترحّل
+        # الإجمالي شامل VAT كإيراد كامل على 4300 — نفس باج post_simple_
+        # revenue_journal بالظبط، بس عبر آلية ترحيل منفصلة تمامًا في
+        # credit.services._create_journal (مش finance.services). تصحيحها
+        # يحتاج تغيير شكل credit_allocations نفسه (مشترك مع dining أيضًا) —
+        # نطاق أوسع من الدفعة دي، موثّق كمتابعة منفصلة.
         charge_amount = (tx.total_amount or Decimal("0")) + (tx.vat_amount or Decimal("0"))
         credit_services.charge_to_account(
             db,
@@ -393,17 +400,30 @@ def _sell_ticket_no_commit(
 
 
 def _post_beach_revenue_journal(db: Session, tx: "BeachTransaction") -> None:
-    """Direct tender journal, using the configured GL account for its method."""
-    from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
+    """Direct tender journal, using the configured GL account for its method.
+
+    OPS-DATA-02 §11.2 (FIN-TAX-01) — كانت بترحّل total_amount+vat_amount
+    (الإجمالي شامل الضريبة) على 4300 كإيراد كامل، يعني VAT payable ماكانش
+    بيتسجّل خالص وإيراد الشاطئ كان مبالغ فيه بقيمة الضريبة. الشاطئ VAT بس،
+    مفيش رسم خدمة (§10.4).
+
+    towel_return مالوش قيمة مالية (0/0) — post_taxed_sale_journal الصارمة
+    بترفض إجمالي صفر (على عكس post_simple_revenue_journal القديمة اللي
+    كانت بترجع None بصمت)، فلازم نتخطى النداء هنا صراحةً بدل ما نسيب
+    العملية التشغيلية (إرجاع الفوطة) تفشل بغلطة محاسبية غير حقيقية."""
+    if (tx.total_amount or Decimal("0")) + (tx.vat_amount or Decimal("0")) <= 0:
+        return
+    from app.modules.finance.services import post_taxed_sale_journal  # noqa: PLC0415
     from app.modules.dining.payment_policy import resolve_direct_tender_account  # noqa: PLC0415
 
     method = tx.payment_method or "cash"
     debit_code = resolve_direct_tender_account(method)
 
-    post_simple_revenue_journal(
+    post_taxed_sale_journal(
         db, tx.branch_id, tx.tx_date,
-        debit_account_code=debit_code, credit_account_code="4300",
-        amount=(tx.total_amount or Decimal("0")) + (tx.vat_amount or Decimal("0")),
+        debit_account_code=debit_code, revenue_account_code="4300",
+        net_revenue_amount=(tx.total_amount or Decimal("0")),
+        vat_amount=(tx.vat_amount or Decimal("0")),
         reference=f"BCH-{tx.id:06d}" if tx.id else "BCH-NEW",
         description=f"إيرادات شاطئ ({method}) — {tx.tx_type}",
         source="beach", source_id=tx.id,
@@ -452,15 +472,17 @@ def _record_shift_payment(db: Session, tx: "BeachTransaction") -> None:
 
 
 def _post_beach_folio_charge_journal(db: Session, tx: "BeachTransaction") -> None:
-    """Dr. ذمم الفوليو (1150) / Cr. إيراد الشاطئ (4300) — عملية محمّلة على
-    فوليو غرفة. راجع restaurant.services._post_order_folio_charge_journal
-    للتفاصيل الكاملة — نفس المنطق بالظبط."""
-    from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
+    """Dr. ذمم الفوليو (1150) / Cr. إيراد الشاطئ (4300) + VAT payable —
+    عملية محمّلة على فوليو غرفة. راجع restaurant.services._post_order_folio_
+    charge_journal للتفاصيل الكاملة — نفس المنطق بالظبط، زائد فصل الضريبة
+    (FIN-TAX-01، OPS-DATA-02 §11.2)."""
+    from app.modules.finance.services import post_taxed_sale_journal  # noqa: PLC0415
 
-    post_simple_revenue_journal(
+    post_taxed_sale_journal(
         db, tx.branch_id, tx.tx_date,
-        debit_account_code="1150", credit_account_code="4300",
-        amount=(tx.total_amount or Decimal("0")) + (tx.vat_amount or Decimal("0")),
+        debit_account_code="1150", revenue_account_code="4300",
+        net_revenue_amount=(tx.total_amount or Decimal("0")),
+        vat_amount=(tx.vat_amount or Decimal("0")),
         reference=f"BCH-{tx.id:06d}" if tx.id else "BCH-NEW",
         description=f"إيرادات شاطئ (محمّل على الغرفة) — {tx.tx_type}",
         source="beach_folio_charge", source_id=tx.id,
@@ -716,14 +738,21 @@ def _void_shift_payment(db: Session, tx: "BeachTransaction", voided_by: int) -> 
 
 
 def _post_beach_revenue_reversal_journal(db: Session, tx: "BeachTransaction") -> None:
-    """عكس _post_beach_revenue_journal بالظبط — Dr. Beach Revenue (4300) /
-    Cr. Cash (1100) — بيلغي أثر قيد البيع الأصلي في الدفاتر."""
-    from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
+    """عكس _post_beach_revenue_journal — بيلغي أثر قيد البيع الأصلي (إيراد
+    صافي + VAT payable) في الدفاتر بنفس السطور والنسب، مش قيد جديد بإجمالي
+    gross على الإيراد بس (FIN-TAX-01، OPS-DATA-02 §11.2).
 
-    post_simple_revenue_journal(
+    ⚠️ فجوة موجودة من قبل، غير معدَّلة هنا (خارج نطاق FIN-TAX-01): الطرف
+    الآخر ثابت "1100" (كاش) دايمًا حتى لو البيع الأصلي كان بالكارت
+    (resolve_direct_tender_account) — الإلغاء مش بيرجع لنفس حساب الاستلام
+    الأصلي. موثّق كفجوة منفصلة، مش هذه الدفعة."""
+    from app.modules.finance.services import reverse_taxed_sale_journal  # noqa: PLC0415
+
+    reverse_taxed_sale_journal(
         db, tx.branch_id, _business_today(),
-        debit_account_code="4300", credit_account_code="1100",
-        amount=(tx.total_amount or Decimal("0")) + (tx.vat_amount or Decimal("0")),
+        debit_account_code="1100", revenue_account_code="4300",
+        net_revenue_amount=(tx.total_amount or Decimal("0")),
+        vat_amount=(tx.vat_amount or Decimal("0")),
         reference=f"BCH-VOID-{tx.id:06d}",
         description=f"إلغاء عملية شاطئ — {tx.tx_type}",
         source="beach_void", source_id=tx.id,
@@ -732,14 +761,15 @@ def _post_beach_revenue_reversal_journal(db: Session, tx: "BeachTransaction") ->
 
 
 def _post_beach_folio_charge_reversal_journal(db: Session, tx: "BeachTransaction") -> None:
-    """عكس _post_beach_folio_charge_journal — Dr. إيراد الشاطئ (4300) /
-    Cr. ذمم الفوليو (1150)."""
-    from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
+    """عكس _post_beach_folio_charge_journal — بنفس سطور القيد الأصلي (إيراد
+    صافي + VAT payable)، لا Dr Revenue بالإجمالي (FIN-TAX-01)."""
+    from app.modules.finance.services import reverse_taxed_sale_journal  # noqa: PLC0415
 
-    post_simple_revenue_journal(
+    reverse_taxed_sale_journal(
         db, tx.branch_id, _business_today(),
-        debit_account_code="4300", credit_account_code="1150",
-        amount=(tx.total_amount or Decimal("0")) + (tx.vat_amount or Decimal("0")),
+        debit_account_code="1150", revenue_account_code="4300",
+        net_revenue_amount=(tx.total_amount or Decimal("0")),
+        vat_amount=(tx.vat_amount or Decimal("0")),
         reference=f"BCH-VOID-{tx.id:06d}",
         description=f"إلغاء عملية شاطئ (محمّل على الغرفة) — {tx.tx_type}",
         source="beach_folio_void", source_id=tx.id,

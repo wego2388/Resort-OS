@@ -29,6 +29,18 @@ def _make_branch(db: Session) -> Branch:
                code=f"SEED-{uuid.uuid4().hex[:8].upper()}")
     db.add(b)
     db.commit()
+    # OPS-DATA-02 FIN-TAX-01: checkin_location's demo checkin posts a real
+    # journal via the now-strict post_taxed_sale_journal — needs 1100/4300/
+    # 2160 to exist. seed_all() itself always runs _seed_chart_of_accounts
+    # before _seed_beach_locations (app/seed.py), so production is fine;
+    # this test builds its own standalone branch outside that pipeline.
+    from app.modules.finance.models import Account
+    db.add_all([
+        Account(branch_id=b.id, code="1100", name="Cash", account_type="asset"),
+        Account(branch_id=b.id, code="4300", name="Beach Revenue", account_type="revenue"),
+        Account(branch_id=b.id, code="2160", name="VAT Payable", account_type="liability"),
+    ])
+    db.commit()
     return b
 
 

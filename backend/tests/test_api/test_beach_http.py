@@ -16,12 +16,37 @@ from decimal import Decimal
 from fastapi.testclient import TestClient
 
 
+def make_finance_accounts(db, branch):
+    """OPS-DATA-02 FIN-TAX-01: post_taxed_sale_journal (replacing the old
+    best-effort post_simple_revenue_journal) is strict and needs 1100/1150/
+    4300/2160 to exist for any real beach sale (every real sale has
+    vat_amount > 0). Idempotent — safe to call more than once."""
+    from app.modules.finance.models import Account
+    existing_codes = {
+        a.code for a in db.query(Account).filter(Account.branch_id == branch.id).all()
+    }
+    wanted = [
+        ("1100", "Cash", "asset"),
+        ("4300", "Beach Revenue", "revenue"),
+        ("1150", "ذمم الفوليو", "asset"),
+        ("2160", "ضريبة القيمة المضافة مستحقة", "liability"),
+    ]
+    added = [
+        Account(branch_id=branch.id, code=code, name=name, account_type=account_type)
+        for code, name, account_type in wanted if code not in existing_codes
+    ]
+    if added:
+        db.add_all(added)
+        db.commit()
+
+
 def make_branch_committed(db):
     from app.modules.core.models import Branch
     b = Branch(name="Beach HTTP Branch", name_ar="فرع شاطئ",
                code=f"BCH-{uuid.uuid4().hex[:8].upper()}")
     db.add(b)
     db.commit()
+    make_finance_accounts(db, b)
     return b
 
 

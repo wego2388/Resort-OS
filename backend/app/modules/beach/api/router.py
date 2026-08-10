@@ -213,6 +213,15 @@ def b2b_checkin(
         return services.b2b_checkin(db, branch_id, data)
     except services.BeachConcurrencyError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
+    except finance_services.FinancialConfigurationError as exc:
+        # OPS-DATA-02 FIN-TAX-01: _post_beach_revenue_journal now uses the
+        # strict post_taxed_sale_journal (raises instead of silently
+        # swallowing a missing-account failure) — this endpoint never had
+        # to handle that exception before since the old primitive never
+        # raised it. Same 503 shape as POST /beach/sell for the same error.
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {
+            "code": "FINANCIAL_CONFIGURATION_ERROR", "message": str(exc),
+        })
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
@@ -264,6 +273,12 @@ def void_transaction(tx_id: int, data: VoidTransactionRequest, db: DbDep, user=D
         return services.void_transaction(db, tx_id, voided_by=user.id, reason=data.reason)
     except services.BeachConcurrencyError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
+    except finance_services.FinancialConfigurationError as exc:
+        # OPS-DATA-02 FIN-TAX-01: the reversal journals now use the strict
+        # reverse_taxed_sale_journal — same reasoning as b2b_checkin above.
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {
+            "code": "FINANCIAL_CONFIGURATION_ERROR", "message": str(exc),
+        })
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 

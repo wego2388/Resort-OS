@@ -1294,6 +1294,126 @@ def post_simple_revenue_journal(
         return None
 
 
+def _build_taxed_sale_entry(
+    db: Session,
+    branch_id: int,
+    entry_date: date,
+    *,
+    debit_account_code: str,
+    revenue_account_code: str,
+    net_revenue_amount: Decimal,
+    vat_amount: Decimal,
+    service_charge_amount: Decimal,
+    reference: str,
+    description: str,
+    source: str,
+    source_id: Optional[int],
+    created_by: int,
+    cost_center_code: Optional[str],
+    tax_profile_version: Optional[str],
+    commit_cost_centers: bool,
+    reverse: bool,
+) -> JournalEntry:
+    """المنطق المشترك بين post_taxed_sale_journal وreverse_taxed_sale_journal
+    — نفس الحسابات والقيود بالظبط، الفرق الوحيد أي جانب (مدين/دائن) ياخد كل
+    سطر. راجع docstring الدالتين العامتين فوق للعقد الكامل."""
+    validate_period_open(db, branch_id, entry_date)
+
+    gross_amount = (net_revenue_amount + vat_amount + service_charge_amount).quantize(Decimal("0.01"))
+    if gross_amount <= 0:
+        raise ValueError("إجمالي القيد المحاسبي غير صالح (صفر أو سالب)")
+    if net_revenue_amount < 0 or vat_amount < 0 or service_charge_amount < 0:
+        raise ValueError("مكوّنات القيد (الإيراد/الضريبة/الخدمة) لا يجوز أن تكون سالبة")
+
+    existing = (
+        db.query(JournalEntry)
+        .filter(
+            JournalEntry.branch_id == branch_id,
+            JournalEntry.source == source,
+            JournalEntry.source_id == source_id,
+            JournalEntry.reference == reference,
+        )
+        .first()
+    )
+    if existing:
+        logger.info(
+            "_build_taxed_sale_entry: entry already posted for source=%s source_id=%s "
+            "reference=%s — returning existing entry %s (idempotent no-op)",
+            source, source_id, reference, existing.id,
+        )
+        return existing
+
+    debit_acc = crud.get_account_by_code(db, branch_id, debit_account_code)
+    revenue_acc = crud.get_account_by_code(db, branch_id, revenue_account_code)
+    if not debit_acc:
+        raise FinancialConfigurationError(f"حساب محاسبي غير معرّف للفرع: {debit_account_code}")
+    if not revenue_acc:
+        raise FinancialConfigurationError(f"حساب محاسبي غير معرّف للفرع: {revenue_account_code}")
+
+    vat_acc = None
+    if vat_amount > 0:
+        vat_acc = crud.get_account_by_code(db, branch_id, "2160")
+        if not vat_acc:
+            raise FinancialConfigurationError("حساب محاسبي غير معرّف للفرع: 2160")
+
+    service_acc = None
+    if service_charge_amount > 0:
+        service_acc = crud.get_account_by_code(db, branch_id, "2165")
+        if not service_acc:
+            raise FinancialConfigurationError("حساب محاسبي غير معرّف للفرع: 2165")
+
+    cost_center_id = None
+    if cost_center_code:
+        cc = crud.get_cost_center_by_code(db, branch_id, cost_center_code)
+        if not cc:
+            ensure_default_cost_centers(db, branch_id, commit=commit_cost_centers)
+            cc = crud.get_cost_center_by_code(db, branch_id, cost_center_code)
+        if not cc:
+            raise FinancialConfigurationError(f"تعذّر تجهيز مركز التكلفة: {cost_center_code}")
+        cost_center_id = cc.id
+
+    full_description = description
+    if tax_profile_version:
+        full_description = f"{description} [tax_profile={tax_profile_version}]"
+
+    zero = Decimal("0")
+
+    def _line(account_id: int, amount: Decimal) -> JournalLineCreate:
+        # reverse=False (بيع عادي): المدين = debit_account، الدائن = الباقي.
+        # reverse=True (إلغاء/مرتجع): نفس السطور بالظبط بس معكوسة — الإيراد/
+        # الضريبة/الخدمة بيبقوا مدين (بيقللوا رصيدهم) وdebit_account بيبقى
+        # دائن (بيرجع الكاش/يقلل الذمة) — مش قيد جديد بإجمالي gross كأنه
+        # إيراد جديد، ده بالظبط الباج اللي §11.2 بتطلب تجنبه.
+        is_debit_side = (account_id == debit_acc.id) != reverse
+        return JournalLineCreate(
+            account_id=account_id,
+            debit=amount if is_debit_side else zero,
+            credit=zero if is_debit_side else amount,
+            cost_center_id=cost_center_id,
+        )
+
+    lines = [
+        _line(debit_acc.id, gross_amount),
+        _line(revenue_acc.id, net_revenue_amount),
+    ]
+    if vat_amount > 0:
+        lines.append(_line(vat_acc.id, vat_amount))
+    if service_charge_amount > 0:
+        lines.append(_line(service_acc.id, service_charge_amount))
+
+    total_debit = sum((ln.debit for ln in lines), zero)
+    total_credit = sum((ln.credit for ln in lines), zero)
+    if abs(total_debit - total_credit) > Decimal("0.01"):
+        raise ValueError(f"القيد غير متوازن: مدين={total_debit}, دائن={total_credit}")
+
+    entry_data = JournalEntryCreate(
+        branch_id=branch_id, entry_date=entry_date, reference=reference,
+        description=full_description, source=source, source_id=source_id,
+        lines=lines,
+    )
+    return crud.create_journal_entry(db, entry_data, created_by)
+
+
 def post_taxed_sale_journal(
     db: Session,
     branch_id: int,
@@ -1347,89 +1467,62 @@ def post_taxed_sale_journal(
     post_simple_revenue_journal اليوم) — كل استدعاء قيد متوازن مستقل بحد
     ذاته، لا حاجة لتعقيد إضافي هنا.
     """
-    validate_period_open(db, branch_id, entry_date)
-
-    gross_amount = (net_revenue_amount + vat_amount + service_charge_amount).quantize(Decimal("0.01"))
-    if gross_amount <= 0:
-        raise ValueError("إجمالي القيد المحاسبي غير صالح (صفر أو سالب)")
-    if net_revenue_amount < 0 or vat_amount < 0 or service_charge_amount < 0:
-        raise ValueError("مكوّنات القيد (الإيراد/الضريبة/الخدمة) لا يجوز أن تكون سالبة")
-
-    existing = (
-        db.query(JournalEntry)
-        .filter(
-            JournalEntry.branch_id == branch_id,
-            JournalEntry.source == source,
-            JournalEntry.source_id == source_id,
-            JournalEntry.reference == reference,
-        )
-        .first()
+    return _build_taxed_sale_entry(
+        db, branch_id, entry_date,
+        debit_account_code=debit_account_code, revenue_account_code=revenue_account_code,
+        net_revenue_amount=net_revenue_amount, vat_amount=vat_amount,
+        service_charge_amount=service_charge_amount, reference=reference,
+        description=description, source=source, source_id=source_id,
+        created_by=created_by, cost_center_code=cost_center_code,
+        tax_profile_version=tax_profile_version, commit_cost_centers=commit_cost_centers,
+        reverse=False,
     )
-    if existing:
-        logger.info(
-            "post_taxed_sale_journal: entry already posted for source=%s source_id=%s "
-            "reference=%s — returning existing entry %s (idempotent no-op)",
-            source, source_id, reference, existing.id,
-        )
-        return existing
 
-    debit_acc = crud.get_account_by_code(db, branch_id, debit_account_code)
-    revenue_acc = crud.get_account_by_code(db, branch_id, revenue_account_code)
-    if not debit_acc:
-        raise FinancialConfigurationError(f"حساب محاسبي غير معرّف للفرع: {debit_account_code}")
-    if not revenue_acc:
-        raise FinancialConfigurationError(f"حساب محاسبي غير معرّف للفرع: {revenue_account_code}")
 
-    vat_acc = None
-    if vat_amount > 0:
-        vat_acc = crud.get_account_by_code(db, branch_id, "2160")
-        if not vat_acc:
-            raise FinancialConfigurationError("حساب محاسبي غير معرّف للفرع: 2160")
+def reverse_taxed_sale_journal(
+    db: Session,
+    branch_id: int,
+    entry_date: date,
+    *,
+    debit_account_code: str,
+    revenue_account_code: str,
+    net_revenue_amount: Decimal,
+    vat_amount: Decimal = Decimal("0"),
+    service_charge_amount: Decimal = Decimal("0"),
+    reference: str,
+    description: str,
+    source: str,
+    source_id: Optional[int],
+    created_by: int = 0,
+    cost_center_code: Optional[str] = None,
+    tax_profile_version: Optional[str] = None,
+    commit_cost_centers: bool = True,
+) -> JournalEntry:
+    """عكس post_taxed_sale_journal بالضبط — لvoid/refund. نفس الحجج بالظبط
+    (net_revenue_amount/vat_amount/service_charge_amount هي نفس قيم القيد
+    الأصلي اللي بيتعكس، مش قيمة سالبة)، لكن كل سطر بياخد الجانب المعاكس:
 
-    service_acc = None
-    if service_charge_amount > 0:
-        service_acc = crud.get_account_by_code(db, branch_id, "2165")
-        if not service_acc:
-            raise FinancialConfigurationError("حساب محاسبي غير معرّف للفرع: 2165")
+    ```
+        Dr <revenue_account_code>            = net_revenue_amount
+        Dr 2160 ضريبة القيمة المضافة مستحقة  = vat_amount    (لو > 0)
+        Dr 2165 رسم خدمة مستحق                = service_charge_amount (لو > 0)
+    Cr <debit_account_code>              = net_revenue_amount + vat + service
+    ```
 
-    cost_center_id = None
-    if cost_center_code:
-        cc = crud.get_cost_center_by_code(db, branch_id, cost_center_code)
-        if not cc:
-            ensure_default_cost_centers(db, branch_id, commit=commit_cost_centers)
-            cc = crud.get_cost_center_by_code(db, branch_id, cost_center_code)
-        if not cc:
-            raise FinancialConfigurationError(f"تعذّر تجهيز مركز التكلفة: {cost_center_code}")
-        cost_center_id = cc.id
-
-    full_description = description
-    if tax_profile_version:
-        full_description = f"{description} [tax_profile={tax_profile_version}]"
-
-    lines = [
-        JournalLineCreate(account_id=debit_acc.id, debit=gross_amount, credit=Decimal("0"),
-                           cost_center_id=cost_center_id),
-        JournalLineCreate(account_id=revenue_acc.id, debit=Decimal("0"), credit=net_revenue_amount,
-                           cost_center_id=cost_center_id),
-    ]
-    if vat_amount > 0:
-        lines.append(JournalLineCreate(account_id=vat_acc.id, debit=Decimal("0"), credit=vat_amount,
-                                        cost_center_id=cost_center_id))
-    if service_charge_amount > 0:
-        lines.append(JournalLineCreate(account_id=service_acc.id, debit=Decimal("0"),
-                                        credit=service_charge_amount, cost_center_id=cost_center_id))
-
-    total_debit = sum((ln.debit for ln in lines), Decimal("0"))
-    total_credit = sum((ln.credit for ln in lines), Decimal("0"))
-    if abs(total_debit - total_credit) > Decimal("0.01"):
-        raise ValueError(f"القيد غير متوازن: مدين={total_debit}, دائن={total_credit}")
-
-    entry_data = JournalEntryCreate(
-        branch_id=branch_id, entry_date=entry_date, reference=reference,
-        description=full_description, source=source, source_id=source_id,
-        lines=lines,
+    ده بالظبط الفرق اللي §11.2 بتطلبه: الإلغاء/المرتجع يعكس نفس سطور
+    القيد الأصلي ونسبتها، مش قيد جديد بـ Dr Revenue بإجمالي gross كأنه
+    "مصروف عكسي" غير مفصّل — VAT/service payable لازم يترد بالضبط زي ما
+    اتسجّل، وإلا فضل رصيدهم فيه أثر بيع اتلغى فعليًا."""
+    return _build_taxed_sale_entry(
+        db, branch_id, entry_date,
+        debit_account_code=debit_account_code, revenue_account_code=revenue_account_code,
+        net_revenue_amount=net_revenue_amount, vat_amount=vat_amount,
+        service_charge_amount=service_charge_amount, reference=reference,
+        description=description, source=source, source_id=source_id,
+        created_by=created_by, cost_center_code=cost_center_code,
+        tax_profile_version=tax_profile_version, commit_cost_centers=commit_cost_centers,
+        reverse=True,
     )
-    return crud.create_journal_entry(db, entry_data, created_by)
 
 
 def close_accounting_period(

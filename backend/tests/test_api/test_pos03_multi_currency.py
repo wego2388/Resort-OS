@@ -647,12 +647,21 @@ class TestBeachSellRequestFxValidation:
 def _make_beach_branch(db):
     """ينشئ فرع شاطئ — بـ commit كامل عشان FK constraints في settings."""
     from app.modules.core.models import Branch
+    from app.modules.finance.models import Account
     b = Branch(
         name=f"Beach Test {uuid.uuid4().hex[:6]}",
         name_ar="فرع شاطئ اختبار",
         code=f"BCH-{uuid.uuid4().hex[:8].upper()}",
     )
     db.add(b)
+    db.commit()
+    # OPS-DATA-02 FIN-TAX-01: post_taxed_sale_journal (strict) needs these
+    # for any real sale — every beach sale has vat_amount > 0.
+    db.add_all([
+        Account(branch_id=b.id, code="1100", name="Cash", account_type="asset"),
+        Account(branch_id=b.id, code="4300", name="Beach Revenue", account_type="revenue"),
+        Account(branch_id=b.id, code="2160", name="VAT Payable", account_type="liability"),
+    ])
     db.commit()
     return b
 

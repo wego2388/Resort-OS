@@ -73,9 +73,20 @@ class TestBuildStats:
         from app.modules.analytics.models import DailyStats
         from app.modules.beach import services as beach_services
         from app.modules.beach.schemas import BeachSellRequest
+        from app.modules.finance.models import Account
         from tests.test_api.test_pms import make_branch
 
         branch = make_branch(db)
+        # OPS-DATA-02 FIN-TAX-01: real beach sales now post through the
+        # strict post_taxed_sale_journal, which needs these to exist —
+        # local to this test rather than test_pms.make_branch (widely
+        # reused by unrelated PMS tests that don't need beach accounts).
+        db.add_all([
+            Account(branch_id=branch.id, code="1100", name="Cash", account_type="asset"),
+            Account(branch_id=branch.id, code="4300", name="Beach Revenue", account_type="revenue"),
+            Account(branch_id=branch.id, code="2160", name="VAT Payable", account_type="liability"),
+        ])
+        db.commit()
         stat_date = date.today()
 
         tx1 = beach_services.sell_ticket(
