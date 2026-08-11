@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api, ENDPOINTS, useAuthStore, useResortWebSocket } from '@resort-os/core'
 import { useStaffFormat } from '@resort-os/core/i18n/staff'
@@ -98,6 +98,10 @@ const paymentOpen = ref(false)
 const searchInputEl = ref<InstanceType<typeof SearchInput> | null>(null)
 // ref للـ outlet select — للـ shortcut Ctrl+O
 const outletSelectEl = ref<HTMLElement | null>(null)
+// 2026-08-11: منطقة سكرول شبكة الأصناف — بترجع لفوق تلقائيًا كل ما الفئة أو
+// البحث يتغيّر (راجع الـwatch تحت)، عشان الكاشير ميلاقيش نفسه لسه نازل في
+// نص الفئة القديمة بعد ما يبدّل لفئة جديدة.
+const menuScrollEl = ref<HTMLElement | null>(null)
 
 // ── فيتشر الفنادق (2026-08-07) ─────────────────────────────────────
 const selectedContractId = ref<number | null>(null)
@@ -131,14 +135,60 @@ const orderTypeOptions = computed<Array<{ value: OrderType; label: string; icon:
   { value: 'room_service', label: t('backoffice.pos.orderTypes.roomService'), icon: '🛎️' },
 ])
 
+// 2026-08-11: تحسين ذكي — الصنف الخلصان من المخزون (is_available=false) كان
+// بيختفي من الشبكة تمامًا بدل ما يظهر معطّل. ده كان بيربك الكاشير (يفتكر
+// الصنف مش موجود في المنيو أصلاً فيدوّر تاني أو يسأل المدير غلط) — دلوقتي
+// بيفضل ظاهر مكانه، رمادي مع badge "غير متاح"، وغير قابل للضغط، ومرتّب في
+// آخر القائمة عشان الأصناف المتاحة تفضل هي اللي قدام العين أول حاجة.
+// 2026-08-11: "الأكثر طلبًا" — تحسين ذكي للمنيو، طلب Mohamed صراحةً. تتبّع
+// محلي بالكامل (localStorage لكل outlet، بدون أي نداء Backend جديد ولا
+// أثر على بيانات المنتجع) لعدد مرات إضافة كل صنف للسلة على الجهاز ده —
+// نفس فكرة "Favorites" في أنظمة POS الاحترافية (Foodics/Toast)، بيسرّع
+// اختيار الأصناف المتكررة للكاشير اللي بيشتغل على نفس المحطة يوميًا.
+const FREQ_STORAGE_PREFIX = 'pos:itemFreq:'
+const FREQ_MIN_TAPS = 3     // متطلب حد أدنى قبل ما الصف يظهر — يمنع صف فاضي/عشوائي أول استخدام
+const FREQ_TOP_N = 8
+
+function loadItemFrequency(outletId: number): Record<number, number> {
+  try {
+    const raw = localStorage.getItem(`${FREQ_STORAGE_PREFIX}${outletId}`)
+    return raw ? JSON.parse(raw) : {}
+  } catch {
+    return {}
+  }
+}
+
+function bumpItemFrequency(outletId: number, itemId: number) {
+  try {
+    const freq = loadItemFrequency(outletId)
+    freq[itemId] = (freq[itemId] ?? 0) + 1
+    localStorage.setItem(`${FREQ_STORAGE_PREFIX}${outletId}`, JSON.stringify(freq))
+  } catch {
+    // localStorage ممكن يبقى غير متاح (وضع خاص/سعة ممتلئة) — تحسين تجميلي
+    // بس، مفيش داعي يوقف تدفق الطلب لأجله.
+  }
+}
+
+const itemFrequencyVersion = ref(0)   // بيتغيّر بعد كل إضافة عشان يجبر إعادة حساب frequentItems تحت
+const frequentItems = computed(() => {
+  void itemFrequencyVersion.value
+  if (!selectedOutletId.value || selectedCategoryId.value !== 'all' || searchQuery.value.trim()) return []
+  const freq = loadItemFrequency(selectedOutletId.value)
+  return items.value
+    .filter(item => item.is_available && (freq[item.id] ?? 0) >= FREQ_MIN_TAPS)
+    .sort((a, b) => (freq[b.id] ?? 0) - (freq[a.id] ?? 0))
+    .slice(0, FREQ_TOP_N)
+})
+
 const filteredItems = computed(() => {
   const query = searchQuery.value.trim().toLowerCase()
-  return items.value.filter(item => {
-    if (!item.is_available) return false
-    if (selectedCategoryId.value !== 'all' && item.category_id !== Number(selectedCategoryId.value)) return false
-    if (!query) return true
-    return item.name.toLowerCase().includes(query) || (item.name_ar ?? '').toLowerCase().includes(query)
-  })
+  return items.value
+    .filter(item => {
+      if (selectedCategoryId.value !== 'all' && item.category_id !== Number(selectedCategoryId.value)) return false
+      if (!query) return true
+      return item.name.toLowerCase().includes(query) || (item.name_ar ?? '').toLowerCase().includes(query)
+    })
+    .sort((a, b) => Number(b.is_available) - Number(a.is_available))
 })
 
 const cartContextLabel = computed(() => {
@@ -264,7 +314,7 @@ function itemQtyInCart(itemId: number): number {
   return cart.value.filter(l => l.itemId === itemId).reduce((s, l) => s + l.quantity, 0)
 }
 function onItemClick(item: DiningItemRow) {
-  if (cartLocked.value) return
+  if (cartLocked.value || !item.is_available) return
   const hasVariants = (item.variants ?? []).some(variant => variant.is_available)
   const hasExtras = (item.extra_groups ?? []).length > 0
   if (hasVariants || hasExtras) {
@@ -280,6 +330,10 @@ function addLineToCart(
 ) {
   const baseKey = cartKey(item.id, choice.variantId, choice.extraIds)
   const normalizedExtraIds = [...choice.extraIds].sort((a, b) => a - b).join(',')
+  if (selectedOutletId.value) {
+    bumpItemFrequency(selectedOutletId.value, item.id)
+    itemFrequencyVersion.value += 1
+  }
   const existing = cart.value.find(line => (
     line.itemId === item.id &&
     line.variantId === choice.variantId &&
@@ -762,6 +816,10 @@ function handleKeydown(event: KeyboardEvent) {
   }
 }
 
+watch([selectedCategoryId, searchQuery], () => {
+  if (menuScrollEl.value) menuScrollEl.value.scrollTop = 0
+})
+
 onMounted(async () => {
   await loadOutlets()
   await Promise.all([loadMenu(), loadTables(), loadActiveOrders()])
@@ -959,7 +1017,26 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
             </div>
           </div>
 
-          <div class="flex-1 min-h-0 overflow-y-auto p-3 lg:p-4">
+          <div ref="menuScrollEl" class="flex-1 min-h-0 overflow-y-auto p-3 lg:p-4">
+            <!-- "الأكثر طلبًا" — تتبّع محلي بالجهاز، راجع frequentItems -->
+            <div v-if="frequentItems.length" class="mb-4">
+              <h3 class="text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                <span aria-hidden="true">⭐</span> {{ t('backoffice.pos.frequentItems') }}
+              </h3>
+              <div class="flex gap-2 overflow-x-auto pb-1">
+                <button
+                  v-for="item in frequentItems"
+                  :key="`freq-${item.id}`"
+                  type="button"
+                  :disabled="cartLocked"
+                  class="flex-shrink-0 min-h-[64px] min-w-[140px] rounded-xl border-2 border-primary-200 dark:border-primary-800 bg-primary-50/60 dark:bg-primary-950/20 px-3 py-2 text-start hover:border-primary-400 active:scale-[0.98] transition-all disabled:opacity-60 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
+                  @click="onItemClick(item)"
+                >
+                  <div class="font-bold text-gray-900 dark:text-gray-100 text-sm leading-snug line-clamp-2">{{ itemName(item) }}</div>
+                  <div class="text-xs font-black text-primary-800 dark:text-primary-300 tabular-nums mt-1">{{ formatMoney(itemPrice(item), currency) }}</div>
+                </button>
+              </div>
+            </div>
             <LoadingState v-if="menuLoading" :label="t('backoffice.pos.loadingMenu')" />
             <EmptyState
               v-else-if="filteredItems.length === 0"
@@ -972,8 +1049,13 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
                 v-for="item in filteredItems"
                 :key="item.id"
                 type="button"
-                :disabled="cartLocked"
-                class="relative min-h-[138px] rounded-2xl border-2 border-stone-200 dark:border-border bg-white dark:bg-surface p-3 text-start shadow-sm hover:border-primary-400 hover:shadow-md active:scale-[0.99] transition-all flex flex-col justify-between gap-3 disabled:opacity-60 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
+                :disabled="cartLocked || !item.is_available"
+                :class="[
+                  'relative min-h-[138px] rounded-2xl border-2 p-3 text-start shadow-sm active:scale-[0.99] transition-all flex flex-col justify-between gap-3 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+                  item.is_available
+                    ? 'border-stone-200 dark:border-border bg-white dark:bg-surface hover:border-primary-400 hover:shadow-md disabled:opacity-60'
+                    : 'border-stone-200 dark:border-border bg-stone-100 dark:bg-gray-900/40 opacity-60 grayscale-[35%]',
+                ]"
                 @click="onItemClick(item)"
               >
                 <!-- badge كمية: يظهر لو الصنف موجود في السلة -->
@@ -985,7 +1067,8 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
                 <div class="w-full">
                   <div class="flex items-start justify-between gap-2">
                     <span class="text-xs font-semibold text-gray-400 uppercase">{{ item.station }}</span>
-                    <AppBadge v-if="(item.extra_groups ?? []).length" variant="info" size="sm">{{ t('backoffice.pos.extrasBadge') }}</AppBadge>
+                    <AppBadge v-if="!item.is_available" variant="danger" size="sm">{{ t('backoffice.pos.itemUnavailable') }}</AppBadge>
+                    <AppBadge v-else-if="(item.extra_groups ?? []).length" variant="info" size="sm">{{ t('backoffice.pos.extrasBadge') }}</AppBadge>
                   </div>
                   <h3 class="font-black text-gray-950 dark:text-gray-100 leading-snug mt-3 line-clamp-2">{{ itemName(item) }}</h3>
                 </div>
