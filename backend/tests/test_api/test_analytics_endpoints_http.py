@@ -267,6 +267,25 @@ class TestDailyStatsEndpoint:
         assert body["occupancy_pct"] == 75.5
         assert body["beach_visitors"] == 42
         assert body["total_revenue"] == 19200.00
+        assert body["avg_check_per_cover"] == 75.0  # 6000.00 / 80 covers
+
+    def test_avg_check_per_cover_is_none_when_no_covers(self, client: TestClient, db, manager_headers):
+        """صفر غطاء لازم يرجّع null مش صفر — 0 ج للفرد مضلّل، يوهم إن فيه
+        بيانات فعلية بمتوسط صفري بدل "مفيش بيانات كافية للحساب"."""
+        from app.modules.analytics.models import DailyStats
+        branch = make_branch_committed(db)
+        db.add(DailyStats(
+            branch_id=branch.id, stat_date=date(2026, 6, 16),
+            restaurant_covers=0, restaurant_revenue=Decimal("0.00"),
+        ))
+        db.commit()
+
+        resp = client.get(
+            "/api/v1/analytics/daily-stats",
+            params={"branch_id": branch.id, "stat_date": "2026-06-16"},
+            headers=manager_headers,
+        )
+        assert resp.json()["avg_check_per_cover"] is None
 
 
 class TestReviewsListEndpoint:

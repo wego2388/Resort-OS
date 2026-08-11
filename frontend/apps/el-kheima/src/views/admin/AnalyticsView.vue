@@ -63,6 +63,7 @@ interface DailyStatsResponse {
   beach_revenue?:      number
   restaurant_covers?:  number
   restaurant_revenue?: number
+  avg_check_per_cover?: number | null
   cafe_revenue?:       number
   total_revenue?:      number
 }
@@ -539,6 +540,10 @@ onMounted(loadAll)
           <div class="text-center">
             <div class="text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.analytics.diningCovers') }}</div>
             <div class="text-lg font-black text-gray-800 dark:text-gray-200">{{ dailyStats.restaurant_covers }}</div>
+          </div>
+          <div v-if="dailyStats.avg_check_per_cover != null" class="text-center">
+            <div class="text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.analytics.avgCheckPerCover') }}</div>
+            <div class="text-lg font-black text-gray-800 dark:text-gray-200">{{ money(dailyStats.avg_check_per_cover) }}</div>
           </div>
           <div class="text-center">
             <div class="text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.analytics.roomRevenue') }}</div>

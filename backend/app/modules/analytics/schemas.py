@@ -177,6 +177,13 @@ class DailyStatsRead(BaseModel):
     beach_revenue:      float = 0
     restaurant_covers:  int   = 0
     restaurant_revenue: float = 0
+    # متوسط الفاتورة للفرد (Average Check per Cover) — مؤشر ضيافة أساسي،
+    # الداتا (revenue وcovers) كانت متجمّعة أصلاً بس متقسمتش على بعض قبل
+    # كده (2026-08-11، طلب Mohamed أثناء نقاش POS الكاشير). restaurant فقط
+    # (مش cafe) لأن restaurant_covers نفسها بتتبع guests_count المطعم بس —
+    # الكافيه counter-service من غير مفهوم "غطاء" حقيقي. null لو صفر غطاء
+    # بدل 0 مضلّل (يبان وكأنه متوسط فعلي صفر مش "مفيش بيانات كافية").
+    avg_check_per_cover: Optional[float] = None
     cafe_revenue:       float = 0
     total_revenue:      float = 0
     # حالة "لا توجد بيانات" — نرجع message بدل الأرقام

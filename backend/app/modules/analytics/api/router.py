@@ -315,6 +315,7 @@ def get_daily_stats(
         "beach_revenue":      float(row.beach_revenue),
         "restaurant_covers":  row.restaurant_covers,
         "restaurant_revenue": float(row.restaurant_revenue),
+        "avg_check_per_cover": float(row.restaurant_revenue / row.restaurant_covers) if row.restaurant_covers else None,
         "cafe_revenue":       float(row.cafe_revenue),
         "total_revenue":      float(row.total_revenue),
     }
