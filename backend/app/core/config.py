@@ -103,6 +103,17 @@ class Settings(CoreSettings):
     # ── Field Encryption (national_id, passport) ──────────────────────
     FIELD_ENCRYPTION_KEY: Optional[str] = None
 
+    # ── Owner Intelligence Cockpit — restricted DB sessions (Decision 0004
+    # §Isolation model item 5, security review 2026-08-11) ───────────────
+    # DSNs لـPostgres roles محدودة الصلاحية فعليًا على مستوى الداتابيز —
+    # provisioned بـ scripts/provision_owner_db_roles.sql (مرة واحدة لكل
+    # بيئة، مش alembic migration). لو مش متضبطين، app/modules/owner/
+    # db_sessions.py بيرجع للـengine العادي (DbDep) بدل ما يفشل — يعني
+    # القيد الحقيقي (INSERT/UPDATE/DELETE بيترفض على مستوى الـDB) بيتفعّل
+    # بس لما DSN فعلي بصلاحية محدودة يتظبط، مش افتراضي في التطوير المحلي.
+    OWNER_READ_DATABASE_URL: Optional[str] = None
+    OWNER_METADATA_WRITE_DATABASE_URL: Optional[str] = None
+
     # ── Gate 8 guest-service switches ─────────────────────────────────
     # Both layers remain required: a deployment flag plus the branch
     # setting.  Gate 8 binds public mutations to a short-lived session and

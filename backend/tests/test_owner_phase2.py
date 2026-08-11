@@ -121,19 +121,31 @@ def test_get_owner_reader_rejects_manager(client, db, setup_db):
 # ── 3. Central write-block — fail-closed ──────────────────────────────
 
 def test_owner_write_block_non_allowlisted_route(client, db, setup_db):
-    """POST /crm/customers is not in OWNER_WRITE_ALLOWLIST → must be blocked."""
+    """POST /crm/customers is not in OWNER_WRITE_ALLOWLIST → must be blocked.
+
+    ⚠️ 2026-08-11: the payload here used to be `{"name": ..., "branch_id": ...}`
+    which is NOT a valid CustomerCreate (the real required field is
+    `full_name`) — the request failed Pydantic validation with 422 before
+    ever reaching the policy layer, and the assertion accepted 422 as a
+    pass. That made this test green even while
+    enforce_owner_access_policy had zero call sites anywhere in the app
+    (confirmed live: a genuinely valid payload succeeded and created a
+    real customer). Fixed: a real valid payload, and only 403 passes.
+    """
     from app.modules.owner.owner_policy import OWNER_WRITE_ALLOWLIST
     assert "create_customer" not in OWNER_WRITE_ALLOWLIST  # sanity
 
     u = _owner(db, "owner_block@test.local")
     resp = client.post(
         "/api/v1/crm/customers",
-        json={"name": "Test", "branch_id": 1},
+        json={"branch_id": 1, "full_name": "Should Be Blocked"},
         headers={"Authorization": f"Bearer {_tok(u.email)}"},
     )
     # owner (level=10) passes get_current_active_user,
-    # but enforce_owner_write_policy blocks the write → 403
-    assert resp.status_code in (403, 422)
+    # but enforce_owner_access_policy blocks the write → 403, never 422
+    # (the request itself is valid) and never 201 (the real vulnerability).
+    assert resp.status_code == 403
+    assert resp.json()["detail"]["code"] == "OWNER_WRITE_BLOCKED"
 
 
 def test_owner_allowlist_does_not_contain_activate(setup_db):
@@ -160,8 +172,25 @@ def test_owner_watchlist_crud(db, setup_db):
     with pytest.raises(ValueError, match="موجود بالفعل"):
         svc.add_watchlist_item(db, data, owner_user_id=999)
 
-    svc.remove_watchlist_item(db, item.id, owner_user_id=999)
+    svc.remove_watchlist_item(db, item.id, owner_user_id=999, branch_id=1)
     assert svc.get_watchlist(db, owner_user_id=999, branch_id=1) == []
+
+
+def test_owner_watchlist_delete_checks_branch(db, setup_db):
+    """حذف عنصر watchlist من فرع تاني (حتى لو نفس owner_user_id) لازم
+    يترفض — نفس فئة IDOR بتاعة allocation rules، اتصلحت هنا كمان
+    2026-08-11 (get_watchlist_item كان بيتحقق من owner_user_id بس)."""
+    from app.modules.owner import services as svc
+    from app.modules.owner.schemas import OwnerWatchlistCreate
+
+    item = svc.add_watchlist_item(
+        db, OwnerWatchlistCreate(metric_key="revenue_today", branch_id=1),
+        owner_user_id=999,
+    )
+    with pytest.raises(ValueError, match="غير موجود"):
+        svc.remove_watchlist_item(db, item.id, owner_user_id=999, branch_id=2)
+    # لسه موجود — الحذف اللي اترفض ماأثرش على الصف الحقيقي
+    assert len(svc.get_watchlist(db, owner_user_id=999, branch_id=1)) == 1
 
 
 # ── 5. OwnerAllocationRule draft CRUD ─────────────────────────────────
@@ -177,14 +206,63 @@ def test_owner_allocation_rule_draft_crud(db, setup_db):
     assert rule.status == "draft"
     assert rule.pct_rooms == Decimal("40")
 
+    # 35+30+20+10=95 — لسه صالح بعد الدمج مع القيم الموجودة (راجع
+    # test_allocation_rule_patch_rejects_total_over_100 للسيناريو العكسي).
     updated = svc.update_draft(db, rule.id,
-                               AllocationRuleDraftUpdate(pct_rooms=Decimal("45")),
-                               owner_user_id=999)
-    assert updated.pct_rooms == Decimal("45")
+                               AllocationRuleDraftUpdate(pct_rooms=Decimal("35")),
+                               owner_user_id=999, branch_id=1)
+    assert updated.pct_rooms == Decimal("35")
 
-    svc.delete_draft(db, rule.id, owner_user_id=999)
+    svc.delete_draft(db, rule.id, owner_user_id=999, branch_id=1)
     assert all(r.id != rule.id
                for r in svc.list_allocation_rules(db, branch_id=1))
+
+
+def test_allocation_rule_patch_rejects_total_over_100(db, setup_db):
+    """⚠️ 2026-08-11: باج حقيقي كان هنا — PATCH جزئي كان بيتحقق بس من
+    الحقول المُرسلة في نفس الطلب، مش من المجموع النهائي المدموج مع
+    القيم الموجودة. rooms=40+beach=30+dining=20+timeshare=10=100 (صالح
+    عند الإنشاء)، وبعدين PATCH يرفع rooms لـ45 لوحده كان بينجح من غير
+    أي رفض رغم إن المجموع الحقيقي بقى 105% — الاختبار ده بيثبت الرفض
+    دلوقتي فعليًا."""
+    from app.modules.owner import services as svc
+    from app.modules.owner.schemas import AllocationRuleDraftCreate, AllocationRuleDraftUpdate
+
+    rule = svc.create_draft(db, AllocationRuleDraftCreate(
+        branch_id=1, pct_rooms=Decimal("40"), pct_beach=Decimal("30"),
+        pct_dining=Decimal("20"), pct_timeshare=Decimal("10"),
+    ), owner_user_id=999)
+
+    with pytest.raises(ValueError, match="100%"):
+        svc.update_draft(db, rule.id,
+                         AllocationRuleDraftUpdate(pct_rooms=Decimal("45")),
+                         owner_user_id=999, branch_id=1)
+
+    # القاعدة لازم تفضل زي ما هي — الرفض مايسّبش partial write
+    from app.modules.owner import crud
+    unchanged = crud.get_allocation_rule(db, rule.id)
+    assert unchanged.pct_rooms == Decimal("40")
+
+
+def test_allocation_rule_update_delete_checks_branch(db, setup_db):
+    """PATCH/DELETE على مسودة فرع تاني لازم يترفض — نفس فئة IDOR بتاعة
+    2026-08-11 (كانت get_allocation_rule بتتحقق من rule_id بس)."""
+    from app.modules.owner import services as svc
+    from app.modules.owner.schemas import AllocationRuleDraftCreate, AllocationRuleDraftUpdate
+
+    rule = svc.create_draft(
+        db, AllocationRuleDraftCreate(branch_id=1, pct_rooms=Decimal("40")),
+        owner_user_id=999,
+    )
+    with pytest.raises(ValueError, match="غير موجودة"):
+        svc.update_draft(db, rule.id, AllocationRuleDraftUpdate(pct_rooms=Decimal("10")),
+                         owner_user_id=999, branch_id=2)
+    with pytest.raises(ValueError, match="غير موجودة"):
+        svc.delete_draft(db, rule.id, owner_user_id=999, branch_id=2)
+    # لسه موجودة وبنفس القيمة — محاولات فرع تاني ماأثّرتش عليها
+    from app.modules.owner import crud
+    unchanged = crud.get_allocation_rule(db, rule.id)
+    assert unchanged is not None and unchanged.pct_rooms == Decimal("40")
 
 
 def test_allocation_rule_total_validation():
@@ -208,7 +286,7 @@ def test_published_rule_immutable(db, setup_db):
     with pytest.raises(ValueError, match="منشورة"):
         svc.update_draft(db, rule.id,
                          AllocationRuleDraftUpdate(pct_rooms=Decimal("60")),
-                         owner_user_id=999)
+                         owner_user_id=999, branch_id=1)
 
 
 # ── 6. E-2 fix: source_request_id stored on PO ────────────────────────

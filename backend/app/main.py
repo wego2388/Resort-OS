@@ -8,7 +8,7 @@ import importlib
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -94,12 +94,21 @@ def create_app() -> FastAPI:
     setup_logging(settings)
     setup_sentry(settings)
 
+    # ⚠️ enforce_owner_access_policy إجباري هنا على مستوى التطبيق كله —
+    # مش على owner router بس. باج أمني حقيقي اتصلح 2026-08-11: النسخة
+    # القديمة (enforce_owner_write_policy) كانت موجودة من فترة لكن من غير
+    # أي استدعاء في أي مكان في المشروع خالص — owner كان يقدر يوصل لأي
+    # endpoint في المشروع (زي POST /crm/customers) بطلب صالح. راجع
+    # app/modules/owner/owner_policy.py's docstring الكامل للتفاصيل.
+    from app.modules.owner.owner_policy import enforce_owner_access_policy  # noqa: PLC0415
+
     app = FastAPI(
         title=settings.RESORT_NAME,
         version="1.0.0",
         docs_url="/docs" if settings.ENVIRONMENT != "production" else None,
         redoc_url="/redoc" if settings.ENVIRONMENT != "production" else None,
         lifespan=lifespan,
+        dependencies=[Depends(enforce_owner_access_policy)],
     )
 
     # ── Middleware (ترتيب مهم — من الخارج للداخل) ─────────────────────

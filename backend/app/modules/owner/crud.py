@@ -33,10 +33,18 @@ def list_watchlist(db: Session, owner_user_id: int, branch_id: int) -> list[Owne
     )
 
 
-def get_watchlist_item(db: Session, item_id: int, owner_user_id: int) -> Optional[OwnerWatchlist]:
+def get_watchlist_item(
+    db: Session, item_id: int, owner_user_id: int, branch_id: int,
+) -> Optional[OwnerWatchlist]:
+    # ⚠️ 2026-08-11: كان بيتحقق من owner_user_id بس، من غير branch_id —
+    # نفس فئة الباج بتاعة allocation rules (IDOR عبر id بس).
     return (
         db.query(OwnerWatchlist)
-        .filter(OwnerWatchlist.id == item_id, OwnerWatchlist.owner_user_id == owner_user_id)
+        .filter(
+            OwnerWatchlist.id == item_id,
+            OwnerWatchlist.owner_user_id == owner_user_id,
+            OwnerWatchlist.branch_id == branch_id,
+        )
         .first()
     )
 
@@ -77,9 +85,19 @@ def get_allocation_rule(db: Session, rule_id: int) -> Optional[OwnerAllocationRu
 def create_allocation_rule_draft(
     db: Session, data: AllocationRuleDraftCreate, created_by: int,
 ) -> OwnerAllocationRule:
-    # version: أعلى version موجود + 1 لنفس الفرع
-    # نستخدم MAX(version) بدل count() لأن count لا يصمد بعد حذف صفوف
+    # version: أعلى version موجود + 1 لنفس الفرع.
+    # ⚠️ 2026-08-11: MAX(version)+1 من غير أي قفل كان عنده سباق حقيقي —
+    # طلبين متزامنين لنفس الفرع يقدروا يقروا نفس الـMAX ويحسبوا نفس
+    # next_version. نفس نمط SELECT FOR UPDATE المُتّبع في المشروع كله
+    # (راجع CLAUDE.md §13 بند ⓫) — بنقفل صفوف الفرع ده الموجودة فعليًا
+    # قبل حساب الـmax، فأي معاملة تانية بتحاول تعمل نفس الحاجة لازم
+    # تستنى لحد ما المعاملة دي تعمل commit/rollback. الـunique constraint
+    # (migration 90f2a4c81b3e) هو خط الدفاع الثاني لو حالة أول مسودة لفرع
+    # (مفيش صفوف تتقفل أصلاً) حصل فيها سباق برضو.
     from sqlalchemy import func as sa_func  # noqa: PLC0415
+    db.query(OwnerAllocationRule.id).filter(
+        OwnerAllocationRule.branch_id == data.branch_id,
+    ).with_for_update().all()
     max_version_row = (
         db.query(sa_func.max(OwnerAllocationRule.version))
         .filter(OwnerAllocationRule.branch_id == data.branch_id)

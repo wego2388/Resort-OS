@@ -246,6 +246,24 @@ def app(fake_redis):
 
     application.dependency_overrides[get_db] = _override_get_db
 
+    # Owner module's restricted-privilege sessions (2026-08-11, Decision
+    # 0004 §Isolation model item 5) fall back to app.core.database.get_db
+    # (a *different* function object than app.core.deps.get_db, even
+    # though both ultimately call the same underlying session factory)
+    # when no dedicated OWNER_READ_DATABASE_URL/
+    # OWNER_METADATA_WRITE_DATABASE_URL is configured — which is always
+    # true in this test environment. FastAPI's dependency_overrides is
+    # keyed by the exact callable passed to Depends(...), so these need
+    # their own override entries too, or every /owner/* request in tests
+    # falls through to whatever the real app.core.database engine happens
+    # to be instead of the isolated per-test SQLite session.
+    from app.modules.owner.db_sessions import (  # noqa: PLC0415
+        get_owner_metadata_write_db,
+        get_owner_read_db,
+    )
+    application.dependency_overrides[get_owner_read_db] = _override_get_db
+    application.dependency_overrides[get_owner_metadata_write_db] = _override_get_db
+
     return application
 
 

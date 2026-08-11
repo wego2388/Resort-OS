@@ -133,7 +133,16 @@ def test_fail_closed_new_route_not_in_allowlist_denied(client, db, setup_db):
     mutating route with no registry entry and confirms owner still receives
     403 without any registry update."
 
-    نختبر هذا بمحاولة owner الكتابة على route غير مسجّلة في allowlist.
+    نختبر هذا بمحاولة owner الكتابة على route غير مسجّلة في allowlist،
+    بـ payload **صحيح فعليًا** (full_name هو الحقل الإجباري الحقيقي في
+    CustomerCreate، مش "name").
+
+    ⚠️ 2026-08-11: النسخة القديمة من التست ده كانت بترسل payload ناقص
+    (`{"name": ...}` بدل `{"full_name": ...}`) وتقبل 422 كنجاح — يعني
+    كانت بتفشل schema validation قبل ما توصل لأي policy check خالص،
+    فمكانتش بتثبت حاجة عن enforce_owner_access_policy. اتأكد فعليًا (قبل
+    الإصلاح، بطلب صالح حقيقي): owner كان يقدر ينشئ CRM Customer حقيقي —
+    نفس الثغرة اللي التقرير الأمني رفعها.
     """
     from app.modules.owner.owner_policy import OWNER_WRITE_ALLOWLIST
 
@@ -145,18 +154,19 @@ def test_fail_closed_new_route_not_in_allowlist_denied(client, db, setup_db):
 
     resp = client.post(
         "/api/v1/crm/customers",
-        json={"name": "غير مصرح", "branch_id": branch.id},
+        json={"branch_id": branch.id, "full_name": "غير مصرح"},
         headers={"Authorization": f"Bearer {_tok(owner.email, branch.id)}"},
     )
-    # يجب أن يكون 403 (blocked) أو 422 (validation error قبل policy) — كلاهما مقبول
-    # لكن ليس 200 أو 201
-    assert resp.status_code in (403, 422), (
-        f"owner استطاع الكتابة على route غير مصرح بها: {resp.status_code}"
+    assert resp.status_code == 403, (
+        f"owner استطاع الكتابة على route غير مصرح بها: {resp.status_code} {resp.text}"
     )
+    assert resp.json()["detail"]["code"] == "OWNER_WRITE_BLOCKED"
 
 
 def test_fail_closed_patch_non_allowlisted(client, db, setup_db):
-    """PATCH على resource غير مصرح → owner 403."""
+    """PATCH على resource غير مصرح → owner 403 (لازم يوصل من غير ما يتحقق
+    وجود الـresource أصلاً — الـpolicy بتشتغل في مرحلة الـdependency
+    resolution، قبل جسم الـendpoint اللي بيدور على الـcustomer)."""
     from app.modules.owner.owner_policy import OWNER_WRITE_ALLOWLIST
     assert "update_customer" not in OWNER_WRITE_ALLOWLIST
 
@@ -165,14 +175,16 @@ def test_fail_closed_patch_non_allowlisted(client, db, setup_db):
 
     resp = client.patch(
         "/api/v1/crm/customers/9999",
-        json={"name": "محاولة"},
+        json={"full_name": "محاولة"},
         headers={"Authorization": f"Bearer {_tok(owner.email, branch.id)}"},
     )
-    assert resp.status_code in (403, 404, 422)
+    assert resp.status_code == 403
+    assert resp.json()["detail"]["code"] == "OWNER_WRITE_BLOCKED"
 
 
 def test_fail_closed_post_beach_void(client, db, setup_db):
-    """POST /beach/transactions/{id}/void غير مصرح → owner 403."""
+    """POST /beach/transactions/{id}/void غير مصرح → owner 403 (بـpayload
+    صالح فعليًا — reason هو الحقل الإجباري الحقيقي في VoidTransactionRequest)."""
     from app.modules.owner.owner_policy import OWNER_WRITE_ALLOWLIST
     assert "void_beach_transaction" not in OWNER_WRITE_ALLOWLIST
 
@@ -181,10 +193,52 @@ def test_fail_closed_post_beach_void(client, db, setup_db):
 
     resp = client.post(
         "/api/v1/beach/transactions/9999/void",
-        json={},
+        json={"reason": "محاولة إلغاء غير مصرح بها"},
         headers={"Authorization": f"Bearer {_tok(owner.email, branch.id)}"},
     )
-    assert resp.status_code in (403, 404, 422)
+    assert resp.status_code == 403
+    assert resp.json()["detail"]["code"] == "OWNER_WRITE_BLOCKED"
+
+
+def test_fail_closed_owner_get_blocked_from_crm_list(client, db, setup_db):
+    """GET /crm/customers (مش /owner/*) → owner 403 حتى لو قراءة بس.
+
+    ده تحصين إضافي أوسع من متطلب Decision 0004 الأصلي (اللي كان بيركّز
+    على الكتابة بس) — طلب صريح من المراجعة الأمنية 2026-08-11: JWT
+    owner مسروق/مُستخدَم مباشرة عبر API client خام لازم ميقدرش يتصفح
+    بيانات CRM/PMS/HR/Hub حتى للقراءة، مش بس الكتابة."""
+    branch = _branch(db)
+    owner = _owner(db, branch_id=branch.id)
+    resp = client.get(
+        "/api/v1/crm/customers",
+        headers={"Authorization": f"Bearer {_tok(owner.email, branch.id)}"},
+    )
+    assert resp.status_code == 403
+    assert resp.json()["detail"]["code"] == "OWNER_READ_BLOCKED"
+
+
+def test_owner_read_allowed_under_owner_and_auth_prefixes(client, db, setup_db):
+    """owner لازم يفضل يقدر يقرأ سطحه الخاص (/owner/*) وحسابه الشخصي
+    (/auth/*) بعد التشديد — الحظر مقصود بس على موديولات تانية."""
+    branch = _branch(db)
+    owner = _owner(db, branch_id=branch.id)
+    tok = _tok(owner.email, branch.id)
+    resp = client.get("/api/v1/owner/now", headers={"Authorization": f"Bearer {tok}"})
+    assert resp.status_code == 200
+    resp = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {tok}"})
+    assert resp.status_code == 200
+
+
+def test_owner_access_policy_wired_into_app(client):
+    """يتأكد فعليًا (مش افتراضًا) إن enforce_owner_access_policy مربوطة على
+    مستوى التطبيق — فحص dependency graph حقيقي، مش مجرد وجود الدالة معرّفة."""
+    from app.modules.owner.owner_policy import enforce_owner_access_policy
+    app_dependencies = client.app.router.dependencies
+    wired = any(
+        getattr(dep, "dependency", None) is enforce_owner_access_policy
+        for dep in app_dependencies
+    )
+    assert wired, "enforce_owner_access_policy مش مربوطة في app.router.dependencies"
 
 
 def test_fail_closed_activate_allocation_rule_blocked(client, db, setup_db):
@@ -545,6 +599,41 @@ def test_audit_log_not_written_on_routine_performance_polling(client, db, setup_
 
     count_after = db.query(AuditLog).count()
     assert count_after == count_before
+
+
+def test_audit_log_written_on_allocation_rule_draft_action(client, db, setup_db):
+    """عكس التستين فوق تمامًا — إجراء owner حقيقي (مش polling) لازم
+    ينتج audit_log entry، مش يتبلع بصمت. راجع
+    app/modules/owner/api/router.py's _log_owner_audit وDecision 0004
+    §Isolation model item 6."""
+    from app.modules.core.models import AuditLog
+
+    branch = _branch(db)
+    owner = _owner(db, branch_id=branch.id)
+    token = _tok(owner.email, branch.id)
+
+    count_before = db.query(AuditLog).count()
+
+    resp = client.post(
+        "/api/v1/owner/allocation-rules/draft",
+        json={"branch_id": branch.id, "pct_rooms": "40"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 201
+
+    count_after = db.query(AuditLog).count()
+    assert count_after == count_before + 1
+
+    entry = (
+        db.query(AuditLog)
+        .filter(AuditLog.action == "owner_allocation_rule_draft_create")
+        .order_by(AuditLog.id.desc())
+        .first()
+    )
+    assert entry is not None
+    assert entry.user_id == owner.id
+    assert entry.branch_id == branch.id
+    assert entry.entity_type == "owner_allocation_rule"
 
 
 

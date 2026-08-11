@@ -11,12 +11,16 @@ Owner Intelligence Cockpit — API Router (Decision 0004, Phase 2+3+6).
 """
 from __future__ import annotations
 
+import logging
 from datetime import date, timedelta
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from sqlalchemy.orm import Session
 
-from app.core.deps import DbDep, get_owner_reader
+from app.core.deps import get_owner_reader
 from app.modules.owner import services
+from app.modules.owner.db_sessions import get_owner_metadata_write_db, get_owner_read_db
 from app.modules.owner.schemas import (
     AllocationRuleDraftCreate,
     AllocationRuleDraftUpdate,
@@ -45,9 +49,60 @@ from app.modules.owner.schemas import (
 )
 from app.modules.credit.schemas import CreditReceivablesResponse
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/owner", tags=["owner"])
 
 _NO_STORE = "no-store, no-cache, must-revalidate, private"
+
+
+def _log_owner_audit(db: Session, user, action: str, entity_type: str, entity_id: int | None = None) -> None:
+    """Decision 0004 §Isolation model item 6: تسجيل فتح تقرير حساس/
+    drill-down/export/إجراء allocation — مش polling عادي (اللي بيتكرر
+    كل ثواني من الفرونت إند لشاشات زي /now و/performance، وتسجيله كان
+    هيغرق audit_logs برقم صفوف عديم القيمة). بتكتب عبر نفس الـsession
+    المُمرَّرة للـendpoint نفسه (OwnerReadDb أو OwnerMetaWriteDb) —
+    الاتنين محتاجين INSERT-only على audit_logs تحديدًا (راجع
+    scripts/provision_owner_db_roles.sql)، مش وصول أوسع."""
+    from app.modules.core import crud as core_crud  # noqa: PLC0415
+    from app.modules.core.schemas import AuditLogCreate  # noqa: PLC0415
+    try:
+        core_crud.create_audit_log(db, AuditLogCreate(
+            user_id=user.id,
+            branch_id=getattr(user, "_active_branch_id", None),
+            action=action,
+            entity_type=entity_type,
+            entity_id=entity_id,
+        ))
+        db.commit()
+    except Exception:
+        # التسجيل التدقيقي إضافي — فشله ميوقفش الطلب الأساسي (نفس مبدأ
+        # printReceipt في الفرونت إند: convenience بعد نجاح العملية
+        # الحقيقية، مش جزء من نجاحها).
+        db.rollback()
+        logger.exception("owner router: failed to write audit log for action=%s", action)
+
+
+def _owner_error(code: str, exc: Exception) -> HTTPException:
+    """⚠️ 2026-08-11: كل الـ500 هنا كانت بترجع str(exc) في الـresponse
+    body — تسريب معلومات داخلية حقيقي (اسم عمود، رسالة SQLAlchemy، مسار
+    ملف) لأي حد وصل للـendpoint، بما فيه تفاصيل ممكن تفيد مهاجم. الخطأ
+    الحقيقي بيتسجّل داخليًا (log) والعميل بياخد رسالة عامة بس + كود ثابت
+    يقدر الفرونت إند يتصرف عليه."""
+    logger.exception("owner router error [%s]", code)
+    return HTTPException(
+        status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail={"code": code, "message": "حدث خطأ غير متوقع — حاول مرة أخرى"},
+    )
+
+# ── سيشنين محدودي الصلاحية على مستوى الـPostgres role نفسه (2026-08-11،
+# Decision 0004 §Isolation model item 5) — راجع db_sessions.py للتفاصيل.
+# OwnerReadDb: كل تقارير التجميع (GET) عبر الموديولات التانية. لا وصول
+# كتابة خالص، حتى لو bug مستقبلي حاول.
+# OwnerMetaWriteDb: كتابات owner_watchlist/owner_allocation_rules بس —
+# مفيش وصول لأي جدول تشغيلي.
+OwnerReadDb = Annotated[Session, Depends(get_owner_read_db)]
+OwnerMetaWriteDb = Annotated[Session, Depends(get_owner_metadata_write_db)]
 
 
 def _get_branch(user) -> int:
@@ -78,15 +133,14 @@ def _default_range() -> tuple[date, date]:
     name="owner_now",
     summary="شاشة الآن — المقاييس السبعة الرئيسية (A-1 → A-7)",
 )
-def owner_now(response: Response, db: DbDep, user=Depends(get_owner_reader)):
+def owner_now(response: Response, db: OwnerReadDb, user=Depends(get_owner_reader)):
     """المقاييس السبعة بتوقيت القاهرة. كل رقم يحمل is_provisional."""
     response.headers["Cache-Control"] = _NO_STORE
     branch_id = _get_branch(user)
     try:
         return services.get_owner_now(db, branch_id)
     except Exception as exc:
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR,
-                            detail={"code": "OWNER_NOW_FAILED", "message": str(exc)}) from exc
+        raise _owner_error("OWNER_NOW_FAILED", exc) from exc
 
 
 @router.get(
@@ -97,7 +151,7 @@ def owner_now(response: Response, db: DbDep, user=Depends(get_owner_reader)):
 )
 def owner_now_history(
     response: Response,
-    db: DbDep,
+    db: OwnerReadDb,
     user=Depends(get_owner_reader),
     days: int = Query(default=7, ge=1, le=30, description="عدد الأيام — 1 إلى 30"),
 ):
@@ -107,8 +161,7 @@ def owner_now_history(
     try:
         return services.get_now_history(db, branch_id, days)
     except Exception as exc:
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR,
-                            detail={"code": "OWNER_HISTORY_FAILED", "message": str(exc)}) from exc
+        raise _owner_error("OWNER_HISTORY_FAILED", exc) from exc
 
 
 @router.get(
@@ -117,15 +170,14 @@ def owner_now_history(
     name="owner_performance",
     summary="شاشة الأداء — مقارنة ثلاث فترات",
 )
-def owner_performance(response: Response, db: DbDep, user=Depends(get_owner_reader)):
+def owner_performance(response: Response, db: OwnerReadDb, user=Depends(get_owner_reader)):
     """اليوم vs أمس، الأسبوع الحالي vs الماضي، الشهر الحالي vs الماضي."""
     response.headers["Cache-Control"] = _NO_STORE
     branch_id = _get_branch(user)
     try:
         return services.get_owner_performance(db, branch_id)
     except Exception as exc:
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR,
-                            detail={"code": "OWNER_PERFORMANCE_FAILED", "message": str(exc)}) from exc
+        raise _owner_error("OWNER_PERFORMANCE_FAILED", exc) from exc
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -140,7 +192,7 @@ def owner_performance(response: Response, db: DbDep, user=Depends(get_owner_read
 )
 def owner_sales(
     response: Response,
-    db: DbDep,
+    db: OwnerReadDb,
     user=Depends(get_owner_reader),
     date_from: date = Query(default=None),
     date_to:   date = Query(default=None),
@@ -162,8 +214,7 @@ def owner_sales(
     try:
         return services.get_sales_performance(db, branch_id, date_from, date_to, outlet, limit)
     except Exception as exc:
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR,
-                            detail={"code": "OWNER_SALES_FAILED", "message": str(exc)}) from exc
+        raise _owner_error("OWNER_SALES_FAILED", exc) from exc
 
 
 @router.get(
@@ -174,7 +225,7 @@ def owner_sales(
 )
 def owner_beach_performance(
     response: Response,
-    db: DbDep,
+    db: OwnerReadDb,
     user=Depends(get_owner_reader),
     date_from: date = Query(default=None),
     date_to:   date = Query(default=None),
@@ -187,8 +238,7 @@ def owner_beach_performance(
     try:
         return services.get_beach_performance(db, branch_id, date_from, date_to)
     except Exception as exc:
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR,
-                            detail={"code": "OWNER_BEACH_FAILED", "message": str(exc)}) from exc
+        raise _owner_error("OWNER_BEACH_FAILED", exc) from exc
 
 
 @router.get(
@@ -199,7 +249,7 @@ def owner_beach_performance(
 )
 def owner_channel_analytics(
     response: Response,
-    db: DbDep,
+    db: OwnerReadDb,
     user=Depends(get_owner_reader),
     date_from: date = Query(default=None),
     date_to:   date = Query(default=None),
@@ -215,8 +265,7 @@ def owner_channel_analytics(
     try:
         return services.get_channel_analytics(db, branch_id, date_from, date_to)
     except Exception as exc:
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR,
-                            detail={"code": "OWNER_CHANNEL_FAILED", "message": str(exc)}) from exc
+        raise _owner_error("OWNER_CHANNEL_FAILED", exc) from exc
 
 
 @router.get(
@@ -227,7 +276,7 @@ def owner_channel_analytics(
 )
 def owner_expense_analytics(
     response: Response,
-    db: DbDep,
+    db: OwnerReadDb,
     user=Depends(get_owner_reader),
     date_from: date = Query(default=None),
     date_to:   date = Query(default=None),
@@ -243,8 +292,7 @@ def owner_expense_analytics(
     try:
         return services.get_expense_analytics(db, branch_id, date_from, date_to)
     except Exception as exc:
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR,
-                            detail={"code": "OWNER_EXPENSE_FAILED", "message": str(exc)}) from exc
+        raise _owner_error("OWNER_EXPENSE_FAILED", exc) from exc
 
 
 @router.get(
@@ -255,7 +303,7 @@ def owner_expense_analytics(
 )
 def owner_procurement_analytics(
     response: Response,
-    db: DbDep,
+    db: OwnerReadDb,
     user=Depends(get_owner_reader),
     date_from: date = Query(default=None),
     date_to:   date = Query(default=None),
@@ -271,8 +319,7 @@ def owner_procurement_analytics(
     try:
         return services.get_procurement_analytics(db, branch_id, date_from, date_to)
     except Exception as exc:
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR,
-                            detail={"code": "OWNER_PROCUREMENT_FAILED", "message": str(exc)}) from exc
+        raise _owner_error("OWNER_PROCUREMENT_FAILED", exc) from exc
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -285,7 +332,7 @@ def owner_procurement_analytics(
     name="owner_shifts",
     summary="مراقبة الورديات — من يعمل الآن + حركات الكاش",
 )
-def owner_shifts(response: Response, db: DbDep, user=Depends(get_owner_reader)):
+def owner_shifts(response: Response, db: OwnerReadDb, user=Depends(get_owner_reader)):
     """
     F-1 + F-2 + F-3: الورديات المفتوحة مع حركات الكاش.
     المالك يقرأ فقط — لا approve/close/dispute.
@@ -295,8 +342,7 @@ def owner_shifts(response: Response, db: DbDep, user=Depends(get_owner_reader)):
     try:
         return services.get_shift_monitor(db, branch_id)
     except Exception as exc:
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR,
-                            detail={"code": "OWNER_SHIFTS_FAILED", "message": str(exc)}) from exc
+        raise _owner_error("OWNER_SHIFTS_FAILED", exc) from exc
 
 
 @router.get(
@@ -305,7 +351,7 @@ def owner_shifts(response: Response, db: DbDep, user=Depends(get_owner_reader)):
     name="owner_exceptions",
     summary="قائمة الاستثناءات — مرتّبة بالخطورة",
 )
-def owner_exceptions(response: Response, db: DbDep, user=Depends(get_owner_reader)):
+def owner_exceptions(response: Response, db: OwnerReadDb, user=Depends(get_owner_reader)):
     """
     G-1 + G-2: استثناءات مرتّبة: critical → attention → watch.
     يستدعي fraud_tasks.find_fraud_signals مباشرة — لا تكرار للمنطق.
@@ -315,8 +361,7 @@ def owner_exceptions(response: Response, db: DbDep, user=Depends(get_owner_reade
     try:
         return services.get_exceptions(db, branch_id)
     except Exception as exc:
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR,
-                            detail={"code": "OWNER_EXCEPTIONS_FAILED", "message": str(exc)}) from exc
+        raise _owner_error("OWNER_EXCEPTIONS_FAILED", exc) from exc
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -331,7 +376,7 @@ def owner_exceptions(response: Response, db: DbDep, user=Depends(get_owner_reade
 )
 def owner_shifts_history(
     response: Response,
-    db: DbDep,
+    db: OwnerReadDb,
     user=Depends(get_owner_reader),
     days: int = Query(default=7, ge=1, le=30, description="عدد الأيام — 1 إلى 30"),
 ):
@@ -344,8 +389,7 @@ def owner_shifts_history(
     try:
         return services.get_shift_history(db, branch_id, days)
     except Exception as exc:
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR,
-                            detail={"code": "OWNER_SHIFT_HISTORY_FAILED", "message": str(exc)}) from exc
+        raise _owner_error("OWNER_SHIFT_HISTORY_FAILED", exc) from exc
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -358,7 +402,7 @@ def owner_shifts_history(
     name="owner_hr_summary",
     summary="ملخص الموارد البشرية — موظفين + رواتب + حضور",
 )
-def owner_hr_summary(response: Response, db: DbDep, user=Depends(get_owner_reader)):
+def owner_hr_summary(response: Response, db: OwnerReadDb, user=Depends(get_owner_reader)):
     """
     H-1: قائمة الموظفين مع آخر PayrollLine + حضور الشهر الحالي.
     Decision 0004 §7c: لا national_id، لا employee_si، لا monthly_tax،
@@ -370,8 +414,7 @@ def owner_hr_summary(response: Response, db: DbDep, user=Depends(get_owner_reade
     try:
         return services.get_hr_summary(db, branch_id)
     except Exception as exc:
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR,
-                            detail={"code": "OWNER_HR_FAILED", "message": str(exc)}) from exc
+        raise _owner_error("OWNER_HR_FAILED", exc) from exc
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -386,7 +429,7 @@ def owner_hr_summary(response: Response, db: DbDep, user=Depends(get_owner_reade
 )
 def owner_discount_analytics(
     response: Response,
-    db: DbDep,
+    db: OwnerReadDb,
     user=Depends(get_owner_reader),
     date_from: date = Query(default=None),
     date_to:   date = Query(default=None),
@@ -403,8 +446,7 @@ def owner_discount_analytics(
     try:
         return services.get_discount_analytics(db, branch_id, date_from, date_to)
     except Exception as exc:
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR,
-                            detail={"code": "OWNER_DISCOUNT_FAILED", "message": str(exc)}) from exc
+        raise _owner_error("OWNER_DISCOUNT_FAILED", exc) from exc
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -412,7 +454,7 @@ def owner_discount_analytics(
 # ══════════════════════════════════════════════════════════════════════
 
 @router.get("/watchlist", response_model=list[OwnerWatchlistRead])
-def list_watchlist(db: DbDep, user=Depends(get_owner_reader)):
+def list_watchlist(db: OwnerMetaWriteDb, user=Depends(get_owner_reader)):
     return services.get_watchlist(db, user.id, _get_branch(user))
 
 
@@ -422,14 +464,16 @@ def list_watchlist(db: DbDep, user=Depends(get_owner_reader)):
     status_code=status.HTTP_201_CREATED,
     name="create_owner_watchlist_item",
 )
-def add_watchlist_item(data: OwnerWatchlistCreate, db: DbDep, user=Depends(get_owner_reader)):
+def add_watchlist_item(data: OwnerWatchlistCreate, db: OwnerMetaWriteDb, user=Depends(get_owner_reader)):
     # branch_id مشتق من الـsession دايمًا — نفس قاعدة كل endpoint تاني هنا،
     # مش من جسم الطلب (كان باج حقيقي: العميل يقدر يبعت أي branch_id).
     data.branch_id = _get_branch(user)
     try:
-        return services.add_watchlist_item(db, data, user.id)
+        item = services.add_watchlist_item(db, data, user.id)
     except ValueError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from e
+    _log_owner_audit(db, user, "owner_watchlist_add", "owner_watchlist", item.id)
+    return item
 
 
 @router.delete(
@@ -437,11 +481,12 @@ def add_watchlist_item(data: OwnerWatchlistCreate, db: DbDep, user=Depends(get_o
     status_code=status.HTTP_204_NO_CONTENT,
     name="delete_owner_watchlist_item",
 )
-def remove_watchlist_item(item_id: int, db: DbDep, user=Depends(get_owner_reader)):
+def remove_watchlist_item(item_id: int, db: OwnerMetaWriteDb, user=Depends(get_owner_reader)):
     try:
-        services.remove_watchlist_item(db, item_id, user.id)
+        services.remove_watchlist_item(db, item_id, user.id, _get_branch(user))
     except ValueError as e:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(e)) from e
+    _log_owner_audit(db, user, "owner_watchlist_remove", "owner_watchlist", item_id)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -449,8 +494,11 @@ def remove_watchlist_item(item_id: int, db: DbDep, user=Depends(get_owner_reader
 # ══════════════════════════════════════════════════════════════════════
 
 @router.get("/allocation-rules", response_model=list[AllocationRuleRead])
-def list_allocation_rules(db: DbDep, user=Depends(get_owner_reader), branch_id: int = 1):
-    return services.list_allocation_rules(db, branch_id)
+def list_allocation_rules(db: OwnerMetaWriteDb, user=Depends(get_owner_reader)):
+    # ⚠️ 2026-08-11: كان `branch_id: int = 1` query param من العميل مباشرة —
+    # IDOR حقيقي (owner أي فرع يقدر يقرأ قواعد تخصيص فرع تاني بتغيير الرقم
+    # في الـURL). زي كل endpoint تاني هنا، الفرع لازم يُشتق من الجلسة.
+    return services.list_allocation_rules(db, _get_branch(user))
 
 
 @router.post(
@@ -459,11 +507,16 @@ def list_allocation_rules(db: DbDep, user=Depends(get_owner_reader), branch_id: 
     status_code=status.HTTP_201_CREATED,
     name="create_owner_allocation_rule_draft",
 )
-def create_draft(data: AllocationRuleDraftCreate, db: DbDep, user=Depends(get_owner_reader)):
+def create_draft(data: AllocationRuleDraftCreate, db: OwnerMetaWriteDb, user=Depends(get_owner_reader)):
+    # branch_id مشتق من الـsession دايمًا — نفس نمط watchlist بالظبط (كان
+    # باج حقيقي مشابه هناك، اتصلح قبل كده؛ نفس الفئة كانت لسه موجودة هنا).
+    data.branch_id = _get_branch(user)
     try:
-        return services.create_draft(db, data, user.id)
+        rule = services.create_draft(db, data, user.id)
     except ValueError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from e
+    _log_owner_audit(db, user, "owner_allocation_rule_draft_create", "owner_allocation_rule", rule.id)
+    return rule
 
 
 @router.patch(
@@ -471,11 +524,16 @@ def create_draft(data: AllocationRuleDraftCreate, db: DbDep, user=Depends(get_ow
     response_model=AllocationRuleRead,
     name="update_owner_allocation_rule_draft",
 )
-def update_draft(rule_id: int, data: AllocationRuleDraftUpdate, db: DbDep, user=Depends(get_owner_reader)):
+def update_draft(rule_id: int, data: AllocationRuleDraftUpdate, db: OwnerMetaWriteDb, user=Depends(get_owner_reader)):
+    # ⚠️ 2026-08-11: كان بيدور بـrule_id بس، من غير أي تحقق من فرع القاعدة —
+    # owner فرع 101 كان يقدر يعدّل مسودة فرع 102 بتخمين الـid. branch_id
+    # الجلسة بيتمرر دلوقتي ويتحقق منه جوه services.update_draft.
     try:
-        return services.update_draft(db, rule_id, data, user.id)
+        rule = services.update_draft(db, rule_id, data, user.id, _get_branch(user))
     except ValueError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from e
+    _log_owner_audit(db, user, "owner_allocation_rule_draft_update", "owner_allocation_rule", rule_id)
+    return rule
 
 
 @router.delete(
@@ -483,11 +541,13 @@ def update_draft(rule_id: int, data: AllocationRuleDraftUpdate, db: DbDep, user=
     status_code=status.HTTP_204_NO_CONTENT,
     name="delete_owner_allocation_rule_draft",
 )
-def delete_draft(rule_id: int, db: DbDep, user=Depends(get_owner_reader)):
+def delete_draft(rule_id: int, db: OwnerMetaWriteDb, user=Depends(get_owner_reader)):
+    # نفس تحقق الفرع بتاع update_draft فوق.
     try:
-        services.delete_draft(db, rule_id, user.id)
+        services.delete_draft(db, rule_id, user.id, _get_branch(user))
     except ValueError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from e
+    _log_owner_audit(db, user, "owner_allocation_rule_draft_delete", "owner_allocation_rule", rule_id)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -502,7 +562,7 @@ def delete_draft(rule_id: int, db: DbDep, user=Depends(get_owner_reader)):
 )
 def owner_credit_receivables(
     response: Response,
-    db: DbDep,
+    db: OwnerReadDb,
     user=Depends(get_owner_reader),
 ):
     """
@@ -527,7 +587,7 @@ def owner_credit_receivables(
 )
 def owner_sales_item_detail(
     response: Response,
-    db: DbDep,
+    db: OwnerReadDb,
     user=Depends(get_owner_reader),
     item_id: int = Query(...),
     date_from: date = Query(default=None),
@@ -538,10 +598,11 @@ def owner_sales_item_detail(
     if date_from is None or date_to is None:
         date_from, date_to = _default_range()
     try:
-        return services.get_dining_item_detail(db, branch_id, item_id, date_from, date_to)
+        result = services.get_dining_item_detail(db, branch_id, item_id, date_from, date_to)
     except Exception as exc:
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR,
-                            detail={"code": "OWNER_ITEM_DETAIL_FAILED", "message": str(exc)}) from exc
+        raise _owner_error("OWNER_ITEM_DETAIL_FAILED", exc) from exc
+    _log_owner_audit(db, user, "owner_drill_down", "dining_item", item_id)
+    return result
 
 
 @router.get(
@@ -552,7 +613,7 @@ def owner_sales_item_detail(
 )
 def owner_beach_type_detail(
     response: Response,
-    db: DbDep,
+    db: OwnerReadDb,
     user=Depends(get_owner_reader),
     tx_type: str = Query(...),
     date_from: date = Query(default=None),
@@ -563,10 +624,11 @@ def owner_beach_type_detail(
     if date_from is None or date_to is None:
         date_from, date_to = _default_range()
     try:
-        return services.get_beach_type_detail(db, branch_id, tx_type, date_from, date_to)
+        result = services.get_beach_type_detail(db, branch_id, tx_type, date_from, date_to)
     except Exception as exc:
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR,
-                            detail={"code": "OWNER_BEACH_DETAIL_FAILED", "message": str(exc)}) from exc
+        raise _owner_error("OWNER_BEACH_DETAIL_FAILED", exc) from exc
+    _log_owner_audit(db, user, "owner_drill_down", "beach_ticket_type")
+    return result
 
 
 @router.get(
@@ -577,7 +639,7 @@ def owner_beach_type_detail(
 )
 def owner_expense_detail(
     response: Response,
-    db: DbDep,
+    db: OwnerReadDb,
     user=Depends(get_owner_reader),
     account_code: str = Query(...),
     date_from: date = Query(default=None),
@@ -588,10 +650,11 @@ def owner_expense_detail(
     if date_from is None or date_to is None:
         date_from, date_to = _default_range()
     try:
-        return services.get_expense_detail(db, branch_id, account_code, date_from, date_to)
+        result = services.get_expense_detail(db, branch_id, account_code, date_from, date_to)
     except Exception as exc:
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR,
-                            detail={"code": "OWNER_EXPENSE_DETAIL_FAILED", "message": str(exc)}) from exc
+        raise _owner_error("OWNER_EXPENSE_DETAIL_FAILED", exc) from exc
+    _log_owner_audit(db, user, "owner_drill_down", "expense_account")
+    return result
 
 
 @router.get(
@@ -602,7 +665,7 @@ def owner_expense_detail(
 )
 def owner_procurement_detail(
     response: Response,
-    db: DbDep,
+    db: OwnerReadDb,
     user=Depends(get_owner_reader),
     supplier_id: int = Query(...),
     date_from: date = Query(default=None),
@@ -613,10 +676,11 @@ def owner_procurement_detail(
     if date_from is None or date_to is None:
         date_from, date_to = _default_range()
     try:
-        return services.get_supplier_detail(db, branch_id, supplier_id, date_from, date_to)
+        result = services.get_supplier_detail(db, branch_id, supplier_id, date_from, date_to)
     except Exception as exc:
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR,
-                            detail={"code": "OWNER_SUPPLIER_DETAIL_FAILED", "message": str(exc)}) from exc
+        raise _owner_error("OWNER_SUPPLIER_DETAIL_FAILED", exc) from exc
+    _log_owner_audit(db, user, "owner_drill_down", "supplier", supplier_id)
+    return result
 
 
 @router.get(
@@ -627,7 +691,7 @@ def owner_procurement_detail(
 )
 def owner_product_detail(
     response: Response,
-    db: DbDep,
+    db: OwnerReadDb,
     user=Depends(get_owner_reader),
     product_id: int = Query(...),
     date_from: date = Query(default=None),
@@ -638,10 +702,11 @@ def owner_product_detail(
     if date_from is None or date_to is None:
         date_from, date_to = _default_range()
     try:
-        return services.get_product_detail(db, branch_id, product_id, date_from, date_to)
+        result = services.get_product_detail(db, branch_id, product_id, date_from, date_to)
     except Exception as exc:
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR,
-                            detail={"code": "OWNER_PRODUCT_DETAIL_FAILED", "message": str(exc)}) from exc
+        raise _owner_error("OWNER_PRODUCT_DETAIL_FAILED", exc) from exc
+    _log_owner_audit(db, user, "owner_drill_down", "product", product_id)
+    return result
 
 
 @router.get(
@@ -652,14 +717,15 @@ def owner_product_detail(
 )
 def owner_search(
     response: Response,
-    db: DbDep,
+    db: OwnerReadDb,
     user=Depends(get_owner_reader),
     q: str = Query(..., min_length=2, max_length=100),
 ):
     response.headers["Cache-Control"] = _NO_STORE
     branch_id = _get_branch(user)
     try:
-        return services.search_everything(db, branch_id, q)
+        result = services.search_everything(db, branch_id, q)
     except Exception as exc:
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR,
-                            detail={"code": "OWNER_SEARCH_FAILED", "message": str(exc)}) from exc
+        raise _owner_error("OWNER_SEARCH_FAILED", exc) from exc
+    _log_owner_audit(db, user, "owner_search", "owner_search")
+    return result

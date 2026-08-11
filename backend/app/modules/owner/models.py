@@ -31,7 +31,10 @@ class OwnerWatchlist(Base, TimestampMixin):
     """
     __tablename__ = "owner_watchlist"
     __table_args__ = (
-        UniqueConstraint("owner_user_id", "metric_key", name="uq_owner_watchlist_user_metric"),
+        # ⚠️ 2026-08-11: كان بدون branch_id — لو owner عنده وصول لأكتر من
+        # فرع مستقبلاً، القيد القديم كان بيمنعه يثبّت نفس الـmetric على
+        # فرعين مختلفين غلطًا. Migration 90f2a4c81b3e.
+        UniqueConstraint("owner_user_id", "branch_id", "metric_key", name="uq_owner_watchlist_user_branch_metric"),
     )
 
     id:            Mapped[int]        = mapped_column(primary_key=True)
@@ -65,6 +68,13 @@ class OwnerAllocationRule(Base, TimestampMixin):
     التقرير التاريخي يختار الإصدار الفعّال في وقته — لا يتأثر بإصدار لاحق.
     """
     __tablename__ = "owner_allocation_rules"
+    __table_args__ = (
+        # ⚠️ 2026-08-11: MAX(version)+1 من غير قفل كان عنده سباق حقيقي —
+        # الحماية الأولى FOR UPDATE في crud.create_allocation_rule_draft،
+        # والقيد ده خط الدفاع الثاني على مستوى الـDB (حالة أول مسودة لفرع
+        # جديد، لسه مفيش صفوف تتقفل). Migration 90f2a4c81b3e.
+        UniqueConstraint("branch_id", "version", name="uq_owner_allocation_rule_branch_version"),
+    )
 
     id:             Mapped[int]        = mapped_column(primary_key=True)
     branch_id:      Mapped[int]        = mapped_column(Integer, index=True)
