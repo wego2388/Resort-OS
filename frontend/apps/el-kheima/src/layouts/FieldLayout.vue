@@ -40,6 +40,19 @@ onUnmounted(() => { if (clockInterval) clearInterval(clockInterval) })
 // DINING_CUTOVER_PLAN.md Batch 4 — role-based بدل path-based
 const isWaiter = computed(() => auth.role === 'waiter')
 
+// 2026-08-11: باج UX حقيقي رفعه Mohamed (سكرين شوت من /pos/dining) — سكرول
+// المنيو كان بيسحب الصفحة كلها معاه (بما فيها سلة/إتمام البيع)، لأن الشل هنا
+// كان min-h-screen (بينمو من غير سقف) والـ<main> overflow-auto من غير min-h-0
+// — يعني أي شاشة ابنة (POS المطعم/الشاطئ) مبنية أصلاً بمنطقة سكرول داخلية
+// خاصة بيها (قايمة أصناف تتسكرول، سلة/checkout ثابتة) كانت بتفقد الاحتواء ده
+// لأن الأب كان بيدّعي السكرول لنفسه بدل ما يسيبه للابن. راجع scrollMode في
+// router/index.ts — الشاشات المبنية بمنطقة سكرول داخلية (pos-beach/pos-dining)
+// بس هي اللي محتاجة الاحتواء ده؛ خريطة الشاطئ ولوحات الورديات مبنية على سكرول
+// صفحة عادي فباقية على الافتراضي.
+const mainScrollClass = computed(() =>
+  route.meta.scrollMode === 'contained' ? 'overflow-hidden' : 'overflow-auto',
+)
+
 const allNavItems = computed(() => [
   { path: '/pos/beach',     label: t('backoffice.nav.beachPos'),  icon: '🏖️', minRole: 'cashier' },
   { path: '/pos/beach-map', label: t('backoffice.nav.beachMap'),  icon: '🗺️', minRole: 'cashier' },
@@ -58,7 +71,7 @@ function logout() {
 <template>
   <!-- Direction is inherited from <html dir> (set centrally by the staff
        locale controller) — no per-component dir override. -->
-  <div class="field-shell flex min-h-screen flex-col">
+  <div class="field-shell flex h-dvh flex-col overflow-hidden">
     <!-- ── Header ── -->
     <header class="flex-shrink-0 border-b border-stone-200 bg-white shadow-elevation-2 dark:border-gray-700 dark:bg-[#252D3A]">
       <div class="flex min-h-16 items-center justify-between gap-2 px-3 py-2 sm:px-4">
@@ -143,7 +156,7 @@ function logout() {
     </header>
 
     <!-- ── Content ── -->
-    <main class="flex-1 overflow-auto">
+    <main :class="['flex-1 min-h-0', mainScrollClass]">
       <RouterView v-slot="{ Component, route: r }">
         <Transition name="page" mode="out-in" :duration="{ enter: 160, leave: 80 }">
           <component :is="Component" :key="r.fullPath" />

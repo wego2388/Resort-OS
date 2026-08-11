@@ -22,6 +22,12 @@ declare module 'vue-router' {
     requiredPermission?: PermissionKey | PermissionKey[]
     title?: string
     titleKey?: string
+    // FieldLayout only (2026-08-11): 'contained' يخلي <main> نفسه overflow-hidden
+    // ويسيب الشاشة تدير سكرول منطقتها الداخلية بنفسها (POS المطعم/الشاطئ —
+    // مبنيين أصلاً بسلة/checkout ثابتة وقايمة أصناف قابلة للسكرول لوحدها).
+    // الافتراضي (غير موجود) = سكرول صفحة عادي (خريطة الشاطئ، لوحات الورديات
+    // — مبنيين على تمرير الصفحة كلها، مفيهمش منطقة سكرول داخلية خاصة بيهم).
+    scrollMode?: 'contained' | 'page'
   }
 }
 
@@ -132,7 +138,7 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true, requiresBranch: true, requiredRole: 'cashier' },
     children: [
       { path: '', redirect: '/pos/beach' },
-      { path: 'beach', name: 'pos-beach', component: () => import('../views/pos/BeachPOSView.vue'), meta: { titleKey: 'backoffice.nav.beachPos' } },
+      { path: 'beach', name: 'pos-beach', component: () => import('../views/pos/BeachPOSView.vue'), meta: { titleKey: 'backoffice.nav.beachPos', scrollMode: 'contained' } },
       { path: 'beach-map', name: 'pos-beach-map', component: () => import('../views/pos/BeachMapView.vue'), meta: { titleKey: 'backoffice.nav.beachMap' } },
       // DINING_CUTOVER_PLAN.md Batch 4 — dining هو الـ POS الافتراضي دلوقتي
       // (مش manager-only preview بقى). requiredRole مخفّض لـ 'waiter' هنا
@@ -141,7 +147,7 @@ const routes: RouteRecordRaw[] = [
       // إند نفسه، مستقل تمامًا عن الـ route gate ده). الروترات القديمة
       // (restaurant/cafe) اتسابت كـ redirect بدل حذف فوري — مفيش رابط حي
       // بيوصلها تاني، لكن أي bookmark قديم لسه بيشتغل صح.
-      { path: 'dining', name: 'pos-dining', component: () => import('../views/pos/UnifiedPOSView.vue'), meta: { requiredRole: 'waiter', titleKey: 'backoffice.nav.diningPos' } },
+      { path: 'dining', name: 'pos-dining', component: () => import('../views/pos/UnifiedPOSView.vue'), meta: { requiredRole: 'waiter', titleKey: 'backoffice.nav.diningPos', scrollMode: 'contained' } },
       { path: 'restaurant', redirect: '/pos/dining' },
       { path: 'cafe', redirect: '/pos/dining' },
       { path: 'shift', name: 'pos-shift', component: () => import('../views/pos/ShiftDashboardView.vue'), meta: { titleKey: 'backoffice.nav.shift' } },
