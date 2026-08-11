@@ -32,18 +32,24 @@ from app.modules.owner.schemas import (
     BeachCapacityToday,
     BeachPerformanceResponse,
     BeachTicketTypeRow,
+    BeachTypeDetailResponse,
+    BeachTypeTransaction,
     ChannelAnalyticsResponse,
     ChannelContractRow,
     CashMovementItem,
     CustomerGroupDiscountRow,
     CustomerGroupMember,
     DaySnapshot,
+    DiningItemDetailResponse,
+    DiningItemTransaction,
     DiscountAnalyticsResponse,
     DiscountTypeRow,
     EmployeeAttendanceSummary,
     EmployeePayrollSummary,
     ExceptionsResponse,
     ExpenseAnalyticsResponse,
+    ExpenseDetailResponse,
+    ExpenseJournalLine,
     ExpenseLineResponse,
     HREmployeeRow,
     HRSummaryResponse,
@@ -55,7 +61,10 @@ from app.modules.owner.schemas import (
     OwnerNowResponse,
     OwnerPerformanceResponse,
     OwnerWatchlistCreate,
+    OwnerSearchResponse,
     PayrollSummary,
+    ProductDetailResponse,
+    ProductMovement,
     PerformanceBreakdown,
     PeriodComparison,
     PeriodMeta,
@@ -63,10 +72,13 @@ from app.modules.owner.schemas import (
     PRPOVarianceRow,
     ProcurementAnalyticsResponse,
     SalesPerformanceResponse,
+    SearchResultItem,
     ShiftHistoryItem,
     ShiftHistoryResponse,
     ShiftMonitorItem,
     ShiftMonitorResponse,
+    SupplierDetailResponse,
+    SupplierPurchaseOrder,
     SupplierSpendRow,
     TimeshareReceivableItem,
 )
@@ -578,7 +590,10 @@ def get_owner_performance(db: Session, branch_id: int) -> OwnerPerformanceRespon
     # ── اليوم vs أمس ──────────────────────────────────────────────────
     snap_today = _build_period_snapshot(db, branch_id, today, today, "اليوم")
     snap_yesterday = _build_period_snapshot(db, branch_id, yesterday, yesterday, "أمس")
-    day_comparison = _build_period_comparison(snap_today, snap_yesterday)
+    # كان مقصور على مقارنة الشهر بس — مد نفس تفصيل المنفذ لليوم والأسبوع
+    # كمان (أول سؤال منطقي للمالك لما يشوف فرق: "أي قسم سبب ده؟").
+    day_breakdown = _build_outlet_breakdown(db, branch_id, today, today)
+    day_comparison = _build_period_comparison(snap_today, snap_yesterday, day_breakdown)
 
     # ── الأسبوع الحالي vs الأسبوع الماضي ──────────────────────────────
     # الأسبوع الحالي: من الاثنين الأخير حتى اليوم
@@ -594,7 +609,8 @@ def get_owner_performance(db: Session, branch_id: int) -> OwnerPerformanceRespon
     snap_prior_week = _build_period_snapshot(
         db, branch_id, prior_week_start, prior_week_end, "الأسبوع الماضي"
     )
-    week_comparison = _build_period_comparison(snap_this_week, snap_prior_week)
+    week_breakdown = _build_outlet_breakdown(db, branch_id, week_start, today)
+    week_comparison = _build_period_comparison(snap_this_week, snap_prior_week, week_breakdown)
 
     # ── الشهر الحالي vs الشهر الماضي ──────────────────────────────────
     # الشهر الحالي: 1 الشهر → اليوم
@@ -1928,3 +1944,366 @@ def get_discount_analytics(
         customer_groups=sorted(group_rows, key=lambda x: x.total_sales_after_discount, reverse=True),
         computed_at=datetime.utcnow(),
     )
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Phase 8 — تفاصيل التفاصيل (Universal Drill-Down)
+# ══════════════════════════════════════════════════════════════════════
+# نفس مصدر البيانات المستخدم في التجميع أعلاه بالظبط، بس السجلات الخام
+# بدل الإجمالي. صفر منطق مالي جديد.
+
+def get_dining_item_detail(
+    db: Session, branch_id: int, item_id: int, date_from: date, date_to: date,
+) -> DiningItemDetailResponse:
+    """كل الطلبات اللي فيها صنف مطعم/كافيه معيّن — نفس فلتر get_sales_
+    performance بالظبط (paid orders، غير ملغاة) بس على مستوى الطلب لا التجميع."""
+    from app.modules.dining.models import DiningOrder, DiningOrderItem, Outlet  # noqa: PLC0415
+
+    rows = (
+        db.query(DiningOrderItem, DiningOrder, Outlet.name.label("outlet_name"))
+        .join(DiningOrder, DiningOrder.id == DiningOrderItem.order_id)
+        .join(Outlet, Outlet.id == DiningOrder.outlet_id)
+        .filter(
+            DiningOrder.branch_id == branch_id,
+            DiningOrder.status == "paid",
+            DiningOrderItem.item_id == item_id,
+            DiningOrderItem.status != "cancelled",
+            DiningOrder.created_at >= datetime.combine(date_from, datetime.min.time()),
+            DiningOrder.created_at <= datetime.combine(date_to, datetime.max.time()),
+        )
+        .order_by(DiningOrder.created_at.desc())
+        .all()
+    )
+
+    item_name = rows[0][0].name if rows else ""
+    transactions = [
+        DiningItemTransaction(
+            order_id=item.order_id,
+            order_number=order.order_number,
+            outlet_name=outlet_name,
+            order_type=order.order_type,
+            quantity=item.quantity,
+            unit_price=item.unit_price,
+            line_total=item.unit_price * item.quantity,
+            status=order.status,
+            ordered_at=order.created_at,
+        )
+        for item, order, outlet_name in rows
+    ]
+
+    return DiningItemDetailResponse(
+        item_id=item_id,
+        item_name=item_name,
+        period_from=date_from,
+        period_to=date_to,
+        transactions=transactions,
+        total_quantity=sum(t.quantity for t in transactions),
+        total_revenue=sum(t.line_total for t in transactions),
+        computed_at=datetime.utcnow(),
+    )
+
+
+def get_beach_type_detail(
+    db: Session, branch_id: int, tx_type: str, date_from: date, date_to: date,
+) -> BeachTypeDetailResponse:
+    """كل معاملات نوع تذكرة شاطئ معيّن — نفس فلتر get_beach_performance."""
+    from app.modules.beach.models import BeachTransaction  # noqa: PLC0415
+    from app.core.kernel.models.user import User  # noqa: PLC0415
+
+    rows = (
+        db.query(BeachTransaction)
+        .filter(
+            BeachTransaction.branch_id == branch_id,
+            BeachTransaction.voided_at.is_(None),
+            BeachTransaction.tx_type == tx_type,
+            BeachTransaction.tx_date >= date_from,
+            BeachTransaction.tx_date <= date_to,
+        )
+        .order_by(BeachTransaction.tx_date.desc(), BeachTransaction.id.desc())
+        .all()
+    )
+
+    cashier_ids = {r.cashier_id for r in rows if r.cashier_id}
+    cashier_names: dict[int, str] = {}
+    if cashier_ids:
+        users = db.query(User).filter(User.id.in_(cashier_ids)).all()
+        cashier_names = {u.id: (u.full_name or f"#{u.id}") for u in users}
+
+    transactions = [
+        BeachTypeTransaction(
+            transaction_id=r.id,
+            tx_date=r.tx_date,
+            guest_name=None,  # لا بيانات ضيف شخصية في شاشة الأونر — نفس قاعدة HR
+            unit_price=r.unit_price,
+            total_amount=r.total_amount,
+            cashier_name=cashier_names.get(r.cashier_id) if r.cashier_id else None,
+        )
+        for r in rows
+    ]
+
+    return BeachTypeDetailResponse(
+        tx_type=tx_type,
+        period_from=date_from,
+        period_to=date_to,
+        transactions=transactions,
+        total_count=len(transactions),
+        total_revenue=sum(t.total_amount for t in transactions),
+        computed_at=datetime.utcnow(),
+    )
+
+
+def get_expense_detail(
+    db: Session, branch_id: int, account_code: str, date_from: date, date_to: date,
+) -> ExpenseDetailResponse:
+    """كل قيود اليومية (سطور المدين) داخل حساب مصروف معيّن — نفس فترة
+    get_expense_analytics بس سطور خام بدل إجمالي الحساب."""
+    from app.modules.finance.models import Account, JournalEntry, JournalLine  # noqa: PLC0415
+
+    account = db.query(Account).filter(
+        Account.branch_id == branch_id, Account.code == account_code,
+    ).first()
+    if not account:
+        return ExpenseDetailResponse(
+            account_code=account_code, account_name=account_code,
+            period_from=date_from, period_to=date_to, lines=[],
+            total_amount=Decimal("0"), computed_at=datetime.utcnow(),
+        )
+
+    rows = (
+        db.query(JournalLine, JournalEntry)
+        .join(JournalEntry, JournalEntry.id == JournalLine.entry_id)
+        .filter(
+            JournalLine.account_id == account.id,
+            JournalEntry.branch_id == branch_id,
+            JournalEntry.entry_date >= date_from,
+            JournalEntry.entry_date <= date_to,
+            JournalLine.debit > 0,
+        )
+        .order_by(JournalEntry.entry_date.desc(), JournalEntry.id.desc())
+        .all()
+    )
+
+    lines = [
+        ExpenseJournalLine(
+            entry_id=entry.id,
+            entry_date=entry.entry_date,
+            reference=entry.reference,
+            description=line.description or entry.description,
+            amount=line.debit,
+            source=entry.source,
+            cost_center=None,
+        )
+        for line, entry in rows
+    ]
+
+    return ExpenseDetailResponse(
+        account_code=account_code,
+        account_name=account.name,
+        period_from=date_from,
+        period_to=date_to,
+        lines=lines,
+        total_amount=sum(l.amount for l in lines),
+        computed_at=datetime.utcnow(),
+    )
+
+
+def get_supplier_detail(
+    db: Session, branch_id: int, supplier_id: int, date_from: date, date_to: date,
+) -> SupplierDetailResponse:
+    """كل أوامر الشراء المستلمة لمورد معيّن — نفس فلتر get_procurement_analytics."""
+    from sqlalchemy import func as sa_func  # noqa: PLC0415
+    from app.modules.inventory.models import PurchaseOrder, PurchaseOrderItem, Supplier  # noqa: PLC0415
+
+    supplier = db.query(Supplier).filter(
+        Supplier.id == supplier_id, Supplier.branch_id == branch_id,
+    ).first()
+
+    rows = (
+        db.query(
+            PurchaseOrder,
+            sa_func.count(PurchaseOrderItem.id).label("item_count"),
+        )
+        .outerjoin(PurchaseOrderItem, PurchaseOrderItem.purchase_order_id == PurchaseOrder.id)
+        .filter(
+            PurchaseOrder.branch_id == branch_id,
+            PurchaseOrder.supplier_id == supplier_id,
+            PurchaseOrder.status.in_(["received", "partial"]),
+            PurchaseOrder.ordered_at >= date_from,
+            PurchaseOrder.ordered_at <= date_to,
+        )
+        .group_by(PurchaseOrder.id)
+        .order_by(PurchaseOrder.ordered_at.desc())
+        .all()
+    )
+
+    orders = [
+        SupplierPurchaseOrder(
+            po_id=po.id,
+            po_number=po.order_number,
+            status=po.status,
+            ordered_at=po.ordered_at,
+            received_at=po.received_at,
+            item_count=int(item_count or 0),
+            total_amount=po.total_amount,
+        )
+        for po, item_count in rows
+    ]
+
+    return SupplierDetailResponse(
+        supplier_id=supplier_id,
+        supplier_name=(supplier.name if supplier else "غير محدد"),
+        period_from=date_from,
+        period_to=date_to,
+        orders=orders,
+        total_amount=sum(o.total_amount for o in orders),
+        computed_at=datetime.utcnow(),
+    )
+
+
+def get_product_detail(
+    db: Session, branch_id: int, product_id: int, date_from: date, date_to: date,
+) -> ProductDetailResponse:
+    """حركات مخزون منتج معيّن (شراء/استهلاك/تعديل/تحويل) + الرصيد الحالي."""
+    from app.modules.inventory.models import Product, StockMovement, Warehouse  # noqa: PLC0415
+
+    product = db.query(Product).filter(
+        Product.id == product_id, Product.branch_id == branch_id,
+    ).first()
+    if not product:
+        return ProductDetailResponse(
+            product_id=product_id, product_name="غير موجود", unit="",
+            current_stock=Decimal("0"), cost_price=Decimal("0"),
+            period_from=date_from, period_to=date_to, movements=[],
+            total_in=Decimal("0"), total_out=Decimal("0"), computed_at=datetime.utcnow(),
+        )
+
+    rows = (
+        db.query(StockMovement, Warehouse.name.label("warehouse_name"))
+        .join(Warehouse, Warehouse.id == StockMovement.warehouse_id)
+        .filter(
+            StockMovement.branch_id == branch_id,
+            StockMovement.product_id == product_id,
+            StockMovement.moved_at >= datetime.combine(date_from, datetime.min.time()),
+            StockMovement.moved_at <= datetime.combine(date_to, datetime.max.time()),
+        )
+        .order_by(StockMovement.moved_at.desc())
+        .all()
+    )
+
+    movements = [
+        ProductMovement(
+            movement_id=m.id,
+            movement_type=m.movement_type,
+            quantity=m.quantity,
+            unit_cost=m.unit_cost,
+            warehouse_name=wh_name,
+            moved_at=m.moved_at,
+            notes=m.notes,
+        )
+        for m, wh_name in rows
+    ]
+
+    return ProductDetailResponse(
+        product_id=product_id,
+        product_name=product.name,
+        unit=product.unit,
+        current_stock=product.current_stock,
+        cost_price=product.cost_price,
+        period_from=date_from,
+        period_to=date_to,
+        movements=movements,
+        total_in=sum((m.quantity for m in movements if m.quantity > 0), Decimal("0")),
+        total_out=sum((-m.quantity for m in movements if m.quantity < 0), Decimal("0")),
+        computed_at=datetime.utcnow(),
+    )
+
+
+def search_everything(db: Session, branch_id: int, query: str, limit: int = 15) -> OwnerSearchResponse:
+    """بحث عام بالاسم عبر المنتجات/الموردين/حسابات المصروف/الموظفين —
+    كل نوع بيرجع أعلى النتائج تطابقًا بالاسم بس (بدون بيانات مالية إضافية،
+    الفرونت إند بيفتح الـdetail المناسب لما المستخدم يدوس على نتيجة)."""
+    from app.modules.inventory.models import Product, Supplier  # noqa: PLC0415
+    from app.modules.finance.models import Account  # noqa: PLC0415
+    from app.modules.hr.models import Employee  # noqa: PLC0415
+    from app.modules.dining.models import DiningItem  # noqa: PLC0415
+
+    q = f"%{query.strip()}%"
+    results: list[SearchResultItem] = []
+    if not query.strip():
+        return OwnerSearchResponse(query=query, results=[], computed_at=datetime.utcnow())
+
+    dining_items = (
+        db.query(DiningItem)
+        .filter(DiningItem.branch_id == branch_id, DiningItem.name.ilike(q))
+        .limit(limit)
+        .all()
+    )
+    results += [
+        SearchResultItem(
+            entity_type="dining_item", entity_id=i.id, title=i.name,
+            subtitle="صنف مطعم/كافيه",
+        )
+        for i in dining_items
+    ]
+
+    products = (
+        db.query(Product)
+        .filter(Product.branch_id == branch_id, Product.name.ilike(q))
+        .limit(limit)
+        .all()
+    )
+    results += [
+        SearchResultItem(
+            entity_type="product", entity_id=p.id, title=p.name,
+            subtitle=f"مخزون — {p.sku}",
+        )
+        for p in products
+    ]
+
+    suppliers = (
+        db.query(Supplier)
+        .filter(Supplier.branch_id == branch_id, Supplier.name.ilike(q))
+        .limit(limit)
+        .all()
+    )
+    results += [
+        SearchResultItem(
+            entity_type="supplier", entity_id=s.id, title=s.name,
+            subtitle="مورد",
+        )
+        for s in suppliers
+    ]
+
+    accounts = (
+        db.query(Account)
+        .filter(
+            Account.branch_id == branch_id,
+            Account.account_type == "expense",
+            Account.name.ilike(q),
+        )
+        .limit(limit)
+        .all()
+    )
+    results += [
+        SearchResultItem(
+            entity_type="expense_account", entity_id=a.id, title=a.name,
+            subtitle=f"حساب مصروف — {a.code}", value_label=a.code,
+        )
+        for a in accounts
+    ]
+
+    employees = (
+        db.query(Employee)
+        .filter(Employee.branch_id == branch_id, Employee.full_name.ilike(q))
+        .limit(limit)
+        .all()
+    )
+    results += [
+        SearchResultItem(
+            entity_type="employee", entity_id=e.id, title=e.full_name,
+            subtitle=e.position,
+        )
+        for e in employees
+    ]
+
+    return OwnerSearchResponse(query=query, results=results, computed_at=datetime.utcnow())

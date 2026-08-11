@@ -10,11 +10,15 @@ import {
   useOwnerBeachPerformance,
   useOwnerChannelAnalytics,
   useOwnerDiscountAnalytics,
+  useDetailSheet,
 } from '../composables/useOwnerData'
-import { formatMoney, formatPct } from '../composables/useFormat'
+import { fetchDiningItemDetail, fetchBeachTypeDetail } from '../api/owner'
+import type { DiningItemDetailResponse, BeachTypeDetailResponse } from '../api/types'
+import { formatMoney, formatMoneyFull, formatPct } from '../composables/useFormat'
 import ErrorState from '../components/ErrorState.vue'
 import SkeletonCards from '../components/SkeletonCards.vue'
 import DateRangePicker from '../components/DateRangePicker.vue'
+import DetailSheet from '../components/DetailSheet.vue'
 
 const tabs = ['dining', 'beach', 'channels', 'discounts'] as const
 type Tab = typeof tabs[number]
@@ -70,6 +74,33 @@ const abcColor: Record<string, string> = {
 }
 
 const topItems = computed(() => salesData.value?.items.slice(0, 20) ?? [])
+
+// ── تفاصيل التفاصيل (Phase 8) ─────────────────────────────────────────
+const itemDetail = useDetailSheet<DiningItemDetailResponse>()
+function openItemDetail(itemId: number) {
+  itemDetail.open(() => fetchDiningItemDetail({
+    item_id: itemId,
+    date_from: dateRange.value?.date_from,
+    date_to:   dateRange.value?.date_to,
+  }))
+}
+
+const beachDetail = useDetailSheet<BeachTypeDetailResponse>()
+function openBeachDetail(txType: string) {
+  beachDetail.open(() => fetchBeachTypeDetail({
+    tx_type: txType,
+    date_from: dateRange.value?.date_from,
+    date_to:   dateRange.value?.date_to,
+  }))
+}
+
+function formatDateTime(iso: string) {
+  return new Date(iso).toLocaleString('ar-EG', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
+const orderTypeLabel: Record<string, string> = {
+  dine_in: 'صالة', takeaway: 'تيك أواي', delivery: 'توصيل', room_service: 'خدمة غرف',
+}
 </script>
 
 <template>
@@ -125,10 +156,11 @@ const topItems = computed(() => salesData.value?.items.slice(0, 20) ?? [])
                 <span class="col-span-2 text-left">كمية</span>
                 <span class="col-span-3 text-left">إيراد</span>
               </div>
-              <div
+              <button
                 v-for="item in topItems"
                 :key="item.item_id"
-                class="grid grid-cols-12 gap-1 py-2 border-b border-owner-border/50 last:border-0 text-xs"
+                class="w-full grid grid-cols-12 gap-1 py-2 border-b border-owner-border/50 last:border-0 text-xs text-right active:bg-owner-card transition-colors rounded-lg -mx-1 px-1"
+                @click="openItemDetail(item.item_id)"
               >
                 <div class="col-span-5">
                   <div class="font-semibold text-owner-text truncate">{{ item.name }}</div>
@@ -145,10 +177,11 @@ const topItems = computed(() => salesData.value?.items.slice(0, 20) ?? [])
                   <span v-else class="text-owner-muted">—</span>
                 </div>
                 <div class="col-span-2 flex items-center font-mono text-owner-muted">{{ item.quantity_sold }}</div>
-                <div class="col-span-3 flex items-center font-mono text-owner-text font-semibold">
-                  {{ formatMoney(item.revenue) }}
+                <div class="col-span-3 flex items-center justify-between font-mono text-owner-text font-semibold">
+                  <span>{{ formatMoney(item.revenue) }}</span>
+                  <span class="text-owner-muted" aria-hidden="true">‹</span>
                 </div>
-              </div>
+              </button>
             </div>
             <div class="mt-3 pt-3 border-t border-owner-border flex gap-4 text-xs text-owner-muted">
               <span><span class="text-owner-green font-bold">A</span> = 80% من الإيراد</span>
@@ -179,17 +212,21 @@ const topItems = computed(() => salesData.value?.items.slice(0, 20) ?? [])
               لا توجد تذاكر في هذه الفترة
             </div>
             <div v-else class="space-y-2">
-              <div
+              <button
                 v-for="row in beachData.ticket_types"
                 :key="row.tx_type"
-                class="flex items-center justify-between py-2 border-b border-owner-border last:border-0"
+                class="w-full flex items-center justify-between py-2 border-b border-owner-border last:border-0 text-right active:bg-owner-card transition-colors rounded-lg -mx-1 px-1"
+                @click="openBeachDetail(row.tx_type)"
               >
                 <div>
                   <div class="text-sm font-semibold text-owner-text">{{ row.tx_type }}</div>
                   <div class="text-xs text-owner-muted">{{ row.count }} تذكرة · متوسط {{ formatMoney(row.avg_unit_price) }}</div>
                 </div>
-                <div class="font-mono font-bold text-owner-green">{{ formatMoney(row.total_amount) }}</div>
-              </div>
+                <div class="flex items-center gap-1">
+                  <span class="font-mono font-bold text-owner-green">{{ formatMoney(row.total_amount) }}</span>
+                  <span class="text-owner-muted" aria-hidden="true">‹</span>
+                </div>
+              </button>
             </div>
           </div>
         </template>
@@ -363,5 +400,66 @@ const topItems = computed(() => salesData.value?.items.slice(0, 20) ?? [])
       </template>
 
     </div>
+
+    <!-- تفاصيل صنف مطعم/كافيه -->
+    <DetailSheet
+      :open="itemDetail.isOpen.value"
+      :title="itemDetail.data.value?.item_name ?? 'تفاصيل الصنف'"
+      :subtitle="itemDetail.data.value ? `${itemDetail.data.value.total_quantity} قطعة · ${formatMoney(itemDetail.data.value.total_revenue)}` : undefined"
+      :loading="itemDetail.loading.value"
+      :error="itemDetail.error.value"
+      @close="itemDetail.close()"
+      @retry="itemDetail.retry()"
+    >
+      <div v-if="itemDetail.data.value?.transactions.length === 0" class="text-xs text-owner-muted text-center py-8">
+        لا توجد طلبات في هذه الفترة
+      </div>
+      <div v-else class="space-y-1">
+        <div
+          v-for="tx in itemDetail.data.value?.transactions ?? []"
+          :key="tx.order_id"
+          class="flex items-center justify-between py-2.5 border-b border-owner-border/50 last:border-0 text-xs"
+        >
+          <div class="min-w-0">
+            <div class="font-semibold text-owner-text">{{ tx.order_number }}</div>
+            <div class="text-owner-muted mt-0.5">
+              {{ tx.outlet_name }} · {{ orderTypeLabel[tx.order_type] ?? tx.order_type }} · {{ formatDateTime(tx.ordered_at) }}
+            </div>
+          </div>
+          <div class="text-left shrink-0">
+            <div class="font-mono font-semibold text-owner-text">{{ formatMoneyFull(tx.line_total) }}</div>
+            <div class="text-owner-muted">{{ tx.quantity }} × {{ formatMoney(tx.unit_price) }}</div>
+          </div>
+        </div>
+      </div>
+    </DetailSheet>
+
+    <!-- تفاصيل نوع تذكرة شاطئ -->
+    <DetailSheet
+      :open="beachDetail.isOpen.value"
+      :title="beachDetail.data.value?.tx_type ?? 'تفاصيل التذاكر'"
+      :subtitle="beachDetail.data.value ? `${beachDetail.data.value.total_count} تذكرة · ${formatMoney(beachDetail.data.value.total_revenue)}` : undefined"
+      :loading="beachDetail.loading.value"
+      :error="beachDetail.error.value"
+      @close="beachDetail.close()"
+      @retry="beachDetail.retry()"
+    >
+      <div v-if="beachDetail.data.value?.transactions.length === 0" class="text-xs text-owner-muted text-center py-8">
+        لا توجد معاملات في هذه الفترة
+      </div>
+      <div v-else class="space-y-1">
+        <div
+          v-for="tx in beachDetail.data.value?.transactions ?? []"
+          :key="tx.transaction_id"
+          class="flex items-center justify-between py-2.5 border-b border-owner-border/50 last:border-0 text-xs"
+        >
+          <div>
+            <div class="font-semibold text-owner-text">{{ new Date(tx.tx_date).toLocaleDateString('ar-EG', { month: 'short', day: 'numeric' }) }}</div>
+            <div v-if="tx.cashier_name" class="text-owner-muted mt-0.5">{{ tx.cashier_name }}</div>
+          </div>
+          <div class="font-mono font-semibold text-owner-text">{{ formatMoneyFull(tx.total_amount) }}</div>
+        </div>
+      </div>
+    </DetailSheet>
   </div>
 </template>

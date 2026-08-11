@@ -7,6 +7,7 @@
 import SparkLine from './SparkLine.vue';
 import { deltaClass, deltaArrow } from '../composables/useFormat';
 const props = defineProps();
+const emit = defineEmits();
 debugger; /* PartiallyEnd: #3632/scriptSetup.vue */
 const __VLS_ctx = {};
 let __VLS_components;
@@ -23,12 +24,28 @@ __VLS_asFunctionalElement(__VLS_intrinsicElements.span, __VLS_intrinsicElements.
     ...{ class: "text-xs font-semibold text-owner-muted uppercase tracking-wider" },
 });
 (__VLS_ctx.label);
+__VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
+    ...{ class: "flex items-center gap-2" },
+});
 if (__VLS_ctx.isProvisional) {
     __VLS_asFunctionalElement(__VLS_intrinsicElements.span, __VLS_intrinsicElements.span)({
         ...{ class: "provisional-badge" },
         role: "status",
         'aria-label': "غير نهائي",
     });
+}
+if (__VLS_ctx.pinned !== undefined) {
+    __VLS_asFunctionalElement(__VLS_intrinsicElements.button, __VLS_intrinsicElements.button)({
+        ...{ onClick: (...[$event]) => {
+                if (!(__VLS_ctx.pinned !== undefined))
+                    return;
+                __VLS_ctx.emit('toggle-pin');
+            } },
+        ...{ class: "touch-target -m-2 p-2 text-lg leading-none transition-colors" },
+        ...{ class: (__VLS_ctx.pinned ? 'text-owner-amber' : 'text-owner-border active:text-owner-muted') },
+        'aria-label': (__VLS_ctx.pinned ? 'إلغاء التثبيت' : 'تثبيت في المفضلة'),
+    });
+    (__VLS_ctx.pinned ? '★' : '☆');
 }
 if (__VLS_ctx.loading) {
     __VLS_asFunctionalElement(__VLS_intrinsicElements.div)({
@@ -92,7 +109,16 @@ else {
 /** @type {__VLS_StyleScopedClasses['text-owner-muted']} */ ;
 /** @type {__VLS_StyleScopedClasses['uppercase']} */ ;
 /** @type {__VLS_StyleScopedClasses['tracking-wider']} */ ;
+/** @type {__VLS_StyleScopedClasses['flex']} */ ;
+/** @type {__VLS_StyleScopedClasses['items-center']} */ ;
+/** @type {__VLS_StyleScopedClasses['gap-2']} */ ;
 /** @type {__VLS_StyleScopedClasses['provisional-badge']} */ ;
+/** @type {__VLS_StyleScopedClasses['touch-target']} */ ;
+/** @type {__VLS_StyleScopedClasses['-m-2']} */ ;
+/** @type {__VLS_StyleScopedClasses['p-2']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-lg']} */ ;
+/** @type {__VLS_StyleScopedClasses['leading-none']} */ ;
+/** @type {__VLS_StyleScopedClasses['transition-colors']} */ ;
 /** @type {__VLS_StyleScopedClasses['skeleton']} */ ;
 /** @type {__VLS_StyleScopedClasses['h-9']} */ ;
 /** @type {__VLS_StyleScopedClasses['w-3/4']} */ ;
@@ -125,14 +151,17 @@ const __VLS_self = (await import('vue')).defineComponent({
             SparkLine: SparkLine,
             deltaClass: deltaClass,
             deltaArrow: deltaArrow,
+            emit: emit,
         };
     },
+    __typeEmits: {},
     __typeProps: {},
 });
 export default (await import('vue')).defineComponent({
     setup() {
         return {};
     },
+    __typeEmits: {},
     __typeProps: {},
 });
 ; /* PartiallyEnd: #4569/main.vue */

@@ -9,10 +9,13 @@
 import { computed, ref } from 'vue'
 import { useRoute, useRouter, RouterView } from 'vue-router'
 import { useAuthStore } from '@resort-os/core'
+import SearchOverlay from '../components/SearchOverlay.vue'
 
 const route  = useRoute()
 const router = useRouter()
 const auth   = useAuthStore()
+
+const searchOpen = ref(false)
 
 const navItems = [
   { name: 'now',         label: 'الآن',       icon: '⚡' },
@@ -49,9 +52,20 @@ function vibrate(ms = 6) {
     <header class="flex items-center justify-between px-4 py-3 bg-owner-card border-b border-owner-border shrink-0">
       <h1 class="text-sm font-bold text-owner-text">المالك</h1>
       <div class="flex items-center gap-3">
-        <div class="text-xs text-owner-muted">
+        <div class="text-xs text-owner-muted hidden xs:block">
           {{ new Date().toLocaleDateString('ar-EG', { weekday: 'long', day: 'numeric', month: 'short' }) }}
         </div>
+        <!-- بحث عام — يشوف أي صنف/منتج/مورد/مصروف/موظف -->
+        <button
+          class="touch-target text-owner-muted active:text-owner-green transition-colors"
+          aria-label="بحث"
+          @click="searchOpen = true"
+        >
+          <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="7" />
+            <path stroke-linecap="round" d="M21 21l-4.35-4.35" />
+          </svg>
+        </button>
         <!-- Logout — أمان أساسي (Decision 0004 §7b) -->
         <button
           class="text-xs text-owner-muted hover:text-owner-red active:text-owner-red transition-colors touch-target px-1"
@@ -64,6 +78,8 @@ function vibrate(ms = 6) {
         </button>
       </div>
     </header>
+
+    <SearchOverlay :open="searchOpen" @close="searchOpen = false" />
 
     <!-- Main content -->
     <main class="flex-1 flex flex-col overflow-hidden">

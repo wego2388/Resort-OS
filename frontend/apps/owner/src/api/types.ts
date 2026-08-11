@@ -432,3 +432,139 @@ export interface PerformanceBreakdown {
   rooms_revenue: string | null
   other_revenue: string | null
 }
+
+// ─── Phase 8: تفاصيل التفاصيل (Universal Drill-Down) + بحث عام ─────────
+
+export interface DiningItemTransaction {
+  order_id: number
+  order_number: string
+  outlet_name: string
+  order_type: string
+  quantity: number
+  unit_price: string
+  line_total: string
+  status: string
+  ordered_at: string
+}
+
+export interface DiningItemDetailResponse {
+  item_id: number
+  item_name: string
+  period_from: string
+  period_to: string
+  transactions: DiningItemTransaction[]
+  total_quantity: number
+  total_revenue: string
+  computed_at: string
+}
+
+export interface BeachTypeTransaction {
+  transaction_id: number
+  tx_date: string
+  guest_name: string | null
+  unit_price: string
+  total_amount: string
+  cashier_name: string | null
+}
+
+export interface BeachTypeDetailResponse {
+  tx_type: string
+  period_from: string
+  period_to: string
+  transactions: BeachTypeTransaction[]
+  total_count: number
+  total_revenue: string
+  computed_at: string
+}
+
+export interface ExpenseJournalLine {
+  entry_id: number
+  entry_date: string
+  reference: string
+  description: string
+  amount: string
+  source: string | null
+  cost_center: string | null
+}
+
+export interface ExpenseDetailResponse {
+  account_code: string
+  account_name: string
+  period_from: string
+  period_to: string
+  lines: ExpenseJournalLine[]
+  total_amount: string
+  computed_at: string
+}
+
+export interface SupplierPurchaseOrder {
+  po_id: number
+  po_number: string
+  status: string
+  ordered_at: string
+  received_at: string | null
+  item_count: number
+  total_amount: string
+}
+
+export interface SupplierDetailResponse {
+  supplier_id: number
+  supplier_name: string
+  period_from: string
+  period_to: string
+  orders: SupplierPurchaseOrder[]
+  total_amount: string
+  computed_at: string
+}
+
+// ─── Phase 2/8: المفضلة (Watchlist) ─────────────────────────────────
+
+export interface OwnerWatchlistRead {
+  id: number
+  owner_user_id: number
+  metric_key: string
+  display_order: number
+  label_override: string | null
+  branch_id: number
+  created_at: string
+  updated_at: string
+}
+
+export interface ProductMovement {
+  movement_id: number
+  movement_type: string
+  quantity: string
+  unit_cost: string
+  warehouse_name: string
+  moved_at: string
+  notes: string | null
+}
+
+export interface ProductDetailResponse {
+  product_id: number
+  product_name: string
+  unit: string
+  current_stock: string
+  cost_price: string
+  period_from: string
+  period_to: string
+  movements: ProductMovement[]
+  total_in: string
+  total_out: string
+  computed_at: string
+}
+
+export interface SearchResultItem {
+  entity_type: string
+  entity_id: number
+  title: string
+  subtitle: string | null
+  value: string | null
+  value_label: string | null
+}
+
+export interface OwnerSearchResponse {
+  query: string
+  results: SearchResultItem[]
+  computed_at: string
+}

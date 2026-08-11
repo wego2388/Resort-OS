@@ -19,19 +19,32 @@ const props = defineProps<{
   colorScheme?: 'green' | 'red' | 'amber' | 'default'
   /** نص إضافي صغير تحت الرقم */
   subtitle?: string
+  /** لو موجود، بيظهر زرار تثبيت (المفضلة — Phase 8) */
+  pinned?: boolean
 }>()
+
+const emit = defineEmits<{ 'toggle-pin': [] }>()
 </script>
 
 <template>
   <div class="owner-card" role="region" :aria-label="label">
-    <!-- Header: label + provisional -->
+    <!-- Header: label + provisional + pin -->
     <div class="flex items-start justify-between mb-3">
       <span class="text-xs font-semibold text-owner-muted uppercase tracking-wider">
         {{ label }}
       </span>
-      <span v-if="isProvisional" class="provisional-badge" role="status" aria-label="غير نهائي">
-        ⏳ مؤقت
-      </span>
+      <div class="flex items-center gap-2">
+        <span v-if="isProvisional" class="provisional-badge" role="status" aria-label="غير نهائي">
+          ⏳ مؤقت
+        </span>
+        <button
+          v-if="pinned !== undefined"
+          class="touch-target -m-2 p-2 text-lg leading-none transition-colors"
+          :class="pinned ? 'text-owner-amber' : 'text-owner-border active:text-owner-muted'"
+          :aria-label="pinned ? 'إلغاء التثبيت' : 'تثبيت في المفضلة'"
+          @click="emit('toggle-pin')"
+        >{{ pinned ? '★' : '☆' }}</button>
+      </div>
     </div>
 
     <!-- Skeleton لو loading -->

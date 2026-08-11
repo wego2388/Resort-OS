@@ -6,7 +6,7 @@
  * - updateParams: يُعيد الجلب عند تغيير الفترة (DateRangePicker)
  * - لا caching — بيانات مالية حساسة (Decision 0004)
  */
-import { ref, onMounted, onUnmounted, type Ref, type ComputedRef } from 'vue'
+import { ref, computed, onMounted, onUnmounted, type Ref, type ComputedRef } from 'vue'
 import { useSwipe } from '@vueuse/core'
 import {
   fetchOwnerNow,
@@ -23,6 +23,10 @@ import {
   fetchShiftHistory,
   fetchHRSummary,
   fetchDiscountAnalytics,
+  fetchOwnerSearch,
+  fetchWatchlist,
+  addToWatchlist,
+  removeFromWatchlist,
 } from '../api/owner'
 import type {
   OwnerNowResponse,
@@ -39,6 +43,8 @@ import type {
   HRSummaryResponse,
   DiscountAnalyticsResponse,
   CreditReceivablesResponse,
+  SearchResultItem,
+  OwnerWatchlistRead,
 } from '../api/types'
 
 const NOW_REFRESH_MS         = 60_000
@@ -306,4 +312,144 @@ export function useOwnerDiscountAnalytics(
     (pp) => fetchDiscountAnalytics(pp),
     p,
   )
+}
+
+// ─── Phase 8: تفاصيل التفاصيل — نافذة عند الطلب (لا auto-refresh) ──────
+
+/**
+ * useDetailSheet — بيدير حالة/تحميل نافذة تفاصيل واحدة (DetailSheet.vue).
+ * `open(fetcher)` بتفتح النافذة وتجيب البيانات فورًا؛ `close()` بتقفلها.
+ * كل شاشة بتستخدمه لأي عدد من أنواع التفاصيل — كل دوسة بتمرر fetcher
+ * مختلف (fetchDiningItemDetail أو fetchExpenseDetail...إلخ).
+ */
+export function useDetailSheet<T>() {
+  const isOpen  = ref(false)
+  const data    = ref<T | null>(null) as Ref<T | null>
+  const loading = ref(false)
+  const error   = ref<string | null>(null)
+  let lastFetcher: (() => Promise<T>) | null = null
+
+  async function load() {
+    loading.value = true
+    error.value = null
+    try {
+      data.value = lastFetcher ? await lastFetcher() : null
+    } catch (e: unknown) {
+      error.value = e instanceof Error ? e.message : 'تعذّر تحميل التفاصيل'
+    } finally {
+      loading.value = false
+    }
+  }
+
+  function open(fetcher: () => Promise<T>) {
+    lastFetcher = fetcher
+    isOpen.value = true
+    data.value = null
+    load()
+  }
+
+  function close() {
+    isOpen.value = false
+  }
+
+  return { isOpen, data, loading, error, open, close, retry: load }
+}
+
+// ─── Phase 8: بحث عام — debounced ────────────────────────────────────
+
+export function useOwnerSearch() {
+  const query   = ref('')
+  const results = ref<SearchResultItem[]>([])
+  const loading = ref(false)
+  const error   = ref<string | null>(null)
+  let debounceTimer: ReturnType<typeof setTimeout> | null = null
+  let requestSeq = 0
+
+  async function runSearch(q: string) {
+    const seq = ++requestSeq
+    loading.value = true
+    error.value = null
+    try {
+      const res = await fetchOwnerSearch(q)
+      if (seq === requestSeq) results.value = res.results
+    } catch (e: unknown) {
+      if (seq === requestSeq) error.value = e instanceof Error ? e.message : 'تعذّر البحث'
+    } finally {
+      if (seq === requestSeq) loading.value = false
+    }
+  }
+
+  function onInput(value: string) {
+    query.value = value
+    if (debounceTimer) clearTimeout(debounceTimer)
+    const trimmed = value.trim()
+    if (trimmed.length < 2) {
+      results.value = []
+      loading.value = false
+      return
+    }
+    debounceTimer = setTimeout(() => runSearch(trimmed), 350)
+  }
+
+  function clear() {
+    query.value = ''
+    results.value = []
+    error.value = null
+    if (debounceTimer) clearTimeout(debounceTimer)
+  }
+
+  onUnmounted(() => {
+    if (debounceTimer) clearTimeout(debounceTimer)
+  })
+
+  return { query, results, loading, error, onInput, clear }
+}
+
+// ─── المفضلة (Watchlist) — ميزة كانت جاهزة في الباك إند بالكامل من غير
+// أي واجهة تستخدمها خالص. المالك يقدر يثبّت أهم أرقامه الشخصية فوق. ────
+
+export function useOwnerWatchlist() {
+  const items = ref<OwnerWatchlistRead[]>([])
+  const loaded = ref(false)
+
+  async function load() {
+    try {
+      items.value = await fetchWatchlist()
+    } catch {
+      items.value = []
+    } finally {
+      loaded.value = true
+    }
+  }
+
+  const pinnedKeys = computed(() => new Set(items.value.map(i => i.metric_key)))
+
+  function isPinned(metricKey: string) {
+    return pinnedKeys.value.has(metricKey)
+  }
+
+  async function togglePin(metricKey: string) {
+    const existing = items.value.find(i => i.metric_key === metricKey)
+    if (existing) {
+      // Optimistic: نشيلها فورًا من الشاشة، نرجّعها لو الطلب فشل
+      const prev = items.value
+      items.value = items.value.filter(i => i.id !== existing.id)
+      try {
+        await removeFromWatchlist(existing.id)
+      } catch {
+        items.value = prev
+      }
+    } else {
+      try {
+        const created = await addToWatchlist(metricKey, items.value.length)
+        items.value = [...items.value, created]
+      } catch {
+        /* فشل الإضافة — نسيب الحالة زي ما هي، المستخدم يقدر يجرب تاني */
+      }
+    }
+  }
+
+  onMounted(load)
+
+  return { items, loaded, isPinned, togglePin }
 }

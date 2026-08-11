@@ -59,3 +59,44 @@ export async function fetchDiscountAnalytics(params) {
     const res = await api.get('/api/v1/owner/discount-analytics', { params });
     return res.data;
 }
+// ─── Phase 8: تفاصيل التفاصيل + بحث عام ────────────────────────────────
+export async function fetchDiningItemDetail(params) {
+    const res = await api.get('/api/v1/owner/sales/item-detail', { params });
+    return res.data;
+}
+export async function fetchBeachTypeDetail(params) {
+    const res = await api.get('/api/v1/owner/beach/type-detail', { params });
+    return res.data;
+}
+export async function fetchExpenseDetail(params) {
+    const res = await api.get('/api/v1/owner/expense-detail', { params });
+    return res.data;
+}
+export async function fetchSupplierDetail(params) {
+    const res = await api.get('/api/v1/owner/procurement-detail', { params });
+    return res.data;
+}
+export async function fetchOwnerSearch(q) {
+    const res = await api.get('/api/v1/owner/search', { params: { q } });
+    return res.data;
+}
+export async function fetchProductDetail(params) {
+    const res = await api.get('/api/v1/owner/product-detail', { params });
+    return res.data;
+}
+// ─── المفضلة (Watchlist) ────────────────────────────────────────────
+export async function fetchWatchlist() {
+    const res = await api.get('/api/v1/owner/watchlist');
+    return res.data;
+}
+export async function addToWatchlist(metricKey, displayOrder = 0) {
+    const res = await api.post('/api/v1/owner/watchlist', {
+        metric_key: metricKey,
+        display_order: displayOrder,
+        branch_id: 1, // السيرفر بيتجاهله ويشتق branch_id الحقيقي من الجلسة — القيمة هنا شكلية بس عشان الـschema يقبل الطلب
+    });
+    return res.data;
+}
+export async function removeFromWatchlist(itemId) {
+    await api.delete(`/api/v1/owner/watchlist/${itemId}`);
+}

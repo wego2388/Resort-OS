@@ -22,20 +22,26 @@ from app.modules.owner.schemas import (
     AllocationRuleDraftUpdate,
     AllocationRuleRead,
     BeachPerformanceResponse,
+    BeachTypeDetailResponse,
     ChannelAnalyticsResponse,
+    DiningItemDetailResponse,
     DiscountAnalyticsResponse,
     ExceptionsResponse,
     ExpenseAnalyticsResponse,
+    ExpenseDetailResponse,
     HRSummaryResponse,
     NowHistoryResponse,
     OwnerNowResponse,
     OwnerPerformanceResponse,
+    OwnerSearchResponse,
     OwnerWatchlistCreate,
     OwnerWatchlistRead,
     ProcurementAnalyticsResponse,
+    ProductDetailResponse,
     SalesPerformanceResponse,
     ShiftHistoryResponse,
     ShiftMonitorResponse,
+    SupplierDetailResponse,
 )
 from app.modules.credit.schemas import CreditReceivablesResponse
 
@@ -406,8 +412,8 @@ def owner_discount_analytics(
 # ══════════════════════════════════════════════════════════════════════
 
 @router.get("/watchlist", response_model=list[OwnerWatchlistRead])
-def list_watchlist(db: DbDep, user=Depends(get_owner_reader), branch_id: int = 1):
-    return services.get_watchlist(db, user.id, branch_id)
+def list_watchlist(db: DbDep, user=Depends(get_owner_reader)):
+    return services.get_watchlist(db, user.id, _get_branch(user))
 
 
 @router.post(
@@ -417,6 +423,9 @@ def list_watchlist(db: DbDep, user=Depends(get_owner_reader), branch_id: int = 1
     name="create_owner_watchlist_item",
 )
 def add_watchlist_item(data: OwnerWatchlistCreate, db: DbDep, user=Depends(get_owner_reader)):
+    # branch_id مشتق من الـsession دايمًا — نفس قاعدة كل endpoint تاني هنا،
+    # مش من جسم الطلب (كان باج حقيقي: العميل يقدر يبعت أي branch_id).
+    data.branch_id = _get_branch(user)
     try:
         return services.add_watchlist_item(db, data, user.id)
     except ValueError as e:
@@ -504,3 +513,153 @@ def owner_credit_receivables(
     branch_id = _get_branch(user)
     from app.modules.credit.services import get_credit_receivables_for_owner  # noqa: PLC0415
     return get_credit_receivables_for_owner(db, branch_id)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Phase 8 — تفاصيل التفاصيل (Universal Drill-Down) + بحث عام
+# ══════════════════════════════════════════════════════════════════════
+
+@router.get(
+    "/sales/item-detail",
+    response_model=DiningItemDetailResponse,
+    name="owner_sales_item_detail",
+    summary="تفاصيل كل الطلبات لصنف مطعم/كافيه معيّن",
+)
+def owner_sales_item_detail(
+    response: Response,
+    db: DbDep,
+    user=Depends(get_owner_reader),
+    item_id: int = Query(...),
+    date_from: date = Query(default=None),
+    date_to:   date = Query(default=None),
+):
+    response.headers["Cache-Control"] = _NO_STORE
+    branch_id = _get_branch(user)
+    if date_from is None or date_to is None:
+        date_from, date_to = _default_range()
+    try:
+        return services.get_dining_item_detail(db, branch_id, item_id, date_from, date_to)
+    except Exception as exc:
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail={"code": "OWNER_ITEM_DETAIL_FAILED", "message": str(exc)}) from exc
+
+
+@router.get(
+    "/beach/type-detail",
+    response_model=BeachTypeDetailResponse,
+    name="owner_beach_type_detail",
+    summary="تفاصيل كل معاملات نوع تذكرة شاطئ معيّن",
+)
+def owner_beach_type_detail(
+    response: Response,
+    db: DbDep,
+    user=Depends(get_owner_reader),
+    tx_type: str = Query(...),
+    date_from: date = Query(default=None),
+    date_to:   date = Query(default=None),
+):
+    response.headers["Cache-Control"] = _NO_STORE
+    branch_id = _get_branch(user)
+    if date_from is None or date_to is None:
+        date_from, date_to = _default_range()
+    try:
+        return services.get_beach_type_detail(db, branch_id, tx_type, date_from, date_to)
+    except Exception as exc:
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail={"code": "OWNER_BEACH_DETAIL_FAILED", "message": str(exc)}) from exc
+
+
+@router.get(
+    "/expense-detail",
+    response_model=ExpenseDetailResponse,
+    name="owner_expense_detail",
+    summary="تفاصيل كل قيود اليومية داخل فئة مصروف معيّنة",
+)
+def owner_expense_detail(
+    response: Response,
+    db: DbDep,
+    user=Depends(get_owner_reader),
+    account_code: str = Query(...),
+    date_from: date = Query(default=None),
+    date_to:   date = Query(default=None),
+):
+    response.headers["Cache-Control"] = _NO_STORE
+    branch_id = _get_branch(user)
+    if date_from is None or date_to is None:
+        date_from, date_to = _default_range()
+    try:
+        return services.get_expense_detail(db, branch_id, account_code, date_from, date_to)
+    except Exception as exc:
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail={"code": "OWNER_EXPENSE_DETAIL_FAILED", "message": str(exc)}) from exc
+
+
+@router.get(
+    "/procurement-detail",
+    response_model=SupplierDetailResponse,
+    name="owner_procurement_detail",
+    summary="تفاصيل كل أوامر الشراء لمورد معيّن",
+)
+def owner_procurement_detail(
+    response: Response,
+    db: DbDep,
+    user=Depends(get_owner_reader),
+    supplier_id: int = Query(...),
+    date_from: date = Query(default=None),
+    date_to:   date = Query(default=None),
+):
+    response.headers["Cache-Control"] = _NO_STORE
+    branch_id = _get_branch(user)
+    if date_from is None or date_to is None:
+        date_from, date_to = _default_range()
+    try:
+        return services.get_supplier_detail(db, branch_id, supplier_id, date_from, date_to)
+    except Exception as exc:
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail={"code": "OWNER_SUPPLIER_DETAIL_FAILED", "message": str(exc)}) from exc
+
+
+@router.get(
+    "/product-detail",
+    response_model=ProductDetailResponse,
+    name="owner_product_detail",
+    summary="تفاصيل حركات مخزون منتج معيّن + الرصيد الحالي",
+)
+def owner_product_detail(
+    response: Response,
+    db: DbDep,
+    user=Depends(get_owner_reader),
+    product_id: int = Query(...),
+    date_from: date = Query(default=None),
+    date_to:   date = Query(default=None),
+):
+    response.headers["Cache-Control"] = _NO_STORE
+    branch_id = _get_branch(user)
+    if date_from is None or date_to is None:
+        date_from, date_to = _default_range()
+    try:
+        return services.get_product_detail(db, branch_id, product_id, date_from, date_to)
+    except Exception as exc:
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail={"code": "OWNER_PRODUCT_DETAIL_FAILED", "message": str(exc)}) from exc
+
+
+@router.get(
+    "/search",
+    response_model=OwnerSearchResponse,
+    name="owner_search",
+    summary="بحث عام — أصناف/منتجات/موردين/حسابات مصروف/موظفين بالاسم",
+)
+def owner_search(
+    response: Response,
+    db: DbDep,
+    user=Depends(get_owner_reader),
+    q: str = Query(..., min_length=2, max_length=100),
+):
+    response.headers["Cache-Control"] = _NO_STORE
+    branch_id = _get_branch(user)
+    try:
+        return services.search_everything(db, branch_id, q)
+    except Exception as exc:
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail={"code": "OWNER_SEARCH_FAILED", "message": str(exc)}) from exc

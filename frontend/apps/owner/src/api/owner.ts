@@ -1,5 +1,6 @@
 import { api } from '@resort-os/core'
 import type {
+  OwnerWatchlistRead,
   OwnerNowResponse,
   OwnerPerformanceResponse,
   NowHistoryResponse,
@@ -14,6 +15,12 @@ import type {
   HRSummaryResponse,
   DiscountAnalyticsResponse,
   CreditReceivablesResponse,
+  DiningItemDetailResponse,
+  BeachTypeDetailResponse,
+  ExpenseDetailResponse,
+  SupplierDetailResponse,
+  ProductDetailResponse,
+  OwnerSearchResponse,
 } from './types'
 
 /**
@@ -108,4 +115,76 @@ export async function fetchDiscountAnalytics(params?: {
 }): Promise<DiscountAnalyticsResponse> {
   const res = await api.get<DiscountAnalyticsResponse>('/api/v1/owner/discount-analytics', { params })
   return res.data
+}
+
+// ─── Phase 8: تفاصيل التفاصيل + بحث عام ────────────────────────────────
+
+export async function fetchDiningItemDetail(params: {
+  item_id: number
+  date_from?: string
+  date_to?: string
+}): Promise<DiningItemDetailResponse> {
+  const res = await api.get<DiningItemDetailResponse>('/api/v1/owner/sales/item-detail', { params })
+  return res.data
+}
+
+export async function fetchBeachTypeDetail(params: {
+  tx_type: string
+  date_from?: string
+  date_to?: string
+}): Promise<BeachTypeDetailResponse> {
+  const res = await api.get<BeachTypeDetailResponse>('/api/v1/owner/beach/type-detail', { params })
+  return res.data
+}
+
+export async function fetchExpenseDetail(params: {
+  account_code: string
+  date_from?: string
+  date_to?: string
+}): Promise<ExpenseDetailResponse> {
+  const res = await api.get<ExpenseDetailResponse>('/api/v1/owner/expense-detail', { params })
+  return res.data
+}
+
+export async function fetchSupplierDetail(params: {
+  supplier_id: number
+  date_from?: string
+  date_to?: string
+}): Promise<SupplierDetailResponse> {
+  const res = await api.get<SupplierDetailResponse>('/api/v1/owner/procurement-detail', { params })
+  return res.data
+}
+
+export async function fetchOwnerSearch(q: string): Promise<OwnerSearchResponse> {
+  const res = await api.get<OwnerSearchResponse>('/api/v1/owner/search', { params: { q } })
+  return res.data
+}
+
+export async function fetchProductDetail(params: {
+  product_id: number
+  date_from?: string
+  date_to?: string
+}): Promise<ProductDetailResponse> {
+  const res = await api.get<ProductDetailResponse>('/api/v1/owner/product-detail', { params })
+  return res.data
+}
+
+// ─── المفضلة (Watchlist) ────────────────────────────────────────────
+
+export async function fetchWatchlist(): Promise<OwnerWatchlistRead[]> {
+  const res = await api.get<OwnerWatchlistRead[]>('/api/v1/owner/watchlist')
+  return res.data
+}
+
+export async function addToWatchlist(metricKey: string, displayOrder = 0): Promise<OwnerWatchlistRead> {
+  const res = await api.post<OwnerWatchlistRead>('/api/v1/owner/watchlist', {
+    metric_key: metricKey,
+    display_order: displayOrder,
+    branch_id: 1, // السيرفر بيتجاهله ويشتق branch_id الحقيقي من الجلسة — القيمة هنا شكلية بس عشان الـschema يقبل الطلب
+  })
+  return res.data
+}
+
+export async function removeFromWatchlist(itemId: number): Promise<void> {
+  await api.delete(`/api/v1/owner/watchlist/${itemId}`)
 }

@@ -6,11 +6,14 @@
  * DateRangePicker للتحكم في الفترة (Decision 0004 §7b)
  */
 import { ref, computed } from 'vue'
-import { useOwnerExpenseAnalytics, useOwnerProcurementAnalytics } from '../composables/useOwnerData'
-import { formatMoney, formatPct } from '../composables/useFormat'
+import { useOwnerExpenseAnalytics, useOwnerProcurementAnalytics, useDetailSheet } from '../composables/useOwnerData'
+import { fetchExpenseDetail, fetchSupplierDetail } from '../api/owner'
+import type { ExpenseDetailResponse, SupplierDetailResponse } from '../api/types'
+import { formatMoney, formatMoneyFull, formatPct } from '../composables/useFormat'
 import ErrorState from '../components/ErrorState.vue'
 import SkeletonCards from '../components/SkeletonCards.vue'
 import DateRangePicker from '../components/DateRangePicker.vue'
+import DetailSheet from '../components/DetailSheet.vue'
 
 const tabs = ['expenses', 'procurement'] as const
 type Tab = typeof tabs[number]
@@ -30,6 +33,31 @@ function onDateChange(range: { date_from: string; date_to: string }) {
   updateExp(expParams.value)
   updateProc(procParams.value)
 }
+
+// ── تفاصيل التفاصيل (Phase 8) ─────────────────────────────────────────
+const expenseDetail = useDetailSheet<ExpenseDetailResponse>()
+function openExpenseDetail(accountCode: string) {
+  expenseDetail.open(() => fetchExpenseDetail({
+    account_code: accountCode,
+    date_from: dateRange.value?.date_from,
+    date_to:   dateRange.value?.date_to,
+  }))
+}
+
+const supplierDetail = useDetailSheet<SupplierDetailResponse>()
+function openSupplierDetail(supplierId: number) {
+  supplierDetail.open(() => fetchSupplierDetail({
+    supplier_id: supplierId,
+    date_from: dateRange.value?.date_from,
+    date_to:   dateRange.value?.date_to,
+  }))
+}
+
+function formatDate(d: string) {
+  return new Date(d).toLocaleDateString('ar-EG', { month: 'short', day: 'numeric' })
+}
+
+const poStatusLabel: Record<string, string> = { received: 'مستلم', partial: 'مستلم جزئيًا' }
 </script>
 
 <template>
@@ -86,10 +114,11 @@ function onDateChange(range: { date_from: string; date_to: string }) {
               لا توجد مصروفات مسجّلة
             </div>
             <div v-else class="space-y-1">
-              <div
+              <button
                 v-for="line in expData.expense_lines"
                 :key="line.account_code"
-                class="py-2 border-b border-owner-border/50 last:border-0"
+                class="w-full py-2 border-b border-owner-border/50 last:border-0 text-right active:bg-owner-card transition-colors rounded-lg -mx-1 px-1"
+                @click="openExpenseDetail(line.account_code)"
               >
                 <div class="flex items-center justify-between">
                   <div class="flex items-center gap-2">
@@ -108,7 +137,7 @@ function onDateChange(range: { date_from: string; date_to: string }) {
                     {{ formatPct(line.variance_delta) }} عن السابق
                   </span>
                 </div>
-              </div>
+              </button>
             </div>
           </div>
         </template>
@@ -132,10 +161,11 @@ function onDateChange(range: { date_from: string; date_to: string }) {
               لا توجد مشتريات
             </div>
             <div v-else class="space-y-2">
-              <div
+              <button
                 v-for="sup in procData.suppliers"
                 :key="sup.supplier_id"
-                class="flex items-center justify-between py-2 border-b border-owner-border last:border-0"
+                class="w-full flex items-center justify-between py-2 border-b border-owner-border last:border-0 text-right active:bg-owner-card transition-colors rounded-lg -mx-1 px-1"
+                @click="openSupplierDetail(sup.supplier_id)"
               >
                 <div>
                   <div class="flex items-center gap-2">
@@ -144,8 +174,11 @@ function onDateChange(range: { date_from: string; date_to: string }) {
                   </div>
                   <div class="text-xs text-owner-muted">{{ sup.order_count }} طلب · {{ formatPct(sup.spend_pct) }} من الإجمالي</div>
                 </div>
-                <div class="font-mono font-bold text-owner-text">{{ formatMoney(sup.total_spend) }}</div>
-              </div>
+                <div class="flex items-center gap-1">
+                  <span class="font-mono font-bold text-owner-text">{{ formatMoney(sup.total_spend) }}</span>
+                  <span class="text-owner-muted" aria-hidden="true">‹</span>
+                </div>
+              </button>
             </div>
           </div>
 
@@ -174,5 +207,63 @@ function onDateChange(range: { date_from: string; date_to: string }) {
       </template>
 
     </div>
+
+    <!-- تفاصيل فئة مصروف -->
+    <DetailSheet
+      :open="expenseDetail.isOpen.value"
+      :title="expenseDetail.data.value?.account_name ?? 'تفاصيل المصروف'"
+      :subtitle="expenseDetail.data.value ? formatMoney(expenseDetail.data.value.total_amount) : undefined"
+      :loading="expenseDetail.loading.value"
+      :error="expenseDetail.error.value"
+      @close="expenseDetail.close()"
+      @retry="expenseDetail.retry()"
+    >
+      <div v-if="expenseDetail.data.value?.lines.length === 0" class="text-xs text-owner-muted text-center py-8">
+        لا توجد قيود في هذه الفترة
+      </div>
+      <div v-else class="space-y-1">
+        <div
+          v-for="line in expenseDetail.data.value?.lines ?? []"
+          :key="line.entry_id"
+          class="flex items-center justify-between py-2.5 border-b border-owner-border/50 last:border-0 text-xs"
+        >
+          <div class="min-w-0">
+            <div class="font-semibold text-owner-text truncate">{{ line.description }}</div>
+            <div class="text-owner-muted mt-0.5">{{ line.reference }} · {{ formatDate(line.entry_date) }}</div>
+          </div>
+          <div class="font-mono font-semibold text-owner-text shrink-0">{{ formatMoneyFull(line.amount) }}</div>
+        </div>
+      </div>
+    </DetailSheet>
+
+    <!-- تفاصيل مورد -->
+    <DetailSheet
+      :open="supplierDetail.isOpen.value"
+      :title="supplierDetail.data.value?.supplier_name ?? 'تفاصيل المورد'"
+      :subtitle="supplierDetail.data.value ? `${supplierDetail.data.value.orders.length} أمر شراء · ${formatMoney(supplierDetail.data.value.total_amount)}` : undefined"
+      :loading="supplierDetail.loading.value"
+      :error="supplierDetail.error.value"
+      @close="supplierDetail.close()"
+      @retry="supplierDetail.retry()"
+    >
+      <div v-if="supplierDetail.data.value?.orders.length === 0" class="text-xs text-owner-muted text-center py-8">
+        لا توجد أوامر شراء في هذه الفترة
+      </div>
+      <div v-else class="space-y-1">
+        <div
+          v-for="po in supplierDetail.data.value?.orders ?? []"
+          :key="po.po_id"
+          class="flex items-center justify-between py-2.5 border-b border-owner-border/50 last:border-0 text-xs"
+        >
+          <div>
+            <div class="font-semibold text-owner-text">{{ po.po_number }}</div>
+            <div class="text-owner-muted mt-0.5">
+              {{ poStatusLabel[po.status] ?? po.status }} · {{ po.item_count }} صنف · {{ formatDate(po.ordered_at) }}
+            </div>
+          </div>
+          <div class="font-mono font-semibold text-owner-text">{{ formatMoneyFull(po.total_amount) }}</div>
+        </div>
+      </div>
+    </DetailSheet>
   </div>
 </template>

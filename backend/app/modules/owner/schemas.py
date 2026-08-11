@@ -650,5 +650,142 @@ class PerformanceBreakdown(BaseModel):
     other_revenue:  Optional[Decimal] = None
 
 
+# ═══════════════════════════════════════════════════════════════════════
+# Phase 8 — تفاصيل التفاصيل (Universal Drill-Down)
+# ═══════════════════════════════════════════════════════════════════════
+# كل شاشات الأونر لحد دلوقتي بتعرض إجماليات بس (فئة مصروف، مورد، صنف...).
+# الـendpoints دي بترجع السجلات الخام اللي كوّنت الإجمالي — نفس الفلتر
+# (فترة + معرّف العنصر)، مصدر بيانات واحد بس (نفس الجداول المستخدمة في
+# التجميع)، صفر منطق مالي جديد.
+
+class DiningItemTransaction(BaseModel):
+    order_id:      int
+    order_number:  str
+    outlet_name:   str
+    order_type:    str
+    quantity:      int
+    unit_price:    Decimal
+    line_total:    Decimal
+    status:        str
+    ordered_at:    datetime
+
+
+class DiningItemDetailResponse(BaseModel):
+    """GET /api/v1/owner/sales/item-detail — كل الطلبات اللي فيها صنف معيّن."""
+    item_id:       int
+    item_name:     str
+    period_from:   date
+    period_to:     date
+    transactions:  list[DiningItemTransaction]
+    total_quantity: int
+    total_revenue:  Decimal
+    computed_at:    datetime
+
+
+class BeachTypeTransaction(BaseModel):
+    transaction_id: int
+    tx_date:        date
+    guest_name:     Optional[str] = None
+    unit_price:     Decimal
+    total_amount:   Decimal
+    cashier_name:   Optional[str] = None
+
+
+class BeachTypeDetailResponse(BaseModel):
+    """GET /api/v1/owner/beach/type-detail — كل معاملات نوع تذكرة معيّن."""
+    tx_type:        str
+    period_from:    date
+    period_to:      date
+    transactions:   list[BeachTypeTransaction]
+    total_count:    int
+    total_revenue:  Decimal
+    computed_at:    datetime
+
+
+class ExpenseJournalLine(BaseModel):
+    entry_id:     int
+    entry_date:   date
+    reference:    str
+    description:  str
+    amount:       Decimal
+    source:       Optional[str] = None
+    cost_center:  Optional[str] = None
+
+
+class ExpenseDetailResponse(BaseModel):
+    """GET /api/v1/owner/expense-detail — كل قيود اليومية داخل فئة مصروف معيّنة."""
+    account_code:  str
+    account_name:  str
+    period_from:   date
+    period_to:     date
+    lines:         list[ExpenseJournalLine]
+    total_amount:  Decimal
+    computed_at:   datetime
+
+
+class SupplierPurchaseOrder(BaseModel):
+    po_id:        int
+    po_number:    str
+    status:       str
+    ordered_at:   date
+    received_at:  Optional[date] = None
+    item_count:   int
+    total_amount: Decimal
+
+
+class SupplierDetailResponse(BaseModel):
+    """GET /api/v1/owner/procurement-detail — كل أوامر الشراء لمورد معيّن."""
+    supplier_id:   int
+    supplier_name: str
+    period_from:   date
+    period_to:     date
+    orders:        list[SupplierPurchaseOrder]
+    total_amount:  Decimal
+    computed_at:   datetime
+
+
+class ProductMovement(BaseModel):
+    movement_id:    int
+    movement_type:  str
+    quantity:       Decimal
+    unit_cost:      Decimal
+    warehouse_name: str
+    moved_at:       datetime
+    notes:          Optional[str] = None
+
+
+class ProductDetailResponse(BaseModel):
+    """GET /api/v1/owner/product-detail — حركات مخزون منتج معيّن + الرصيد الحالي."""
+    product_id:      int
+    product_name:    str
+    unit:            str
+    current_stock:   Decimal
+    cost_price:      Decimal
+    period_from:      date
+    period_to:        date
+    movements:        list[ProductMovement]
+    total_in:         Decimal
+    total_out:        Decimal
+    computed_at:      datetime
+
+
+class SearchResultItem(BaseModel):
+    """صف نتيجة بحث واحد — نوع مختلف الشكل حسب entity_type، الفرونت إند
+    بيقرر إزاي يعرضه وإيه الـdetail endpoint المناسب لو اتدوس عليه."""
+    entity_type:  str   # product | supplier | expense_account | employee | b2b_contract | timeshare_contract
+    entity_id:    int
+    title:        str
+    subtitle:     Optional[str] = None
+    value:        Optional[Decimal] = None
+    value_label:  Optional[str] = None
+
+
+class OwnerSearchResponse(BaseModel):
+    """GET /api/v1/owner/search"""
+    query:    str
+    results:  list[SearchResultItem]
+    computed_at: datetime
+
+
 # resolve forward reference
 PeriodComparison.model_rebuild()

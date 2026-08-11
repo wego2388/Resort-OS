@@ -5,11 +5,13 @@
  * DateRangePicker يتحكم في date_from/date_to لكل tab
  */
 import { ref, computed } from 'vue';
-import { useOwnerSales, useOwnerBeachPerformance, useOwnerChannelAnalytics, useOwnerDiscountAnalytics, } from '../composables/useOwnerData';
-import { formatMoney, formatPct } from '../composables/useFormat';
+import { useOwnerSales, useOwnerBeachPerformance, useOwnerChannelAnalytics, useOwnerDiscountAnalytics, useDetailSheet, } from '../composables/useOwnerData';
+import { fetchDiningItemDetail, fetchBeachTypeDetail } from '../api/owner';
+import { formatMoney, formatMoneyFull, formatPct } from '../composables/useFormat';
 import ErrorState from '../components/ErrorState.vue';
 import SkeletonCards from '../components/SkeletonCards.vue';
 import DateRangePicker from '../components/DateRangePicker.vue';
+import DetailSheet from '../components/DetailSheet.vue';
 const tabs = ['dining', 'beach', 'channels', 'discounts'];
 const activeTab = ref('dining');
 const tabLabels = {
@@ -54,6 +56,29 @@ const abcColor = {
     C: 'text-owner-muted',
 };
 const topItems = computed(() => salesData.value?.items.slice(0, 20) ?? []);
+// ── تفاصيل التفاصيل (Phase 8) ─────────────────────────────────────────
+const itemDetail = useDetailSheet();
+function openItemDetail(itemId) {
+    itemDetail.open(() => fetchDiningItemDetail({
+        item_id: itemId,
+        date_from: dateRange.value?.date_from,
+        date_to: dateRange.value?.date_to,
+    }));
+}
+const beachDetail = useDetailSheet();
+function openBeachDetail(txType) {
+    beachDetail.open(() => fetchBeachTypeDetail({
+        tx_type: txType,
+        date_from: dateRange.value?.date_from,
+        date_to: dateRange.value?.date_to,
+    }));
+}
+function formatDateTime(iso) {
+    return new Date(iso).toLocaleString('ar-EG', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+const orderTypeLabel = {
+    dine_in: 'صالة', takeaway: 'تيك أواي', delivery: 'توصيل', room_service: 'خدمة غرف',
+};
 debugger; /* PartiallyEnd: #3632/scriptSetup.vue */
 const __VLS_ctx = {};
 let __VLS_components;
@@ -176,9 +201,22 @@ if (__VLS_ctx.activeTab === 'dining') {
                 ...{ class: "col-span-3 text-left" },
             });
             for (const [item] of __VLS_getVForSourceType((__VLS_ctx.topItems))) {
-                __VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
+                __VLS_asFunctionalElement(__VLS_intrinsicElements.button, __VLS_intrinsicElements.button)({
+                    ...{ onClick: (...[$event]) => {
+                            if (!(__VLS_ctx.activeTab === 'dining'))
+                                return;
+                            if (!!(__VLS_ctx.salesError && !__VLS_ctx.salesLoading))
+                                return;
+                            if (!!(__VLS_ctx.salesLoading && !__VLS_ctx.salesData))
+                                return;
+                            if (!(__VLS_ctx.salesData))
+                                return;
+                            if (!!(__VLS_ctx.topItems.length === 0))
+                                return;
+                            __VLS_ctx.openItemDetail(item.item_id);
+                        } },
                     key: (item.item_id),
-                    ...{ class: "grid grid-cols-12 gap-1 py-2 border-b border-owner-border/50 last:border-0 text-xs" },
+                    ...{ class: "w-full grid grid-cols-12 gap-1 py-2 border-b border-owner-border/50 last:border-0 text-xs text-right active:bg-owner-card transition-colors rounded-lg -mx-1 px-1" },
                 });
                 __VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
                     ...{ class: "col-span-5" },
@@ -213,9 +251,14 @@ if (__VLS_ctx.activeTab === 'dining') {
                 });
                 (item.quantity_sold);
                 __VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
-                    ...{ class: "col-span-3 flex items-center font-mono text-owner-text font-semibold" },
+                    ...{ class: "col-span-3 flex items-center justify-between font-mono text-owner-text font-semibold" },
                 });
+                __VLS_asFunctionalElement(__VLS_intrinsicElements.span, __VLS_intrinsicElements.span)({});
                 (__VLS_ctx.formatMoney(item.revenue));
+                __VLS_asFunctionalElement(__VLS_intrinsicElements.span, __VLS_intrinsicElements.span)({
+                    ...{ class: "text-owner-muted" },
+                    'aria-hidden': "true",
+                });
             }
         }
         __VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
@@ -294,9 +337,24 @@ else if (__VLS_ctx.activeTab === 'beach') {
                 ...{ class: "space-y-2" },
             });
             for (const [row] of __VLS_getVForSourceType((__VLS_ctx.beachData.ticket_types))) {
-                __VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
+                __VLS_asFunctionalElement(__VLS_intrinsicElements.button, __VLS_intrinsicElements.button)({
+                    ...{ onClick: (...[$event]) => {
+                            if (!!(__VLS_ctx.activeTab === 'dining'))
+                                return;
+                            if (!(__VLS_ctx.activeTab === 'beach'))
+                                return;
+                            if (!!(__VLS_ctx.beachError && !__VLS_ctx.beachLoading))
+                                return;
+                            if (!!(__VLS_ctx.beachLoading && !__VLS_ctx.beachData))
+                                return;
+                            if (!(__VLS_ctx.beachData))
+                                return;
+                            if (!!(__VLS_ctx.beachData.ticket_types.length === 0))
+                                return;
+                            __VLS_ctx.openBeachDetail(row.tx_type);
+                        } },
                     key: (row.tx_type),
-                    ...{ class: "flex items-center justify-between py-2 border-b border-owner-border last:border-0" },
+                    ...{ class: "w-full flex items-center justify-between py-2 border-b border-owner-border last:border-0 text-right active:bg-owner-card transition-colors rounded-lg -mx-1 px-1" },
                 });
                 __VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({});
                 __VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
@@ -309,9 +367,16 @@ else if (__VLS_ctx.activeTab === 'beach') {
                 (row.count);
                 (__VLS_ctx.formatMoney(row.avg_unit_price));
                 __VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
+                    ...{ class: "flex items-center gap-1" },
+                });
+                __VLS_asFunctionalElement(__VLS_intrinsicElements.span, __VLS_intrinsicElements.span)({
                     ...{ class: "font-mono font-bold text-owner-green" },
                 });
                 (__VLS_ctx.formatMoney(row.total_amount));
+                __VLS_asFunctionalElement(__VLS_intrinsicElements.span, __VLS_intrinsicElements.span)({
+                    ...{ class: "text-owner-muted" },
+                    'aria-hidden': "true",
+                });
             }
         }
     }
@@ -637,6 +702,148 @@ else if (__VLS_ctx.activeTab === 'discounts') {
         }
     }
 }
+/** @type {[typeof DetailSheet, typeof DetailSheet, ]} */ ;
+// @ts-ignore
+const __VLS_47 = __VLS_asFunctionalComponent(DetailSheet, new DetailSheet({
+    ...{ 'onClose': {} },
+    ...{ 'onRetry': {} },
+    open: (__VLS_ctx.itemDetail.isOpen.value),
+    title: (__VLS_ctx.itemDetail.data.value?.item_name ?? 'تفاصيل الصنف'),
+    subtitle: (__VLS_ctx.itemDetail.data.value ? `${__VLS_ctx.itemDetail.data.value.total_quantity} قطعة · ${__VLS_ctx.formatMoney(__VLS_ctx.itemDetail.data.value.total_revenue)}` : undefined),
+    loading: (__VLS_ctx.itemDetail.loading.value),
+    error: (__VLS_ctx.itemDetail.error.value),
+}));
+const __VLS_48 = __VLS_47({
+    ...{ 'onClose': {} },
+    ...{ 'onRetry': {} },
+    open: (__VLS_ctx.itemDetail.isOpen.value),
+    title: (__VLS_ctx.itemDetail.data.value?.item_name ?? 'تفاصيل الصنف'),
+    subtitle: (__VLS_ctx.itemDetail.data.value ? `${__VLS_ctx.itemDetail.data.value.total_quantity} قطعة · ${__VLS_ctx.formatMoney(__VLS_ctx.itemDetail.data.value.total_revenue)}` : undefined),
+    loading: (__VLS_ctx.itemDetail.loading.value),
+    error: (__VLS_ctx.itemDetail.error.value),
+}, ...__VLS_functionalComponentArgsRest(__VLS_47));
+let __VLS_50;
+let __VLS_51;
+let __VLS_52;
+const __VLS_53 = {
+    onClose: (...[$event]) => {
+        __VLS_ctx.itemDetail.close();
+    }
+};
+const __VLS_54 = {
+    onRetry: (...[$event]) => {
+        __VLS_ctx.itemDetail.retry();
+    }
+};
+__VLS_49.slots.default;
+if (__VLS_ctx.itemDetail.data.value?.transactions.length === 0) {
+    __VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
+        ...{ class: "text-xs text-owner-muted text-center py-8" },
+    });
+}
+else {
+    __VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
+        ...{ class: "space-y-1" },
+    });
+    for (const [tx] of __VLS_getVForSourceType((__VLS_ctx.itemDetail.data.value?.transactions ?? []))) {
+        __VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
+            key: (tx.order_id),
+            ...{ class: "flex items-center justify-between py-2.5 border-b border-owner-border/50 last:border-0 text-xs" },
+        });
+        __VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
+            ...{ class: "min-w-0" },
+        });
+        __VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
+            ...{ class: "font-semibold text-owner-text" },
+        });
+        (tx.order_number);
+        __VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
+            ...{ class: "text-owner-muted mt-0.5" },
+        });
+        (tx.outlet_name);
+        (__VLS_ctx.orderTypeLabel[tx.order_type] ?? tx.order_type);
+        (__VLS_ctx.formatDateTime(tx.ordered_at));
+        __VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
+            ...{ class: "text-left shrink-0" },
+        });
+        __VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
+            ...{ class: "font-mono font-semibold text-owner-text" },
+        });
+        (__VLS_ctx.formatMoneyFull(tx.line_total));
+        __VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
+            ...{ class: "text-owner-muted" },
+        });
+        (tx.quantity);
+        (__VLS_ctx.formatMoney(tx.unit_price));
+    }
+}
+var __VLS_49;
+/** @type {[typeof DetailSheet, typeof DetailSheet, ]} */ ;
+// @ts-ignore
+const __VLS_55 = __VLS_asFunctionalComponent(DetailSheet, new DetailSheet({
+    ...{ 'onClose': {} },
+    ...{ 'onRetry': {} },
+    open: (__VLS_ctx.beachDetail.isOpen.value),
+    title: (__VLS_ctx.beachDetail.data.value?.tx_type ?? 'تفاصيل التذاكر'),
+    subtitle: (__VLS_ctx.beachDetail.data.value ? `${__VLS_ctx.beachDetail.data.value.total_count} تذكرة · ${__VLS_ctx.formatMoney(__VLS_ctx.beachDetail.data.value.total_revenue)}` : undefined),
+    loading: (__VLS_ctx.beachDetail.loading.value),
+    error: (__VLS_ctx.beachDetail.error.value),
+}));
+const __VLS_56 = __VLS_55({
+    ...{ 'onClose': {} },
+    ...{ 'onRetry': {} },
+    open: (__VLS_ctx.beachDetail.isOpen.value),
+    title: (__VLS_ctx.beachDetail.data.value?.tx_type ?? 'تفاصيل التذاكر'),
+    subtitle: (__VLS_ctx.beachDetail.data.value ? `${__VLS_ctx.beachDetail.data.value.total_count} تذكرة · ${__VLS_ctx.formatMoney(__VLS_ctx.beachDetail.data.value.total_revenue)}` : undefined),
+    loading: (__VLS_ctx.beachDetail.loading.value),
+    error: (__VLS_ctx.beachDetail.error.value),
+}, ...__VLS_functionalComponentArgsRest(__VLS_55));
+let __VLS_58;
+let __VLS_59;
+let __VLS_60;
+const __VLS_61 = {
+    onClose: (...[$event]) => {
+        __VLS_ctx.beachDetail.close();
+    }
+};
+const __VLS_62 = {
+    onRetry: (...[$event]) => {
+        __VLS_ctx.beachDetail.retry();
+    }
+};
+__VLS_57.slots.default;
+if (__VLS_ctx.beachDetail.data.value?.transactions.length === 0) {
+    __VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
+        ...{ class: "text-xs text-owner-muted text-center py-8" },
+    });
+}
+else {
+    __VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
+        ...{ class: "space-y-1" },
+    });
+    for (const [tx] of __VLS_getVForSourceType((__VLS_ctx.beachDetail.data.value?.transactions ?? []))) {
+        __VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
+            key: (tx.transaction_id),
+            ...{ class: "flex items-center justify-between py-2.5 border-b border-owner-border/50 last:border-0 text-xs" },
+        });
+        __VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({});
+        __VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
+            ...{ class: "font-semibold text-owner-text" },
+        });
+        (new Date(tx.tx_date).toLocaleDateString('ar-EG', { month: 'short', day: 'numeric' }));
+        if (tx.cashier_name) {
+            __VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
+                ...{ class: "text-owner-muted mt-0.5" },
+            });
+            (tx.cashier_name);
+        }
+        __VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
+            ...{ class: "font-mono font-semibold text-owner-text" },
+        });
+        (__VLS_ctx.formatMoneyFull(tx.total_amount));
+    }
+}
+var __VLS_57;
 /** @type {__VLS_StyleScopedClasses['flex-1']} */ ;
 /** @type {__VLS_StyleScopedClasses['flex']} */ ;
 /** @type {__VLS_StyleScopedClasses['flex-col']} */ ;
@@ -691,6 +898,7 @@ else if (__VLS_ctx.activeTab === 'discounts') {
 /** @type {__VLS_StyleScopedClasses['text-left']} */ ;
 /** @type {__VLS_StyleScopedClasses['col-span-3']} */ ;
 /** @type {__VLS_StyleScopedClasses['text-left']} */ ;
+/** @type {__VLS_StyleScopedClasses['w-full']} */ ;
 /** @type {__VLS_StyleScopedClasses['grid']} */ ;
 /** @type {__VLS_StyleScopedClasses['grid-cols-12']} */ ;
 /** @type {__VLS_StyleScopedClasses['gap-1']} */ ;
@@ -699,6 +907,12 @@ else if (__VLS_ctx.activeTab === 'discounts') {
 /** @type {__VLS_StyleScopedClasses['border-owner-border/50']} */ ;
 /** @type {__VLS_StyleScopedClasses['last:border-0']} */ ;
 /** @type {__VLS_StyleScopedClasses['text-xs']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-right']} */ ;
+/** @type {__VLS_StyleScopedClasses['active:bg-owner-card']} */ ;
+/** @type {__VLS_StyleScopedClasses['transition-colors']} */ ;
+/** @type {__VLS_StyleScopedClasses['rounded-lg']} */ ;
+/** @type {__VLS_StyleScopedClasses['-mx-1']} */ ;
+/** @type {__VLS_StyleScopedClasses['px-1']} */ ;
 /** @type {__VLS_StyleScopedClasses['col-span-5']} */ ;
 /** @type {__VLS_StyleScopedClasses['font-semibold']} */ ;
 /** @type {__VLS_StyleScopedClasses['text-owner-text']} */ ;
@@ -720,9 +934,11 @@ else if (__VLS_ctx.activeTab === 'discounts') {
 /** @type {__VLS_StyleScopedClasses['col-span-3']} */ ;
 /** @type {__VLS_StyleScopedClasses['flex']} */ ;
 /** @type {__VLS_StyleScopedClasses['items-center']} */ ;
+/** @type {__VLS_StyleScopedClasses['justify-between']} */ ;
 /** @type {__VLS_StyleScopedClasses['font-mono']} */ ;
 /** @type {__VLS_StyleScopedClasses['text-owner-text']} */ ;
 /** @type {__VLS_StyleScopedClasses['font-semibold']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-owner-muted']} */ ;
 /** @type {__VLS_StyleScopedClasses['mt-3']} */ ;
 /** @type {__VLS_StyleScopedClasses['pt-3']} */ ;
 /** @type {__VLS_StyleScopedClasses['border-t']} */ ;
@@ -752,6 +968,7 @@ else if (__VLS_ctx.activeTab === 'discounts') {
 /** @type {__VLS_StyleScopedClasses['text-center']} */ ;
 /** @type {__VLS_StyleScopedClasses['py-4']} */ ;
 /** @type {__VLS_StyleScopedClasses['space-y-2']} */ ;
+/** @type {__VLS_StyleScopedClasses['w-full']} */ ;
 /** @type {__VLS_StyleScopedClasses['flex']} */ ;
 /** @type {__VLS_StyleScopedClasses['items-center']} */ ;
 /** @type {__VLS_StyleScopedClasses['justify-between']} */ ;
@@ -759,14 +976,24 @@ else if (__VLS_ctx.activeTab === 'discounts') {
 /** @type {__VLS_StyleScopedClasses['border-b']} */ ;
 /** @type {__VLS_StyleScopedClasses['border-owner-border']} */ ;
 /** @type {__VLS_StyleScopedClasses['last:border-0']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-right']} */ ;
+/** @type {__VLS_StyleScopedClasses['active:bg-owner-card']} */ ;
+/** @type {__VLS_StyleScopedClasses['transition-colors']} */ ;
+/** @type {__VLS_StyleScopedClasses['rounded-lg']} */ ;
+/** @type {__VLS_StyleScopedClasses['-mx-1']} */ ;
+/** @type {__VLS_StyleScopedClasses['px-1']} */ ;
 /** @type {__VLS_StyleScopedClasses['text-sm']} */ ;
 /** @type {__VLS_StyleScopedClasses['font-semibold']} */ ;
 /** @type {__VLS_StyleScopedClasses['text-owner-text']} */ ;
 /** @type {__VLS_StyleScopedClasses['text-xs']} */ ;
 /** @type {__VLS_StyleScopedClasses['text-owner-muted']} */ ;
+/** @type {__VLS_StyleScopedClasses['flex']} */ ;
+/** @type {__VLS_StyleScopedClasses['items-center']} */ ;
+/** @type {__VLS_StyleScopedClasses['gap-1']} */ ;
 /** @type {__VLS_StyleScopedClasses['font-mono']} */ ;
 /** @type {__VLS_StyleScopedClasses['font-bold']} */ ;
 /** @type {__VLS_StyleScopedClasses['text-owner-green']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-owner-muted']} */ ;
 /** @type {__VLS_StyleScopedClasses['owner-card']} */ ;
 /** @type {__VLS_StyleScopedClasses['section-label']} */ ;
 /** @type {__VLS_StyleScopedClasses['grid']} */ ;
@@ -918,15 +1145,61 @@ else if (__VLS_ctx.activeTab === 'discounts') {
 /** @type {__VLS_StyleScopedClasses['text-owner-muted']} */ ;
 /** @type {__VLS_StyleScopedClasses['font-mono']} */ ;
 /** @type {__VLS_StyleScopedClasses['text-owner-green']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-xs']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-owner-muted']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-center']} */ ;
+/** @type {__VLS_StyleScopedClasses['py-8']} */ ;
+/** @type {__VLS_StyleScopedClasses['space-y-1']} */ ;
+/** @type {__VLS_StyleScopedClasses['flex']} */ ;
+/** @type {__VLS_StyleScopedClasses['items-center']} */ ;
+/** @type {__VLS_StyleScopedClasses['justify-between']} */ ;
+/** @type {__VLS_StyleScopedClasses['py-2.5']} */ ;
+/** @type {__VLS_StyleScopedClasses['border-b']} */ ;
+/** @type {__VLS_StyleScopedClasses['border-owner-border/50']} */ ;
+/** @type {__VLS_StyleScopedClasses['last:border-0']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-xs']} */ ;
+/** @type {__VLS_StyleScopedClasses['min-w-0']} */ ;
+/** @type {__VLS_StyleScopedClasses['font-semibold']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-owner-text']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-owner-muted']} */ ;
+/** @type {__VLS_StyleScopedClasses['mt-0.5']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-left']} */ ;
+/** @type {__VLS_StyleScopedClasses['shrink-0']} */ ;
+/** @type {__VLS_StyleScopedClasses['font-mono']} */ ;
+/** @type {__VLS_StyleScopedClasses['font-semibold']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-owner-text']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-owner-muted']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-xs']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-owner-muted']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-center']} */ ;
+/** @type {__VLS_StyleScopedClasses['py-8']} */ ;
+/** @type {__VLS_StyleScopedClasses['space-y-1']} */ ;
+/** @type {__VLS_StyleScopedClasses['flex']} */ ;
+/** @type {__VLS_StyleScopedClasses['items-center']} */ ;
+/** @type {__VLS_StyleScopedClasses['justify-between']} */ ;
+/** @type {__VLS_StyleScopedClasses['py-2.5']} */ ;
+/** @type {__VLS_StyleScopedClasses['border-b']} */ ;
+/** @type {__VLS_StyleScopedClasses['border-owner-border/50']} */ ;
+/** @type {__VLS_StyleScopedClasses['last:border-0']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-xs']} */ ;
+/** @type {__VLS_StyleScopedClasses['font-semibold']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-owner-text']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-owner-muted']} */ ;
+/** @type {__VLS_StyleScopedClasses['mt-0.5']} */ ;
+/** @type {__VLS_StyleScopedClasses['font-mono']} */ ;
+/** @type {__VLS_StyleScopedClasses['font-semibold']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-owner-text']} */ ;
 var __VLS_dollars;
 const __VLS_self = (await import('vue')).defineComponent({
     setup() {
         return {
             formatMoney: formatMoney,
+            formatMoneyFull: formatMoneyFull,
             formatPct: formatPct,
             ErrorState: ErrorState,
             SkeletonCards: SkeletonCards,
             DateRangePicker: DateRangePicker,
+            DetailSheet: DetailSheet,
             tabs: tabs,
             activeTab: activeTab,
             tabLabels: tabLabels,
@@ -949,6 +1222,12 @@ const __VLS_self = (await import('vue')).defineComponent({
             onDateChange: onDateChange,
             abcColor: abcColor,
             topItems: topItems,
+            itemDetail: itemDetail,
+            openItemDetail: openItemDetail,
+            beachDetail: beachDetail,
+            openBeachDetail: openBeachDetail,
+            formatDateTime: formatDateTime,
+            orderTypeLabel: orderTypeLabel,
         };
     },
 });
