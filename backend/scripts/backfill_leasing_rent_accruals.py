@@ -30,10 +30,13 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.database import SessionLocal
 from app.modules.finance.models import JournalEntry
+from app.seed import _import_all_models
 from app.modules.leasing import services
 from app.modules.leasing.models import LeaseContract, LeasePayment
 from app.core.kernel.models.user import User
 from app.resort_os.timezone_utils import local_today
+
+_import_all_models()
 
 
 @dataclass(frozen=True)

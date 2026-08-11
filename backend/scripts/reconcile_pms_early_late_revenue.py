@@ -29,9 +29,12 @@ from app.core.config import settings
 from app.core.database import SessionLocal
 from app.modules.finance.models import FolioCharge, JournalEntry
 from app.modules.finance.services import post_simple_revenue_journal
+from app.seed import _import_all_models
 from app.core.kernel.models.user import User
 from app.modules.pms.models import Booking
 from app.resort_os.timezone_utils import utc_naive_to_local_date
+
+_import_all_models()
 
 
 SOURCE = "pms_early_late"
