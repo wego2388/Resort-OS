@@ -1576,7 +1576,19 @@ def get_shift_history(db: Session, branch_id: int, days: int = 7) -> ShiftHistor
         variance = shift.variance
         if variance is not None:
             from app.resort_os.owner_analytics_engine import score_shift_variance  # noqa: PLC0415
-            svr = score_shift_variance(float(variance))
+            # باج حقيقي حي اتكشف (2026-08-11، فحص جودة نهائي): الدالة بتاخد
+            # 5 args إجباري (shift_id/cashier_id/cashier_name/variance/
+            # is_closed)، مش variance بس — /owner/shifts/history كان بيرمي
+            # 500 مضمون في أي وردية مغلقة عندها variance (يعني أي بيانات
+            # تاريخية حقيقية). كل ورديات الاستعلام هنا closed بالتعريف
+            # (فلتر status=='closed' فوق) → is_closed=True دايمًا هنا.
+            svr = score_shift_variance(
+                shift_id=shift.id,
+                cashier_id=shift.cashier_id,
+                cashier_name=cashier_names.get(shift.cashier_id, f"كاشير {shift.cashier_id}"),
+                variance=variance,
+                is_closed=True,
+            )
             variance_tier = svr.tier
         else:
             variance_tier = "normal"
