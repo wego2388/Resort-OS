@@ -117,18 +117,32 @@ async function submit() {
 </script>
 
 <template>
-  <div class="min-h-screen bg-owner-bg flex flex-col items-center justify-center px-6"
-       style="padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom);">
+  <div
+    class="relative min-h-screen overflow-hidden bg-owner-bg flex flex-col items-center justify-center px-6"
+    style="padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom);"
+  >
+    <!-- خلفية زخرفية هادئة — بنفس روح تحسين صفحة دخول الموظفين، لكن بألوان
+    لوحة المالك نفسها (أخضر/كهرماني على أسود تقريبًا) بدل نسخ التدرج الأزرق
+    حرفيًا. توهج خفيف جدًا (opacity منخفضة) عشان يفضل شكل "لوحة تحكم" هادئ
+    ورسمي، مش تصميم مزدحم زي شاشات التشغيل اليومي. -->
+    <div class="pointer-events-none absolute inset-0" aria-hidden="true">
+      <div class="absolute -top-24 -end-24 w-96 h-96 rounded-full opacity-[0.08] blur-3xl motion-safe:animate-pulse" style="background:radial-gradient(circle, #22C55E, transparent 70%)" />
+      <div class="absolute -bottom-32 -start-32 w-[28rem] h-[28rem] rounded-full opacity-[0.08] blur-3xl motion-safe:animate-pulse" style="background:radial-gradient(circle, #F59E0B, transparent 70%)" />
+      <div class="absolute inset-0 opacity-[0.025]" style="background-image:radial-gradient(circle, #fff 1px, transparent 1px);background-size:28px 28px" />
+    </div>
+
     <!-- Logo area -->
-    <div class="mb-10 text-center">
-      <div class="text-4xl mb-3" aria-hidden="true">🏖️</div>
-      <h1 class="text-xl font-bold text-owner-text">المالك</h1>
-      <p class="text-xs text-owner-muted mt-1">لوحة تحكم المنتجع</p>
+    <div class="relative mb-8 text-center">
+      <div class="w-24 h-24 bg-white rounded-3xl flex items-center justify-center mx-auto mb-4 shadow-2xl ring-1 ring-white/10 p-3">
+        <img src="/icon-512.png" alt="El Kheima Beach Resort" class="w-full h-full object-contain" />
+      </div>
+      <p class="text-owner-green text-xs font-black tracking-[0.3em] uppercase mb-1.5">Owner Console</p>
+      <p class="text-owner-muted text-sm">لوحة تحكم المنتجع</p>
     </div>
 
     <!-- Login form -->
     <form
-      class="w-full max-w-sm space-y-4 transition-transform"
+      class="relative w-full max-w-sm space-y-4 bg-owner-card border border-owner-border rounded-2xl p-6 shadow-2xl transition-transform"
       :class="{ 'animate-shake': shakeError }"
       @submit.prevent="submit"
       novalidate
@@ -143,7 +157,7 @@ async function submit() {
           type="email"
           autocomplete="username"
           dir="ltr"
-          class="w-full bg-owner-card border border-owner-border rounded-xl px-4 py-3 text-owner-text text-sm outline-none focus:border-owner-green transition-colors"
+          class="w-full bg-owner-bg border border-owner-border rounded-xl px-4 py-3 text-owner-text text-sm outline-none focus:border-owner-green transition-colors"
           :disabled="loading"
           required
         />
@@ -161,7 +175,7 @@ async function submit() {
             :type="showPassword ? 'text' : 'password'"
             autocomplete="current-password"
             dir="ltr"
-            class="w-full bg-owner-card border border-owner-border rounded-xl px-4 py-3 pe-11 text-owner-text text-sm outline-none focus:border-owner-green transition-colors"
+            class="w-full bg-owner-bg border border-owner-border rounded-xl px-4 py-3 pe-11 text-owner-text text-sm outline-none focus:border-owner-green transition-colors"
             :disabled="loading"
             required
             @keydown="checkCapsLock"
@@ -169,7 +183,7 @@ async function submit() {
           />
           <button
             type="button"
-            class="absolute inset-y-0 end-0 flex items-center px-3 text-owner-muted"
+            class="absolute inset-y-0 end-0 flex items-center px-3 text-owner-muted hover:text-owner-text transition-colors"
             aria-label="إظهار/إخفاء كلمة المرور"
             tabindex="-1"
             @click="showPassword = !showPassword"
@@ -183,7 +197,7 @@ async function submit() {
             </svg>
           </button>
         </div>
-        <p v-if="capsLockOn" class="mt-1.5 flex items-center gap-1 text-xs text-owner-red">
+        <p v-if="capsLockOn" class="mt-1.5 flex items-center gap-1 text-xs text-owner-amber">
           <svg class="w-3.5 h-3.5 shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM10 6a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 6zm0 8a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd" /></svg>
           زر Caps Lock مفعّل
         </p>
@@ -215,7 +229,7 @@ async function submit() {
           autocomplete="one-time-code"
           maxlength="6"
           dir="ltr"
-          class="w-full bg-owner-card border border-owner-border rounded-xl px-4 py-3 text-owner-text text-sm text-center tracking-widest outline-none focus:border-owner-green transition-colors"
+          class="w-full bg-owner-bg border border-owner-border rounded-xl px-4 py-3 text-owner-text text-sm text-center tracking-widest font-mono outline-none focus:border-owner-green transition-colors"
           :disabled="loading"
           @paste="handleOtpPaste"
         />
@@ -240,13 +254,19 @@ async function submit() {
       <!-- Submit -->
       <button
         type="submit"
-        class="w-full bg-owner-green text-black font-bold rounded-xl py-3.5 text-sm transition-opacity active:opacity-80 disabled:opacity-50"
+        class="w-full bg-owner-green text-black font-bold rounded-xl py-3.5 text-sm transition-opacity active:opacity-80 disabled:opacity-50 flex items-center justify-center gap-2"
         :disabled="loading || !email || !password"
       >
+        <svg v-if="loading" class="motion-safe:animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+        </svg>
         <span v-if="loading">جارٍ الدخول...</span>
         <span v-else>دخول</span>
       </button>
     </form>
+
+    <p class="relative text-center text-xs text-owner-muted mt-6">El Kheima Beach Resort · Owner Console</p>
   </div>
 </template>
 
