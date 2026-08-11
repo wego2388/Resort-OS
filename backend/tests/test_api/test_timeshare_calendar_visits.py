@@ -25,7 +25,7 @@ def _make_branch(db):
     )
     db.add(b)
     db.commit()
-    # Gate 4B: عمليات التايم شير بقت تفرض branch isolation server-side
+    # Gate 4B: عمليات الملكية الجزئية بقت تفرض branch isolation server-side
     # (2026-07-28) — timeshare_admin_headers المشترك بيتربط (upsert) تلقائيًا بأحدث
     # فرع اتعمل، زي test_timeshare_http.py's make_branch_committed بالظبط.
     # test_calendar_other_branch_isolated (بتعمل فرعين) بترجّع الربط يدويًا

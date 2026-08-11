@@ -210,8 +210,11 @@ Do not continue unless the dump exists and `pg_restore --list` can read it.
 With `RESORT_COMPOSE` configured for the new release:
 
 ```bash
-"${RESORT_COMPOSE[@]}" build --parallel \
-  backend celery_worker celery_beat el_kheima marketing_site
+export RESORT_RELEASE_SHA="$(git rev-parse HEAD)"
+"${RESORT_COMPOSE[@]}" build --parallel backend el_kheima marketing_site
+
+# celery_worker and celery_beat deliberately consume the exact backend image;
+# they have no independent build context or tag.
 
 "${RESORT_COMPOSE[@]}" run --rm --no-deps backend \
   python -c 'from app.main import app; print(app.title)'
@@ -244,6 +247,11 @@ Verify all of the following:
 
 ```bash
 docker ps --format '{{.Names}}|{{.Image}}|{{.Status}}' | sort
+docker inspect resort-os-prod-backend-1 resort-os-prod-celery_worker-1 \
+  resort-os-prod-celery_beat-1 \
+  --format '{{.Name}}|{{.Image}}|{{index .Config.Labels "org.opencontainers.image.revision"}}'
+# The three lines above must have one identical image ID and RESORT_RELEASE_SHA.
+
 curl -fsSI https://elkheima.com/
 curl -fsSI https://www.elkheima.com/
 curl -fsSI https://app.elkheima.com/
@@ -257,7 +265,8 @@ docker exec resort-os-prod-db_postgres-1 \
 
 Also verify:
 
-- full image IDs and `RestartCount=0`;
+- Backend, Celery worker, and Celery beat have one identical full image ID and
+  `org.opencontainers.image.revision` equals the release commit; `RestartCount=0`;
 - updated containers use the new release `working_dir` label;
 - staff and marketing titles render from outside the VPS;
 - TLS SAN contains `elkheima.com`, `www.elkheima.com`, and

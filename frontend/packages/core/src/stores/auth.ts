@@ -139,10 +139,10 @@ export const useAuthStore = defineStore('auth', () => {
     waiter: 30,
     chef: 30,
     kitchen: 30,
-    // timeshare_admin/timeshare_agent (2026-08-03): وحدة التايم شير بقت
+    // timeshare_admin/timeshare_agent (2026-08-03): وحدة الملكية الجزئية بقت
     // معزولة تمامًا عن هرمية الأدوار العامة — راجع app.core.deps.
     // get_timeshare_user/get_timeshare_admin_user. الأرقام هنا للعرض/
-    // hasRole() العام بس؛ الوصول الفعلي لشاشات التايم شير بيتحقق بمطابقة
+    // hasRole() العام بس؛ الوصول الفعلي لشاشات الملكية الجزئية بيتحقق بمطابقة
     // اسم الدور مباشرة (راجع router/index.ts's requiredRoles).
     timeshare_admin: 55,
     timeshare_agent: 25,

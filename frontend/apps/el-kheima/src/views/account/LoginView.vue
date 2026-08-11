@@ -305,14 +305,14 @@ onMounted(() => {
               autocomplete="off"
               class="w-full px-4 py-3 rounded-xl border border-stone-200 dark:border-border dark:bg-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-gray-900"
             />
-            <p class="text-xs text-gray-500 mt-1">{{ t('backoffice.login.enrollmentTokenHint') }}</p>
+            <p class="text-xs text-gray-500 dark:text-gray-300 mt-1">{{ t('backoffice.login.enrollmentTokenHint') }}</p>
           </div>
           <div v-if="needsOtp">
             <div class="flex items-center justify-between mb-1">
               <label :for="useRecoveryCode ? 'login-recovery-code' : 'login-totp-code'" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
                 {{ t(useRecoveryCode ? 'backoffice.login.recoveryCode' : 'backoffice.login.twoFaCode') }}
               </label>
-              <span v-if="!useRecoveryCode" class="text-xs text-gray-400 dark:text-gray-500 tabular-nums">
+              <span v-if="!useRecoveryCode" class="text-xs text-gray-400 dark:text-gray-300 tabular-nums">
                 {{ t('backoffice.login.twoFaExpiresIn', { seconds: otpSecondsRemaining }) }}
               </span>
             </div>

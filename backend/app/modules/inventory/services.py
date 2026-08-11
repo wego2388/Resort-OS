@@ -391,23 +391,30 @@ def receive_purchase_order(
     if po.status in ("received", "cancelled"):
         raise ValueError(f"أمر الشراء في حالة '{po.status}' ولا يمكن استلامه")
     try:
-        po, received_value = crud.receive_purchase_order(
+        po, received_value, receipt_movement_id = crud.receive_purchase_order(
             db, po, req.items, req.warehouse_id, req.received_at, received_by,
         )
+        _post_purchase_receipt_journal(
+            db, po, received_value, receipt_movement_id, received_by,
+        )
+        db.commit()
+        db.refresh(po)
+        return po
     except OperationalError as exc:
+        db.rollback()
         if not is_lock_not_available(exc):
             raise
-        db.rollback()
         raise InventoryConcurrencyError(
             "أحد الأصناف في أمر الشراء ده مشغول الآن بعملية مخزون أخرى — حاول تاني خلال لحظات"
         ) from exc
-    _post_purchase_receipt_journal(db, po, received_value, received_by)
-    db.commit(); db.refresh(po)
-    return po
+    except Exception:
+        db.rollback()
+        raise
 
 
 def _post_purchase_receipt_journal(
-    db: Session, po: PurchaseOrder, received_value: Decimal, user_id: int,
+    db: Session, po: PurchaseOrder, received_value: Decimal,
+    receipt_movement_id: int | None, user_id: int,
 ) -> None:
     """Dr. مخزون البضاعة (1200) / Cr. موردون - ذمم دائنة (2200).
 
@@ -421,17 +428,22 @@ def _post_purchase_receipt_journal(
     لالتزام المنتجع تجاه مورّديه في الميزانية العمومية أو دفتر اليومية،
     مخالفة مباشرة لـ CLAUDE.md §5.2 (Finance First — حركة المخزون لازم
     تفضل قابلة للتتبّع محاسبيًا). المبلغ = قيمة **دفعة الاستلام دي بس**
-    (مش إجمالي أمر الشراء) عشان الاستلام الجزئي يترحّل صح على مراحل."""
+    (مش إجمالي أمر الشراء) عشان الاستلام الجزئي يترحّل صح على مراحل.
+    مفتاح القيد مرتبط بأول StockMovement في دفعة الاستلام، مش بأمر الشراء
+    نفسه؛ وإلا الدفعة الجزئية الثانية كانت تُفهم غلط كإعادة محاولة للأولى."""
+    if receipt_movement_id is None or received_value <= 0:
+        return
     from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
 
     post_simple_revenue_journal(
         db, po.branch_id, po.received_at or local_today(settings.TIMEZONE),
         debit_account_code="1200", credit_account_code="2200",
         amount=received_value,
-        reference=f"PO-{po.order_number}",
+        reference=f"PO-{po.order_number}-RCV-{receipt_movement_id}",
         description=f"استلام بضاعة — أمر شراء {po.order_number}"
                     + (f" ({po.supplier.name})" if po.supplier else ""),
-        source="inventory_purchase", source_id=po.id,
+        source="inventory_purchase", source_id=receipt_movement_id,
+        strict=True,
         created_by=user_id,
     )
 

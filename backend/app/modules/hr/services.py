@@ -225,7 +225,7 @@ def punch_out(db: Session, user_id: int) -> AttendanceRecord:
 # ── Excel Attendance Import (wagdy.md H-07) ─────────────────────────────
 # الحضور لسه بيتسجّل يدويًا في Excel (كشف "يوم بيوم" — عمود موظف + عمود لكل
 # يوم في الشهر، وقيمة الخلية كود حالة p/v/u...) مش في النظام خالص. نفس نمط
-# استيراد عقود التايم شير (timeshare.services.import_contracts_excel):
+# استيراد عقود الملكية الجزئية (timeshare.services.import_contracts_excel):
 # openpyxl، لا dry-run، commit واحد في الآخر، أخطاء لكل صف/خلية بتتجمّع
 # بدل ما توقف الاستيراد كله (errors[:20])، بس هنا upsert حقيقي (مش skip-on-
 # duplicate) لأن AttendanceRecord عنده مفتاح طبيعي حقيقي (employee_id +
@@ -900,23 +900,71 @@ def _post_advance_disbursement_journal(
     )
 
 
-def cancel_salary_advance(db: Session, advance_id: int, reason: Optional[str] = None):
-    """يلغي سلفة لسه ما اتخصمش منها أي قسط (remaining_balance == amount).
-    سلفة اتخصم منها قسط بالفعل بقت جزء من كشوف رواتب معتمدة/محسوبة — إلغاؤها
-    هيكسر الاتساق المحاسبي (نفس فلسفة §5.2 Finance First)، فممنوع."""
-    advance = crud.get_salary_advance(db, advance_id)
-    if not advance:
-        raise ValueError(f"السلفة {advance_id} غير موجودة")
-    if advance.status != "active":
-        raise ValueError(f"السلفة في حالة '{advance.status}' ولا يمكن إلغاؤها")
-    if advance.remaining_balance != advance.amount:
-        raise ValueError("لا يمكن إلغاء سلفة تم خصم أقساط منها بالفعل")
-    advance.status = "cancelled"
-    if reason:
-        advance.notes = f"{advance.notes or ''}\n[إلغاء] {reason}".strip()
-    db.commit()
-    db.refresh(advance)
-    return advance
+def _post_advance_cancellation_journal(
+    db: Session,
+    advance_id: int,
+    branch_id: int,
+    amount: Decimal,
+    cancelled_by: int,
+) -> None:
+    """Reverse the untouched advance: Dr cash 1100 / Cr receivable 1180."""
+    from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
+
+    post_simple_revenue_journal(
+        db,
+        branch_id,
+        local_today(settings.TIMEZONE),
+        debit_account_code="1100",
+        credit_account_code="1180",
+        amount=amount,
+        reference=f"HR-ADV-CANCEL-{advance_id:06d}",
+        description="إلغاء وصرف عكسي لسلفة موظف",
+        source="payroll_advance_cancel",
+        source_id=advance_id,
+        created_by=cancelled_by,
+        strict=True,
+        commit_cost_centers=False,
+    )
+
+
+def cancel_salary_advance(
+    db: Session,
+    advance_id: int,
+    reason: Optional[str] = None,
+    *,
+    cancelled_by: int,
+):
+    """Cancel an untouched advance and reverse its disbursement atomically."""
+    if cancelled_by <= 0:
+        raise ValueError("المستخدم المنفذ لإلغاء السلفة مطلوب")
+    try:
+        advance = crud.lock_salary_advance_for_update(db, advance_id)
+        if not advance:
+            raise ValueError(f"السلفة {advance_id} غير موجودة")
+        if advance.status != "active":
+            raise ValueError(f"السلفة في حالة '{advance.status}' ولا يمكن إلغاؤها")
+        if advance.remaining_balance != advance.amount:
+            raise ValueError("لا يمكن إلغاء سلفة تم خصم أقساط منها بالفعل")
+
+        advance.status = "cancelled"
+        advance.cancelled_by = cancelled_by
+        advance.cancelled_at = datetime.utcnow()
+        if reason:
+            advance.notes = f"{advance.notes or ''}\n[إلغاء] {reason}".strip()
+
+        _post_advance_cancellation_journal(
+            db,
+            advance.id,
+            advance.branch_id,
+            advance.amount,
+            cancelled_by,
+        )
+        db.commit()
+        db.refresh(advance)
+        return advance
+    except Exception:
+        db.rollback()
+        raise
 
 
 # ── AdvancePayment (wagdy.md H-02) ───────────────────────────────────────

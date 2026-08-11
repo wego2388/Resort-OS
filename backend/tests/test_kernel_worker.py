@@ -28,12 +28,12 @@ class TestNotifyTaskFailure:
             lambda exc, **kw: sentry_calls.append((exc, kw)),
         )
 
-        exc = ValueError("قسط تايم شير فشل الحساب")
+        exc = ValueError("قسط ملكية جزئية فشل الحساب")
         notify_task_failure("app.tasks.timeshare_tasks.mark_overdue", exc)
 
         assert len(whatsapp_calls) == 1
         assert "mark_overdue" in whatsapp_calls[0]
-        assert "قسط تايم شير" in whatsapp_calls[0]
+        assert "قسط ملكية جزئية" in whatsapp_calls[0]
 
         assert len(sentry_calls) == 1
         captured_exc, kwargs = sentry_calls[0]

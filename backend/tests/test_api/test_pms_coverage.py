@@ -53,6 +53,17 @@ def _branch(db):
                 user_id=user.id,
             ))
         assign_test_user_to_branch(db, user.id, b.id)
+    # ⚠️ 2026-08-11 (strict=True — راجع §4/§5): checkout/early-late fee
+    # بيفشلوا بدون 1100/1110/1150/4100/2160/2165.
+    from app.modules.finance.models import Account
+    db.add_all([
+        Account(branch_id=b.id, code="1100", name="Cash", account_type="asset"),
+        Account(branch_id=b.id, code="1110", name="Bank/Card", account_type="asset"),
+        Account(branch_id=b.id, code="1150", name="Folio AR", account_type="asset"),
+        Account(branch_id=b.id, code="4100", name="Room Revenue", account_type="revenue"),
+        Account(branch_id=b.id, code="2160", name="VAT Payable", account_type="liability"),
+        Account(branch_id=b.id, code="2165", name="Service Charge Payable", account_type="liability"),
+    ])
     db.commit()
     return b
 

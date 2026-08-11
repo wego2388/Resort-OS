@@ -119,7 +119,7 @@ def _get_branch(user) -> int:
 
 def _default_range() -> tuple[date, date]:
     """الشهر الحالي من 1 حتى اليوم."""
-    today = date.today()
+    today = services._cairo_today()
     return today.replace(day=1), today
 
 
@@ -592,13 +592,15 @@ def owner_sales_item_detail(
     item_id: int = Query(...),
     date_from: date = Query(default=None),
     date_to:   date = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    size: int = Query(default=50, ge=1, le=200),
 ):
     response.headers["Cache-Control"] = _NO_STORE
     branch_id = _get_branch(user)
     if date_from is None or date_to is None:
         date_from, date_to = _default_range()
     try:
-        result = services.get_dining_item_detail(db, branch_id, item_id, date_from, date_to)
+        result = services.get_dining_item_detail(db, branch_id, item_id, date_from, date_to, page=page, size=size)
     except Exception as exc:
         raise _owner_error("OWNER_ITEM_DETAIL_FAILED", exc) from exc
     _log_owner_audit(db, user, "owner_drill_down", "dining_item", item_id)
@@ -618,13 +620,15 @@ def owner_beach_type_detail(
     tx_type: str = Query(...),
     date_from: date = Query(default=None),
     date_to:   date = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    size: int = Query(default=50, ge=1, le=200),
 ):
     response.headers["Cache-Control"] = _NO_STORE
     branch_id = _get_branch(user)
     if date_from is None or date_to is None:
         date_from, date_to = _default_range()
     try:
-        result = services.get_beach_type_detail(db, branch_id, tx_type, date_from, date_to)
+        result = services.get_beach_type_detail(db, branch_id, tx_type, date_from, date_to, page=page, size=size)
     except Exception as exc:
         raise _owner_error("OWNER_BEACH_DETAIL_FAILED", exc) from exc
     _log_owner_audit(db, user, "owner_drill_down", "beach_ticket_type")
@@ -644,13 +648,15 @@ def owner_expense_detail(
     account_code: str = Query(...),
     date_from: date = Query(default=None),
     date_to:   date = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    size: int = Query(default=50, ge=1, le=200),
 ):
     response.headers["Cache-Control"] = _NO_STORE
     branch_id = _get_branch(user)
     if date_from is None or date_to is None:
         date_from, date_to = _default_range()
     try:
-        result = services.get_expense_detail(db, branch_id, account_code, date_from, date_to)
+        result = services.get_expense_detail(db, branch_id, account_code, date_from, date_to, page=page, size=size)
     except Exception as exc:
         raise _owner_error("OWNER_EXPENSE_DETAIL_FAILED", exc) from exc
     _log_owner_audit(db, user, "owner_drill_down", "expense_account")
@@ -670,13 +676,15 @@ def owner_procurement_detail(
     supplier_id: int = Query(...),
     date_from: date = Query(default=None),
     date_to:   date = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    size: int = Query(default=50, ge=1, le=200),
 ):
     response.headers["Cache-Control"] = _NO_STORE
     branch_id = _get_branch(user)
     if date_from is None or date_to is None:
         date_from, date_to = _default_range()
     try:
-        result = services.get_supplier_detail(db, branch_id, supplier_id, date_from, date_to)
+        result = services.get_supplier_detail(db, branch_id, supplier_id, date_from, date_to, page=page, size=size)
     except Exception as exc:
         raise _owner_error("OWNER_SUPPLIER_DETAIL_FAILED", exc) from exc
     _log_owner_audit(db, user, "owner_drill_down", "supplier", supplier_id)
@@ -696,13 +704,15 @@ def owner_product_detail(
     product_id: int = Query(...),
     date_from: date = Query(default=None),
     date_to:   date = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    size: int = Query(default=50, ge=1, le=200),
 ):
     response.headers["Cache-Control"] = _NO_STORE
     branch_id = _get_branch(user)
     if date_from is None or date_to is None:
         date_from, date_to = _default_range()
     try:
-        result = services.get_product_detail(db, branch_id, product_id, date_from, date_to)
+        result = services.get_product_detail(db, branch_id, product_id, date_from, date_to, page=page, size=size)
     except Exception as exc:
         raise _owner_error("OWNER_PRODUCT_DETAIL_FAILED", exc) from exc
     _log_owner_audit(db, user, "owner_drill_down", "product", product_id)

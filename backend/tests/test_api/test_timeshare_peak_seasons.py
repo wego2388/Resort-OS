@@ -25,7 +25,7 @@ def branch(db: Session):
 
 @pytest.fixture
 def unit(db: Session, branch):
-    """وحدة تايم شير فعلية متاحة — لازمة عشان approve_visit_request
+    """وحدة ملكية جزئية فعلية متاحة — لازمة عشان approve_visit_request
     (بتنادي create_visit) تقدر تخصّص وحدة حقيقية."""
     from app.modules.timeshare.models import TimeshareUnit
     u = TimeshareUnit(branch_id=branch.id, unit_number="A-101", unit_type="Studio")

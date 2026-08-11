@@ -54,7 +54,7 @@ class TestContactForm:
             full_name="زائر الموقع",
             phone="01055443322",
             email="visitor@test.com",
-            subject="استفسار عن التايم شير",
+            subject="استفسار عن الملكية الجزئية",
             message="أريد معرفة المزيد...",
             source_page="/timeshare",
         )

@@ -67,6 +67,8 @@ class TestPurchaseOrderFlow:
         branch = make_branch_committed(db)
         warehouse = make_warehouse_committed(db, branch)
         product = make_product_committed(db, branch)
+        make_account_committed(db, branch, "1200", "مخزون البضاعة", "asset")
+        make_account_committed(db, branch, "2200", "موردون — ذمم دائنة", "liability")
 
         create_resp = client.post(
             "/api/v1/inventory/purchase-orders",
@@ -101,10 +103,51 @@ class TestPurchaseOrderFlow:
         assert movements_resp.json()["total"] == 1
         assert movements_resp.json()["items"][0]["movement_type"] == "purchase_in"
 
+    def test_receive_without_financial_accounts_rolls_back(
+        self, client: TestClient, db, manager_headers,
+    ):
+        from app.modules.inventory.models import PurchaseOrder, StockMovement
+
+        branch = make_branch_committed(db)
+        warehouse = make_warehouse_committed(db, branch)
+        product = make_product_committed(db, branch)
+        po = client.post(
+            "/api/v1/inventory/purchase-orders",
+            json={
+                "branch_id": branch.id, "supplier_name": "مورد",
+                "ordered_at": str(date.today()),
+                "items": [{
+                    "product_id": product.id, "ordered_qty": "10.00",
+                    "unit_cost": "5.00",
+                }],
+            },
+            headers=manager_headers,
+        ).json()
+
+        response = client.post(
+            f"/api/v1/inventory/purchase-orders/{po['id']}/receive",
+            json={
+                "items": [{"item_id": po["items"][0]["id"], "received_qty": "10.00"}],
+                "warehouse_id": warehouse.id, "received_at": str(date.today()),
+            },
+            headers=manager_headers,
+        )
+
+        assert response.status_code == 503
+        db.expire_all()
+        assert db.get(PurchaseOrder, po["id"]).status == "draft"
+        assert db.get(type(product), product.id).current_stock == Decimal("0.000")
+        assert db.query(StockMovement).filter(
+            StockMovement.reference_type == "purchase_order",
+            StockMovement.reference_id == po["id"],
+        ).count() == 0
+
     def test_receive_already_received_po_rejected(self, client: TestClient, db, manager_headers):
         branch = make_branch_committed(db)
         warehouse = make_warehouse_committed(db, branch)
         product = make_product_committed(db, branch)
+        make_account_committed(db, branch, "1200", "مخزون البضاعة", "asset")
+        make_account_committed(db, branch, "2200", "موردون — ذمم دائنة", "liability")
         po = client.post(
             "/api/v1/inventory/purchase-orders",
             json={

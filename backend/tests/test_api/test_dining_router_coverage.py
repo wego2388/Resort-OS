@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 
 def _branch(db):
     from app.modules.core.models import Branch
-    b = Branch(name=f"CovBr-{uuid.uuid4().hex[:6]}", code=f"CV-{uuid.uuid4().hex[:4].upper()}")
+    b = Branch(name=f"CovBr-{uuid.uuid4().hex[:12]}", code=f"CV-{uuid.uuid4().hex[:12].upper()}")
     db.add(b); db.commit(); return b
 
 def _outlet(db, branch):
@@ -51,7 +51,7 @@ def _finance_accounts(db, branch):
 def _product(db, branch):
     from app.modules.inventory.models import Warehouse, Product
     wh = Warehouse(branch_id=branch.id, name=f"WH-{uuid.uuid4().hex[:4]}",
-                   code=f"WH-{uuid.uuid4().hex[:4].upper()}", is_active=True)
+                   code=f"WH-{uuid.uuid4().hex[:12].upper()}", is_active=True)
     db.add(wh); db.flush()
     p = Product(branch_id=branch.id, warehouse_id=wh.id,
                 name="مكوّن", sku=f"SKU-{uuid.uuid4().hex[:6]}", unit="kg",
@@ -524,7 +524,7 @@ def _beach_location(db, branch, loc_type="umbrella", number=None):
     loc = BeachLocation(
         branch_id=branch.id,
         location_type=loc_type,
-        number=number or f"U-{uuid.uuid4().hex[:4]}",
+        number=number or f"U-{uuid.uuid4().hex[:12]}",
         grid_row=1,
         grid_col=1,
         status="available",

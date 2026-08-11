@@ -36,16 +36,16 @@ ROLE_LEVELS: dict[str, int] = {
     "waiter":       30,
     "chef":         30,
     "kitchen":      30,
-    # timeshare_agent: موظف تايم شير متخصص — صلاحيات عامة محدودة جداً (level 25)
+    # timeshare_agent: موظف ملكية جزئية متخصص — صلاحيات عامة محدودة جداً (level 25)
     # لكن بيحصل على UserPermission صريح على timeshare.* عند إنشاء الحساب.
     # مفيش أي وصول لـ endpoints تانية تتطلب > 25 من غير منح صريح.
     "timeshare_agent": 25,
     # timeshare_admin (2026-08-03، طلب Mohamed): تحكم كامل في وحدة التايم
-    # شير (عقود/موظفين تايم شير/موافقة زيارات/تقارير) — بس معزول تمامًا عن
+    # شير (عقود/موظفين ملكية جزئية/موافقة زيارات/تقارير) — بس معزول تمامًا عن
     # باقي المنتجع، "مالوش علاقة بباقي البرنامج ولا الموظفين لهم علاقة
     # بيهم" حرفيًا. level=55 عمدًا (بين supervisor=50 وmanager=60) — أقل من
     # 60 يعني أي فحص مستوى عام لموديول تاني (finance/hr/beach/...) بيرفضه
-    # تلقائيًا، مش بس وحدة التايم شير. الوصول الفعلي هنا بمطابقة اسم الـrole
+    # تلقائيًا، مش بس وحدة الملكية الجزئية. الوصول الفعلي هنا بمطابقة اسم الـrole
     # مباشرة (get_timeshare_admin_user)، مش بعتبة مستوى — راجع الشرح جوه
     # get_timeshare_user/get_timeshare_admin_user تحت للتفاصيل الكاملة.
     "timeshare_admin": 55,
@@ -314,9 +314,9 @@ def get_cashier_user(user=Depends(get_current_active_user)):
 
 
 def get_timeshare_user(user=Depends(get_current_active_user), db: Session = Depends(get_db)):
-    """بوابة التايم شير — معزولة تمامًا عن هرمية الأدوار العامة عمدًا (طلب
+    """بوابة الملكية الجزئية — معزولة تمامًا عن هرمية الأدوار العامة عمدًا (طلب
     Mohamed 2026-08-03: "مالوش علاقة بباقي البرنامج ولا الموظفين لهم علاقة
-    بيهم" — بيانات عملاء التايم شير حساسة، والمحاسب/الكاشير/المدير العام
+    بيهم" — بيانات عملاء الملكية الجزئية حساسة، والمحاسب/الكاشير/المدير العام
     ملهمش أي داعي يشوفوها). بتقبل بس:
       • super_admin — دايمًا (Decision 0003 invariant #1).
       • timeshare_admin — وصول كامل، معزول عن باقي الموديولات (راجع
@@ -330,7 +330,7 @@ def get_timeshare_user(user=Depends(get_current_active_user), db: Session = Depe
     ⚠️ باج حقيقي كان هنا (قبل 2026-08-03): أي مستخدم level >= 40 (أي كاشير
     أو مدير في أي موديول) كان بيدخل الوحدة تلقائيًا — بيانات عملاء حساسة
     (رقم قومي مشفّر، دفعات، تليفونات) كانت متاحة لأي كاشير في المنتجع كله،
-    مش بس فريق التايم شير."""
+    مش بس فريق الملكية الجزئية."""
     from app.modules.core.services import has_permission  # noqa: PLC0415
 
     if user_level(user) >= 100:  # super_admin — Decision 0003 invariant #1
@@ -339,13 +339,13 @@ def get_timeshare_user(user=Depends(get_current_active_user), db: Session = Depe
         return user
     if has_permission(db, user, "timeshare.access", "view", role_fallback=False):
         return user
-    raise HTTPException(status.HTTP_403_FORBIDDEN, "لا تملك صلاحية الوصول لوحدة التايم شير")
+    raise HTTPException(status.HTTP_403_FORBIDDEN, "لا تملك صلاحية الوصول لوحدة الملكية الجزئية")
 
 
 def get_timeshare_admin_user(user=Depends(get_current_active_user)):
-    """مدير وحدة التايم شير — تحكم كامل في عقود/موظفين/تقارير التايم شير،
+    """مدير وحدة الملكية الجزئية — تحكم كامل في عقود/موظفين/تقارير الملكية الجزئية،
     بديل get_manager_user لكل عمليات الوحدة الإدارية. بس بعكس مدير عام
-    (level=60)، مدير التايم شير (role='timeshare_admin'، level=55 عمدًا)
+    (level=60)، مدير الملكية الجزئية (role='timeshare_admin'، level=55 عمدًا)
     معزول تمامًا عن باقي المنتجع — مش بيمر من أي بوابة مستوى عامة تانية،
     ومدير عام حقيقي (level=60) مبقاش يعدي من هنا تلقائيًا برضو (لازم فعليًا
     role='timeshare_admin' أو super_admin)."""
@@ -353,7 +353,7 @@ def get_timeshare_admin_user(user=Depends(get_current_active_user)):
         return user
     if user.role == "timeshare_admin":
         return user
-    raise HTTPException(status.HTTP_403_FORBIDDEN, "يتطلب صلاحية مدير التايم شير")
+    raise HTTPException(status.HTTP_403_FORBIDDEN, "يتطلب صلاحية مدير الملكية الجزئية")
 
 
 def get_owner_reader(user=Depends(get_current_active_user)):

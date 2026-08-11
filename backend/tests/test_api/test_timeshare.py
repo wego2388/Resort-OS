@@ -4,7 +4,7 @@ Integration tests for timeshare module.
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 import pytest
@@ -22,12 +22,18 @@ def branch(db: Session):
     from app.modules.core.models import Branch
     b = Branch(name="Test", name_ar="اختبار", code=f"TS-{uuid.uuid4().hex[:6].upper()}")
     db.add(b); db.flush()
+    from app.modules.finance.models import CashierShift
+    db.add(CashierShift(
+        branch_id=b.id, cashier_id=1, opened_by=1, opened_at=datetime.utcnow(),
+        opening_float=Decimal("0"), status="open",
+    ))
+    db.flush()
     return b
 
 
 @pytest.fixture
 def unit(db: Session, branch):
-    """وحدة تايم شير حقيقية (2R) متاحة — لازمة عشان create_visit يقدر يخصّص
+    """وحدة ملكية جزئية حقيقية (2R) متاحة — لازمة عشان create_visit يقدر يخصّص
     وحدة فعلية (allocation logic حقيقي، مش مجرد سطر تاريخ من غير حجز حقيقي)."""
     from app.modules.timeshare.models import TimeshareUnit
     u = TimeshareUnit(branch_id=branch.id, unit_number="A-101", unit_type="Studio")
@@ -56,11 +62,32 @@ def contract(db: Session, branch):
     return services.create_contract(db, data, signed_by=1)
 
 
+
 class TestTimeshareContract:
 
     def test_create_generates_installments(self, db, branch, contract):
         assert contract.contract_number.startswith("TS-")
         assert len(contract.installments_list) == 12
+
+    def test_update_contract_records_actor_and_before_after_values(self, db, contract):
+        import json
+        from app.modules.core.models import AuditLog
+
+        services.update_contract(
+            db,
+            contract.id,
+            TimeshareContractUpdate(notes="تمت المراجعة"),
+            updated_by=1,
+        )
+
+        audit = (
+            db.query(AuditLog)
+            .filter_by(action="update_contract", entity_type="timeshare_contract", entity_id=contract.id)
+            .one()
+        )
+        assert audit.user_id == 1
+        assert json.loads(audit.old_data)["notes"] is None
+        assert json.loads(audit.new_data)["notes"] == "تمت المراجعة"
 
     def test_installment_amounts_sum_to_remaining(self, db, contract):
         total = sum(i.amount for i in contract.installments_list)
@@ -147,7 +174,7 @@ class TestPayInstallment:
             payment_method="cash",
             receipt_number="REC-001",
         )
-        paid = services.pay_installment(db, inst.id, req)
+        paid = services.pay_installment(db, inst.id, req, collected_by=1)
         assert paid.status == "paid"
         assert paid.paid_amount == inst.amount
 
@@ -157,8 +184,60 @@ class TestPayInstallment:
             paid_amount=inst.amount / 2,
             payment_method="card",
         )
-        paid = services.pay_installment(db, inst.id, req)
+        paid = services.pay_installment(db, inst.id, req, collected_by=1)
         assert paid.status == "partial"
+
+    def test_cash_installment_is_linked_to_open_shift_and_expected_cash(self, db, contract):
+        from app.modules.finance.models import Payment
+        from app.modules.finance.services import build_shift_end_report
+
+        inst = contract.installments_list[0]
+        services.pay_installment(
+            db, inst.id,
+            PayInstallmentRequest(paid_amount=inst.amount, payment_method="cash"),
+            collected_by=1,
+        )
+        payment = db.query(Payment).filter_by(
+            source="timeshare_installment", ref_order_id=inst.id,
+        ).one()
+        assert payment.shift_id is not None
+        report = build_shift_end_report(db, payment.shift_id)
+        assert report.expected_cash == inst.amount
+
+    def test_card_installment_is_auditable_but_excluded_from_drawer(self, db, contract):
+        from app.modules.finance.models import Payment
+
+        inst = contract.installments_list[0]
+        services.pay_installment(
+            db, inst.id,
+            PayInstallmentRequest(paid_amount=inst.amount, payment_method="card"),
+            collected_by=1,
+        )
+        payment = db.query(Payment).filter_by(
+            source="timeshare_installment", ref_order_id=inst.id,
+        ).one()
+        assert payment.cashier_id == 1
+        assert payment.shift_id is None
+
+    def test_cash_installment_without_open_shift_is_rejected_atomically(self, db, contract):
+        from app.modules.finance.models import CashierShift, Payment
+        from app.modules.finance.services import OpenCashierShiftRequiredError
+
+        shift = db.query(CashierShift).filter_by(branch_id=contract.branch_id, cashier_id=1).one()
+        shift.status = "closed"
+        db.commit()
+        inst = contract.installments_list[0]
+        with pytest.raises(OpenCashierShiftRequiredError):
+            services.pay_installment(
+                db, inst.id,
+                PayInstallmentRequest(paid_amount=inst.amount, payment_method="cash"),
+                collected_by=1,
+            )
+        db.refresh(inst)
+        assert inst.paid_amount == Decimal("0")
+        assert db.query(Payment).filter_by(
+            source="timeshare_installment", ref_order_id=inst.id,
+        ).count() == 0
 
     def test_payment_method_routes_to_correct_gl_account(self, db, branch, contract):
         """⚠️ باج حقيقي اتصلح (OPS-DATA-02، Phase 7): تحصيل قسط بطريقة
@@ -174,7 +253,7 @@ class TestPayInstallment:
         inst = contract.installments_list[0]
         services.pay_installment(db, inst.id, PayInstallmentRequest(
             paid_amount=inst.amount, payment_method="bank_transfer",
-        ))
+        ), collected_by=1)
 
         bank_account = db.query(Account).filter_by(branch_id=branch.id, code="1110").first()
         cash_account = db.query(Account).filter_by(branch_id=branch.id, code="1100").first()
@@ -191,9 +270,9 @@ class TestPayInstallment:
     def test_cannot_pay_already_paid(self, db, contract):
         inst = contract.installments_list[0]
         req = PayInstallmentRequest(paid_amount=inst.amount, payment_method="cash")
-        services.pay_installment(db, inst.id, req)
+        services.pay_installment(db, inst.id, req, collected_by=1)
         with pytest.raises(ValueError, match="مدفوع"):
-            services.pay_installment(db, inst.id, req)
+            services.pay_installment(db, inst.id, req, collected_by=1)
 
     def test_payment_unfreezes_booking(self, db, contract):
         # تجميد الحجز يدوياً
@@ -202,7 +281,7 @@ class TestPayInstallment:
 
         inst = contract.installments_list[0]
         req = PayInstallmentRequest(paid_amount=inst.amount, payment_method="cash")
-        services.pay_installment(db, inst.id, req)
+        services.pay_installment(db, inst.id, req, collected_by=1)
         db.refresh(contract)
         assert not contract.booking_frozen
 
@@ -214,7 +293,7 @@ class TestPayInstallment:
             paid_amount=inst.amount + Decimal("40000"), payment_method="cash",
         )
         with pytest.raises(ValueError, match="أكبر من المتبقي"):
-            services.pay_installment(db, inst.id, req)
+            services.pay_installment(db, inst.id, req, collected_by=1)
         db.refresh(inst)
         assert inst.status == "pending"
         assert inst.paid_amount == Decimal("0")
@@ -225,34 +304,34 @@ class TestPayInstallment:
         inst = contract.installments_list[0]
         half = inst.amount / 2
         services.pay_installment(
-            db, inst.id, PayInstallmentRequest(paid_amount=half, payment_method="cash"),
+            db, inst.id, PayInstallmentRequest(paid_amount=half, payment_method="cash"), collected_by=1,
         )
         with pytest.raises(ValueError, match="أكبر من المتبقي"):
             services.pay_installment(
                 db, inst.id,
-                PayInstallmentRequest(paid_amount=half + Decimal("1"), payment_method="cash"),
+                PayInstallmentRequest(paid_amount=half + Decimal("1"), payment_method="cash"), collected_by=1,
             )
 
     def test_cannot_pay_installment_on_cancelled_contract(self, db, contract):
         """باج حقيقي: عقد اتلغى بالكامل، بس القسط المرتبط بيه فضل قابل
         للتحصيل عن طريق الـ API — كأن الإلغاء عمره ما حصل ماليًا."""
-        services.cancel_contract(db, contract.id, Decimal("0"))
+        services.cancel_contract(db, contract.id, Decimal("0"), cancelled_by=1)
         inst = contract.installments_list[0]
         req = PayInstallmentRequest(paid_amount=inst.amount, payment_method="cash")
         with pytest.raises(ValueError, match="ملغي"):
-            services.pay_installment(db, inst.id, req)
+            services.pay_installment(db, inst.id, req, collected_by=1)
 
     def test_cannot_pay_installment_on_expired_contract(self, db, contract):
         services.update_contract(db, contract.id, TimeshareContractUpdate(status="expired"))
         inst = contract.installments_list[0]
         req = PayInstallmentRequest(paid_amount=inst.amount, payment_method="cash")
         with pytest.raises(ValueError, match="منتهي"):
-            services.pay_installment(db, inst.id, req)
+            services.pay_installment(db, inst.id, req, collected_by=1)
 
     def test_pay_installment_posts_journal_entry(self, db, branch, contract):
-        """باج حقيقي حرج (Finance First §5.2 — بيذكر أقساط التايم شير بالاسم):
+        """باج حقيقي حرج (Finance First §5.2 — بيذكر أقساط الملكية الجزئية بالاسم):
         تحصيل قسط عمره ما كان بيرحّل أي قيد يومية خالص — بعكس الدفعة الأولى،
-        يعني معظم إيراد عقد التايم شير (كل الأقساط بعد الأولى) كان غايبًا
+        يعني معظم إيراد عقد الملكية الجزئية (كل الأقساط بعد الأولى) كان غايبًا
         تمامًا عن الدفاتر المحاسبية."""
         from app.modules.finance import crud as finance_crud
         # contract fixture بالفعل بتزرع الحسابات + بترحّل قيد الدفعة الأولى
@@ -260,7 +339,7 @@ class TestPayInstallment:
 
         inst = contract.installments_list[0]
         services.pay_installment(
-            db, inst.id, PayInstallmentRequest(paid_amount=inst.amount, payment_method="cash"),
+            db, inst.id, PayInstallmentRequest(paid_amount=inst.amount, payment_method="cash"), collected_by=1,
         )
 
         entries, total = finance_crud.list_journal_entries(db, branch.id, source="timeshare")
@@ -350,7 +429,7 @@ def make_finance_accounts(db, branch):
     _post_contract_cancellation_refund_journal بيدوّروا عليه: 1100/1110/1120
     (نقدية/بنك/كارت — حسب _PAYMENT_METHOD_DEBIT_ACCOUNT) و4600/4650 (إيراد
     عقود/إيراد صيانة). ⚠️ 2026-07-07: بقى 4600 (revenue) بدل 2300 (كان
-    liability — إيراد تايم شير عمره ما كان بيتحرّر لإيراد فعلي، راجع تعليق
+    liability — إيراد ملكية جزئية عمره ما كان بيتحرّر لإيراد فعلي، راجع تعليق
     _post_deferred_revenue_journal). ⚠️ 2026-08-11 (strict=True — راجع §4):
     من غير الحسابات دي، أي عملية مالية في الموديول بترفع
     FinancialConfigurationError بدل ما تكمل بصمت من غير قيد — لازم تتزرع
@@ -382,7 +461,7 @@ class TestContractNotFound:
 
 class TestDeferredRevenueJournalPosting:
     """Gap حقيقي مماثل تماماً لـ restaurant/cafe/beach: القيد المحاسبي لدفعة
-    أول عقد تايم شير (Dr Cash / Cr Deferred Revenue 2300) موجود في الكود من
+    أول عقد ملكية جزئية (Dr Cash / Cr Deferred Revenue 2300) موجود في الكود من
     زمان بس من غير أي تغطية اختبارية خالص — 0% على _post_deferred_revenue_journal."""
 
     def test_create_contract_posts_balanced_journal_entry(self, db: Session, branch):
@@ -453,19 +532,53 @@ class TestDeferredRevenueJournalPosting:
 class TestCancelContract:
 
     def test_cancel_sets_status_and_refund_amount(self, db: Session, contract):
-        cancelled = services.cancel_contract(db, contract.id, Decimal("5000"))
+        cancelled = services.cancel_contract(db, contract.id, Decimal("5000"), cancelled_by=1)
         assert cancelled.status == "cancelled"
         assert cancelled.cancel_amount == Decimal("5000")
         assert cancelled.cancelled_at is not None
+        assert cancelled.cancelled_by == 1
+        assert cancelled.refund_method == "cash"
+
+    def test_cancel_rejects_refund_above_net_collected(self, db: Session, contract, branch):
+        from app.modules.core.models import AuditLog
+        from app.modules.finance.models import JournalEntry
+
+        with pytest.raises(ValueError, match="أكبر من صافي المحصل"):
+            services.cancel_contract(
+                db,
+                contract.id,
+                contract.down_payment + Decimal("0.01"),
+                cancelled_by=1,
+            )
+
+        db.refresh(contract)
+        assert contract.status == "active"
+        assert contract.cancel_amount == Decimal("0")
+        assert db.query(JournalEntry).filter(
+            JournalEntry.reference == f"TS-CANCEL-{contract.contract_number}",
+        ).count() == 0
+        assert db.query(AuditLog).filter(
+            AuditLog.entity_type == "timeshare_contract",
+            AuditLog.entity_id == contract.id,
+            AuditLog.action == "cancel_contract",
+        ).count() == 0
+
+    def test_generic_update_cannot_bypass_secure_cancellation(self, db: Session, contract):
+        with pytest.raises(ValueError, match="إجراء إلغاء العقد"):
+            services.update_contract(
+                db, contract.id, TimeshareContractUpdate(status="cancelled"),
+            )
+        db.refresh(contract)
+        assert contract.status == "active"
 
     def test_cancel_already_cancelled_raises(self, db: Session, contract):
-        services.cancel_contract(db, contract.id, Decimal("1000"))
+        services.cancel_contract(db, contract.id, Decimal("1000"), cancelled_by=1)
         with pytest.raises(ValueError, match="ملغي"):
-            services.cancel_contract(db, contract.id, Decimal("500"))
+            services.cancel_contract(db, contract.id, Decimal("500"), cancelled_by=1)
 
     def test_cancel_nonexistent_contract_raises(self, db: Session):
         with pytest.raises(ValueError):
-            services.cancel_contract(db, 999999, Decimal("0"))
+            services.cancel_contract(db, 999999, Decimal("0"), cancelled_by=1)
 
     def test_cancel_with_refund_posts_reversal_journal_entry(self, db: Session, contract, branch):
         """باج حقيقي اتصلح: إلغاء عقد بمبلغ استرداد (cancel_amount>0) كان
@@ -473,12 +586,19 @@ class TestCancelContract:
         بيتدفع للعميل من غير أي أثر محاسبي، والإيراد اللي اتسجّل وقت
         الدفعة الأولى كان يفضل مبالغ فيه للأبد."""
         from app.modules.finance import crud as finance_crud
+        from app.modules.core.models import AuditLog
         from app.modules.finance.models import Account
 
         # contract fixture بالفعل بتزرع 1100/4600 (راجع make_finance_accounts).
-        cash = db.query(Account).filter_by(branch_id=branch.id, code="1100").first()
+        bank = db.query(Account).filter_by(branch_id=branch.id, code="1110").first()
         revenue = db.query(Account).filter_by(branch_id=branch.id, code="4600").first()
-        services.cancel_contract(db, contract.id, Decimal("5000"), cancelled_by=1)
+        services.cancel_contract(
+            db,
+            contract.id,
+            Decimal("5000"),
+            refund_method="bank_transfer",
+            cancelled_by=1,
+        )
 
         entries, total = finance_crud.list_journal_entries(db, branch.id, source="timeshare")
         cancel_entries = [e for e in entries if e.reference == f"TS-CANCEL-{contract.contract_number}"]
@@ -488,8 +608,54 @@ class TestCancelContract:
         credit_line = next(l for l in lines if l.credit > 0)
         assert debit_line.account_id == revenue.id
         assert debit_line.debit == Decimal("5000")
-        assert credit_line.account_id == cash.id
+        assert credit_line.account_id == bank.id
         assert credit_line.credit == Decimal("5000")
+        assert cancel_entries[0].created_by == 1
+
+        db.refresh(contract)
+        assert contract.cancelled_by == 1
+        assert contract.refund_method == "bank_transfer"
+        audit = db.query(AuditLog).filter(
+            AuditLog.entity_type == "timeshare_contract",
+            AuditLog.entity_id == contract.id,
+            AuditLog.action == "cancel_contract",
+        ).one()
+        assert audit.user_id == 1
+        assert '"refund_method": "bank_transfer"' in audit.new_data
+
+    def test_cancel_refund_fails_atomically_when_payout_account_missing(
+        self, db: Session, contract, branch,
+    ):
+        from app.modules.core.models import AuditLog
+        from app.modules.finance.models import Account, JournalEntry
+        from app.modules.finance.services import FinancialConfigurationError
+
+        bank = db.query(Account).filter_by(branch_id=branch.id, code="1110").one()
+        bank.code = "1110_DISABLED"
+        db.commit()
+
+        with pytest.raises(FinancialConfigurationError):
+            services.cancel_contract(
+                db,
+                contract.id,
+                Decimal("5000"),
+                refund_method="bank_transfer",
+                cancelled_by=1,
+            )
+
+        db.refresh(contract)
+        assert contract.status == "active"
+        assert contract.cancel_amount == Decimal("0")
+        assert contract.cancelled_by is None
+        assert contract.refund_method is None
+        assert db.query(JournalEntry).filter(
+            JournalEntry.reference == f"TS-CANCEL-{contract.contract_number}",
+        ).count() == 0
+        assert db.query(AuditLog).filter(
+            AuditLog.entity_type == "timeshare_contract",
+            AuditLog.entity_id == contract.id,
+            AuditLog.action == "cancel_contract",
+        ).count() == 0
 
     def test_cancel_with_zero_refund_posts_no_journal_entry(self, db: Session, contract, branch):
         """إلغاء بمصادرة كاملة (cancel_amount=0، مفيش كاش بيرجع للعميل)
@@ -542,7 +708,7 @@ class TestTimeshareVisit:
         """باج حقيقي: عقد اتلغى بالكامل، بس كان لسه ممكن تخصّص وحدة فعلية
         لزيارة عليه — وحدة من مخزون المنتجع بتتحجز لعقد مالياً ملغي."""
         from app.modules.timeshare.schemas import TimeshareVisitCreate
-        services.cancel_contract(db, contract.id, Decimal("0"))
+        services.cancel_contract(db, contract.id, Decimal("0"), cancelled_by=1)
         data = TimeshareVisitCreate(
             branch_id=branch.id, contract_id=contract.id,
             check_in=date(2026, 8, 1), check_out=date(2026, 8, 5),
@@ -805,7 +971,7 @@ class TestExcelImport:
 
 
 class TestTimeshareReports:
-    """تقارير التايم شير (calendar/upcoming-visits/stats/list-installments) —
+    """تقارير الملكية الجزئية (calendar/upcoming-visits/stats/list-installments) —
     0% تغطية قبل كده رغم إنها بتستخدم فعلياً في CS/Sales dashboards."""
 
     def test_get_calendar_includes_booked_week(self, db: Session, branch, contract):
@@ -847,7 +1013,7 @@ class TestTimeshareReports:
     def test_get_stats_reflects_collected_installment(self, db: Session, branch, contract):
         inst = contract.installments_list[0]
         req = PayInstallmentRequest(paid_amount=inst.amount, payment_method="cash")
-        services.pay_installment(db, inst.id, req)
+        services.pay_installment(db, inst.id, req, collected_by=1)
 
         stats = services.get_stats(db, branch.id)
         assert stats["collection"]["collected"] >= float(inst.amount)
@@ -882,7 +1048,7 @@ class TestTimeshareReports:
     def test_list_installments_filters_by_status(self, db: Session, branch, contract):
         inst = contract.installments_list[0]
         services.pay_installment(
-            db, inst.id, PayInstallmentRequest(paid_amount=inst.amount, payment_method="cash"),
+            db, inst.id, PayInstallmentRequest(paid_amount=inst.amount, payment_method="cash"), collected_by=1,
         )
         result = services.list_installments(db, branch.id, status="paid")
         assert result["total"] == 1

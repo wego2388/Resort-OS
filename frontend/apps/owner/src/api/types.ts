@@ -435,6 +435,13 @@ export interface PerformanceBreakdown {
 
 // ─── Phase 8: تفاصيل التفاصيل (Universal Drill-Down) + بحث عام ─────────
 
+export interface PaginationMeta {
+  page: number
+  size: number
+  total_items: number
+  total_pages: number
+}
+
 export interface DiningItemTransaction {
   order_id: number
   order_number: string
@@ -447,7 +454,7 @@ export interface DiningItemTransaction {
   ordered_at: string
 }
 
-export interface DiningItemDetailResponse {
+export interface DiningItemDetailResponse extends PaginationMeta {
   item_id: number
   item_name: string
   period_from: string
@@ -467,7 +474,7 @@ export interface BeachTypeTransaction {
   cashier_name: string | null
 }
 
-export interface BeachTypeDetailResponse {
+export interface BeachTypeDetailResponse extends PaginationMeta {
   tx_type: string
   period_from: string
   period_to: string
@@ -487,7 +494,7 @@ export interface ExpenseJournalLine {
   cost_center: string | null
 }
 
-export interface ExpenseDetailResponse {
+export interface ExpenseDetailResponse extends PaginationMeta {
   account_code: string
   account_name: string
   period_from: string
@@ -507,7 +514,7 @@ export interface SupplierPurchaseOrder {
   total_amount: string
 }
 
-export interface SupplierDetailResponse {
+export interface SupplierDetailResponse extends PaginationMeta {
   supplier_id: number
   supplier_name: string
   period_from: string
@@ -540,7 +547,7 @@ export interface ProductMovement {
   notes: string | null
 }
 
-export interface ProductDetailResponse {
+export interface ProductDetailResponse extends PaginationMeta {
   product_id: number
   product_name: string
   unit: string

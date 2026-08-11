@@ -1,6 +1,6 @@
 """
 app/modules/timeshare/models.py
-Timeshare Module — عقود التايم شير
+Timeshare Module — عقود الملكية الجزئية
 Tables: timeshare_contracts, timeshare_installments, timeshare_maintenance_dues,
 timeshare_waitlist
 """
@@ -54,6 +54,7 @@ class TimeshareContract(Base, TimestampMixin):
     season:                Mapped[str]           = mapped_column(String(10), default="high")  # high|low|both
     total_value:           Mapped[Decimal]       = mapped_column(Numeric(14, 2))
     down_payment:          Mapped[Decimal]       = mapped_column(Numeric(14, 2))
+    down_payment_method:   Mapped[str | None]    = mapped_column(String(30), nullable=True)
     installments:          Mapped[int]           = mapped_column(Integer, default=12)
     installment_period:    Mapped[int]           = mapped_column(Integer, default=1)  # 1=monthly,3=quarterly,6=biannual
     first_installment_date: Mapped[date]         = mapped_column(Date)
@@ -92,6 +93,8 @@ class TimeshareContract(Base, TimestampMixin):
     # ── إلغاء ──
     cancelled_at:           Mapped[date | None]   = mapped_column(Date, nullable=True)
     cancel_amount:          Mapped[Decimal]       = mapped_column(Numeric(14, 2), default=Decimal("0"))
+    cancelled_by:           Mapped[int | None]    = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    refund_method:          Mapped[str | None]    = mapped_column(String(30), nullable=True)
 
     installments_list: Mapped[list["TimeshareInstallment"]] = relationship(
         "TimeshareInstallment", back_populates="contract", lazy="select",
@@ -234,7 +237,7 @@ class TimesharePeakSeason(Base, TimestampMixin):
 
 
 class TimeshareVisit(Base, TimestampMixin):
-    """زيارة فعلية لصاحب التايم شير — تحجز غرفة في PMS."""
+    """زيارة فعلية لصاحب الملكية الجزئية — تحجز غرفة في PMS."""
     __tablename__ = "timeshare_visits"
 
     id:              Mapped[int]            = mapped_column(primary_key=True)
@@ -249,7 +252,7 @@ class TimeshareVisit(Base, TimestampMixin):
     entitlement_visit: Mapped[bool]         = mapped_column(Boolean, default=False)
     # True لزيارة استحقاق تعاقدي (العقد سعة 6 مسدد بالكامل بقيمة العقد، مفيش
     # رسم ليلة جديد) — راجع OPS-DATA-02 §8 نقطة 11. create_visit عمرها ما
-    # كانت بترحّل إيراد غرف أصلًا (بتخصّص وحدة تايم شير بس، مش حجز PMS)،
+    # كانت بترحّل إيراد غرف أصلًا (بتخصّص وحدة ملكية جزئية بس، مش حجز PMS)،
     # فالعمود ده بيوثّق الحقيقة دي صراحةً بدل ما تفضل ضمنية.
     check_in:        Mapped[date]           = mapped_column(Date)
     check_out:       Mapped[date]           = mapped_column(Date)
@@ -264,9 +267,9 @@ class TimeshareVisit(Base, TimestampMixin):
 
 
 class TimeshareUnit(Base, TimestampMixin):
-    """وحدة تايم شير فعلية (شاليه/شقة) — منفصلة تمامًا عن غرف الفندق العادية
+    """وحدة ملكية جزئية فعلية (شاليه/شقة) — منفصلة تمامًا عن غرف الفندق العادية
     (pms.Room). قرار معماري متعمد (2026-07-04، بعد سؤال صاحب المنتجع مباشرة):
-    وحدات التايم شير مبنى/مسكن منفصل فعليًا عن غرف الفندق (Standard/Deluxe/
+    وحدات الملكية الجزئية مبنى/مسكن منفصل فعليًا عن غرف الفندق (Standard/Deluxe/
     Family Suite/Presidential) — لا تُوحَّد مع room_types/rooms الفندق."""
     __tablename__ = "timeshare_units"
     __table_args__ = (
@@ -347,7 +350,7 @@ class TimeshareVisitRequest(Base, TimestampMixin):
 
 
 class TimeshareSupportTicket(Base, TimestampMixin):
-    """دعم فني/خدمة عملاء خاص بمالكي عقود التايم شير — منفصل تمامًا عن
+    """دعم فني/خدمة عملاء خاص بمالكي عقود الملكية الجزئية — منفصل تمامًا عن
     نظام استفسارات الموقع العام (crm.Lead عبر /hub/contact)، اللي كان
     البديل الوحيد قبل كده وبيخلط شكاوى أصحاب العقود مع استفسارات عملاء
     عاديين في نفس الصندوق بدون أي ربط بالعقد الحقيقي (طلب Mohamed
@@ -387,7 +390,7 @@ class TimeshareSupportTicketReply(Base, TimestampMixin):
 
 
 class TimeshareWaitlist(Base, TimestampMixin):
-    """قائمة انتظار لأسابيع التايم شير العائم."""
+    """قائمة انتظار لأسابيع الملكية الجزئية العائم."""
     __tablename__ = "timeshare_waitlist"
 
     id:               Mapped[int]             = mapped_column(primary_key=True)

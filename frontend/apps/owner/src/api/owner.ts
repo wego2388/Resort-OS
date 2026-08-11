@@ -123,6 +123,8 @@ export async function fetchDiningItemDetail(params: {
   item_id: number
   date_from?: string
   date_to?: string
+  page?: number
+  size?: number
 }): Promise<DiningItemDetailResponse> {
   const res = await api.get<DiningItemDetailResponse>('/api/v1/owner/sales/item-detail', { params })
   return res.data
@@ -132,6 +134,8 @@ export async function fetchBeachTypeDetail(params: {
   tx_type: string
   date_from?: string
   date_to?: string
+  page?: number
+  size?: number
 }): Promise<BeachTypeDetailResponse> {
   const res = await api.get<BeachTypeDetailResponse>('/api/v1/owner/beach/type-detail', { params })
   return res.data
@@ -141,6 +145,8 @@ export async function fetchExpenseDetail(params: {
   account_code: string
   date_from?: string
   date_to?: string
+  page?: number
+  size?: number
 }): Promise<ExpenseDetailResponse> {
   const res = await api.get<ExpenseDetailResponse>('/api/v1/owner/expense-detail', { params })
   return res.data
@@ -150,6 +156,8 @@ export async function fetchSupplierDetail(params: {
   supplier_id: number
   date_from?: string
   date_to?: string
+  page?: number
+  size?: number
 }): Promise<SupplierDetailResponse> {
   const res = await api.get<SupplierDetailResponse>('/api/v1/owner/procurement-detail', { params })
   return res.data
@@ -164,6 +172,8 @@ export async function fetchProductDetail(params: {
   product_id: number
   date_from?: string
   date_to?: string
+  page?: number
+  size?: number
 }): Promise<ProductDetailResponse> {
   const res = await api.get<ProductDetailResponse>('/api/v1/owner/product-detail', { params })
   return res.data

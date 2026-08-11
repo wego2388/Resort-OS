@@ -33,6 +33,7 @@ class _Ctx:
         self.period_year = 2026
         self.period_month = 7
         self.tz_name = "Africa/Cairo"
+        self.actor_id = 1
 
 
 @pytest.fixture(scope="class")

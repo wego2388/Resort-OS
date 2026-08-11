@@ -930,7 +930,7 @@ async function saveAttendanceEdit() {
 }
 
 // ── wagdy.md H-07: استيراد ملف حضور Excel (عمود موظف أول + عمود لكل يوم) ──
-// نفس نمط استيراد عقود التايم شير (TimeshareView.vue) — رفع بضغطة واحدة،
+// نفس نمط استيراد عقود الملكية الجزئية (TimeshareView.vue) — رفع بضغطة واحدة،
 // من غير معاينة مسبقة، ملخص النتيجة (استيراد/أخطاء/موظفين غير متعرّف
 // عليهم) بيظهر بعد الرفع مباشرة.
 interface AttendanceImportResult { imported: number; errors: string[]; unmatched_employees: string[] }

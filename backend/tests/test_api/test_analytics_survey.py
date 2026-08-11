@@ -6,8 +6,8 @@ from tests.test_api.test_pms import make_branch
 
 
 def _make_timeshare_visit(db, branch):
-    """عقد تايم شير + وحدة + زيارة حقيقية — لاختبار ربط التقييم بزيارة
-    تايم شير بدل حجز فندقي (بدل ما نضطر نستخدم booking_id مزيّف)."""
+    """عقد ملكية جزئية + وحدة + زيارة حقيقية — لاختبار ربط التقييم بزيارة
+    ملكية جزئية بدل حجز فندقي (بدل ما نضطر نستخدم booking_id مزيّف)."""
     from decimal import Decimal
     from app.modules.timeshare.models import TimeshareUnit
     from app.modules.timeshare.schemas import TimeshareContractCreate, TimeshareVisitCreate
@@ -17,8 +17,8 @@ def _make_timeshare_visit(db, branch):
     db.add(unit); db.flush()
 
     contract = ts_services.create_contract(db, TimeshareContractCreate(
-        branch_id=branch.id, customer_name="عميل تايم شير", room_type="Studio", unit_capacity=2,
-        total_value=Decimal("120000"), down_payment=Decimal("20000"),
+        branch_id=branch.id, customer_name="عميل ملكية جزئية", room_type="Studio", unit_capacity=2,
+        total_value=Decimal("120000"), down_payment=Decimal("0"),
         installments=12, installment_period=1,
         first_installment_date=date(2026, 8, 1),
         partner_share_pct=Decimal("0"), start_date=date(2026, 7, 1),
@@ -54,7 +54,7 @@ class TestSurveyToken:
             create_survey_token(branch_id=branch.id, booking_id=1, timeshare_visit_id=2)  # الاثنين معًا
 
     def test_create_and_verify_timeshare_visit_token(self, db):
-        """توكن استبيان لزيارة تايم شير — ref_type لازم يبقى timeshare_visit،
+        """توكن استبيان لزيارة ملكية جزئية — ref_type لازم يبقى timeshare_visit،
         مش booking (المسار الجديد بجانب مسار الحجز الفندقي القديم)."""
         from app.modules.analytics.services import create_survey_token, verify_survey_token
         branch = make_branch(db)
@@ -66,14 +66,14 @@ class TestSurveyToken:
         assert payload["ref_type"] == "timeshare_visit"
 
     def test_submit_review_for_timeshare_visit(self, db):
-        """تقديم تقييم مرتبط بزيارة تايم شير (مش حجز فندقي) — لازم يتسجّل
+        """تقديم تقييم مرتبط بزيارة ملكية جزئية (مش حجز فندقي) — لازم يتسجّل
         بـ timeshare_visit_id ومن غير booking_id."""
         from app.modules.analytics.services import submit_review
         branch = make_branch(db)
         visit = _make_timeshare_visit(db, branch)
 
         review = submit_review(db, branch.id, booking_id=None, data={
-            "guest_name": "عميل تايم شير",
+            "guest_name": "عميل ملكية جزئية",
             "overall_rating": 5,
             "comment": "إقامة ممتازة",
         }, timeshare_visit_id=visit.id)

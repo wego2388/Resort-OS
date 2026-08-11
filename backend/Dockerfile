@@ -34,6 +34,11 @@ RUN pip install --upgrade pip && pip install -r requirements.txt
 
 # ── Stage 2: runtime ───────────────────────────────────────────────────────────
 FROM python:3.11-slim AS runtime
+ARG RESORT_RELEASE_SHA=unknown
+LABEL org.opencontainers.image.revision=$RESORT_RELEASE_SHA \
+      org.opencontainers.image.source="resort-os"
+ENV RESORT_RELEASE_SHA=$RESORT_RELEASE_SHA
+
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

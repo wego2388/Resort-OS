@@ -390,7 +390,7 @@ def send_contract_expiry_reminders(self):
                     if contract.customer_phone:
                         send_whatsapp_message(
                             contract.customer_phone,
-                            f"تنبيه: مدة عقد التايم شير رقم {contract.contract_number} بتنتهي يوم "
+                            f"تنبيه: مدة عقد الملكية الجزئية رقم {contract.contract_number} بتنتهي يوم "
                             f"{contract.end_date:%Y-%m-%d} — كلّم خدمة العملاء لمناقشة التجديد أو أي استفسار.",
                         )
 
@@ -407,7 +407,7 @@ def send_visit_survey(self, visit_id: int, branch_id: int):
     """
     يُستدعى عند الطلب (مش scheduled) من POST
     /analytics/reviews/survey-token/timeshare/{visit_id}/send — بيولّد
-    survey token حقيقي (create_survey_token) ويبعته لصاحب التايم شير عبر
+    survey token حقيقي (create_survey_token) ويبعته لصاحب الملكية الجزئية عبر
     واتساب. قبل الـ endpoint/task ده، الـ token كان بيتولّد فقط عن طريق
     GET .../survey-token/timeshare/{visit_id} من غير أي طريقة حقيقية توصّله
     للضيف — يعني الاستبيان كان عمليًا غير قابل للاستخدام رغم إن الباك إند

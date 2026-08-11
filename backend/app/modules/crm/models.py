@@ -90,7 +90,7 @@ class CustomerInteraction(Base, TimestampMixin):
 
 
 class Opportunity(Base, TimestampMixin):
-    """فرصة بيعية — تايم شير، إيجار، عضوية..."""
+    """فرصة بيعية — ملكية جزئية، إيجار، عضوية..."""
     __tablename__ = "crm_opportunities"
 
     id:              Mapped[int]           = mapped_column(primary_key=True)

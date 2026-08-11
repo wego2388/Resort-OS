@@ -8,7 +8,7 @@ permission dependencies and Pydantic validation (not direct service calls).
 from __future__ import annotations
 
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 from fastapi.testclient import TestClient
@@ -34,6 +34,11 @@ def _link_shared_users_to_branch(db, branch_id: int) -> None:
         user = db.query(User).filter(User.email == email).first()
         if user:
             assign_test_user_to_branch(db, user.id, branch_id)
+            from app.modules.finance.models import CashierShift
+            db.add(CashierShift(
+                branch_id=branch_id, cashier_id=user.id, opened_by=user.id,
+                opened_at=datetime.utcnow(), opening_float=Decimal("0"), status="open",
+            ))
     db.commit()
 
 
@@ -93,6 +98,35 @@ class TestLeasingContractFlow:
         )
         assert pay_resp.status_code == 200, pay_resp.text
         assert pay_resp.json()["status"] == "paid"
+
+    def test_cash_rent_collection_is_linked_to_collectors_open_shift(
+        self, client: TestClient, db, fake_redis, manager_headers,
+    ):
+        from app.core.kernel.models.user import User
+        from app.modules.finance.models import Payment
+        from app.modules.finance.services import build_shift_end_report
+
+        branch = make_branch_committed(db)
+        seed_leasing_accounts(db, branch)
+        manager = db.query(User).filter(User.email == "manager@test.local").one()
+        contract = client.post(
+            "/api/v1/leasing/contracts", json=contract_payload(branch.id), headers=manager_headers,
+        ).json()
+        payment_id = contract["payments"][0]["id"]
+        amount = Decimal(str(contract["payments"][0]["amount"]))
+
+        response = client.post(
+            f"/api/v1/leasing/payments/{payment_id}/pay",
+            json={"paid_amount": str(amount), "payment_method": "cash"},
+            headers=manager_headers,
+        )
+        assert response.status_code == 200, response.text
+        collection = db.query(Payment).filter_by(
+            source="leasing_rent", ref_order_id=payment_id,
+        ).one()
+        assert collection.cashier_id == manager.id
+        assert collection.shift_id is not None
+        assert build_shift_end_report(db, collection.shift_id).expected_cash == amount
 
     def test_pay_payment_fails_atomically_when_account_missing(
         self, client: TestClient, db, fake_redis, manager_headers,
@@ -407,7 +441,10 @@ class TestLeasingAccountingIntegration:
 
         entry = (
             db.query(JournalEntry)
-            .filter(JournalEntry.source == "leasing", JournalEntry.source_id == contract_id)
+            .filter(
+                JournalEntry.source == "leasing",
+                JournalEntry.reference == f"LC-DEP-{contract['contract_number']}",
+            )
             .first()
         )
         assert entry is None
@@ -421,7 +458,7 @@ class TestLeasingAccountingIntegration:
 
         entry = (
             db.query(JournalEntry)
-            .filter(JournalEntry.source == "leasing", JournalEntry.source_id == contract_id)
+            .filter(JournalEntry.source == "leasing", JournalEntry.reference == f"LC-DEP-{contract['contract_number']}")
             .first()
         )
         assert entry is not None
@@ -471,7 +508,10 @@ class TestLeasingAccountingIntegration:
 
         entries = (
             db.query(JournalEntry)
-            .filter(JournalEntry.source == "leasing", JournalEntry.source_id == payment_id)
+            .filter(
+                JournalEntry.source == "leasing",
+                JournalEntry.reference.in_([f"LSE-ACR-{payment_id:06d}", f"LSE-RCV-{payment_id:06d}"]),
+            )
             .all()
         )
         assert len(entries) == 2
@@ -507,7 +547,7 @@ class TestLeasingCashLog:
 
         entry = (
             db.query(JournalEntry)
-            .filter(JournalEntry.source == "leasing", JournalEntry.source_id == log["id"])
+            .filter(JournalEntry.source == "leasing", JournalEntry.reference == f"LSE-CL-{log['id']:06d}")
             .first()
         )
         assert entry is not None
@@ -526,7 +566,7 @@ class TestLeasingCashLog:
             f"/api/v1/leasing/contracts/{contract['id']}/cash-logs",
             json={
                 "branch_id": branch.id, "contract_id": contract["id"],
-                "amount": "500.00", "activity_type": "maintenance",
+                "amount": "500.00", "activity_type": "maintenance", "payment_method": "cash",
             },
             headers=manager_headers,
         )
@@ -535,7 +575,7 @@ class TestLeasingCashLog:
 
         entry = (
             db.query(JournalEntry)
-            .filter(JournalEntry.source == "leasing", JournalEntry.source_id == log["id"])
+            .filter(JournalEntry.source == "leasing", JournalEntry.reference == f"LSE-CL-{log['id']:06d}")
             .first()
         )
         assert entry is None
@@ -561,7 +601,7 @@ class TestLeasingCashLog:
             f"/api/v1/leasing/contracts/{contract['id']}/cash-logs",
             json={
                 "branch_id": branch.id, "contract_id": contract["id"],
-                "amount": "1500.00", "activity_type": "rent_payment",
+                "amount": "1500.00", "activity_type": "rent_payment", "payment_method": "cash",
             },
             headers=manager_headers,
         )
@@ -584,7 +624,7 @@ class TestLeasingCashLog:
             f"/api/v1/leasing/contracts/{contract['id']}/cash-logs",
             json={
                 "branch_id": branch.id, "contract_id": contract["id"],
-                "amount": "1500.00", "activity_type": "revenue_share",
+                "amount": "1500.00", "activity_type": "revenue_share", "payment_method": "cash",
             },
             headers=manager_headers,
         )
@@ -608,7 +648,7 @@ class TestLeasingCashLog:
             f"/api/v1/leasing/contracts/{contract['id']}/cash-logs",
             json={
                 "branch_id": branch.id, "contract_id": contract["id"],
-                "amount": "3000.00", "activity_type": "refund",
+                "amount": "3000.00", "activity_type": "refund", "payment_method": "cash",
             },
             headers=manager_headers,
         )
@@ -621,7 +661,7 @@ class TestLeasingCashLog:
         ).json()
         client.post(
             f"/api/v1/leasing/contracts/{contract['id']}/cash-logs",
-            json={"branch_id": branch.id, "contract_id": contract["id"], "amount": "200.00", "activity_type": "other"},
+            json={"branch_id": branch.id, "contract_id": contract["id"], "amount": "200.00", "activity_type": "other", "payment_method": "cash"},
             headers=manager_headers,
         )
 
@@ -668,7 +708,7 @@ class TestLeasingCashLog:
 
         resp = client.post(
             f"/api/v1/leasing/contracts/{contract['id']}/cash-logs",
-            json={"branch_id": branch.id, "contract_id": contract["id"] + 999, "amount": "100.00"},
+            json={"branch_id": branch.id, "contract_id": contract["id"] + 999, "amount": "100.00", "payment_method": "cash"},
             headers=manager_headers,
         )
         assert resp.status_code == 400
@@ -750,7 +790,10 @@ class TestLeasingAccrual:
 
         entries = (
             db.query(JournalEntry)
-            .filter(JournalEntry.source == "leasing", JournalEntry.source_id == payment_id)
+            .filter(
+                JournalEntry.source == "leasing",
+                JournalEntry.reference.in_([f"LSE-ACR-{payment_id:06d}", f"LSE-RCV-{payment_id:06d}"]),
+            )
             .all()
         )
         all_lines = {l.account.code: (l.debit, l.credit) for e in entries for l in e.lines}
@@ -774,7 +817,7 @@ class TestLeasingAccrual:
 
         entry = (
             db.query(JournalEntry)
-            .filter(JournalEntry.source == "leasing", JournalEntry.source_id == contract["id"])
+            .filter(JournalEntry.source == "leasing", JournalEntry.reference == f"LC-DEP-{contract['contract_number']}")
             .first()
         )
         lines = {l.account.code: (l.debit, l.credit) for l in entry.lines}

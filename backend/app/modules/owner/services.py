@@ -99,7 +99,7 @@ from app.resort_os.owner_analytics_engine import (
     build_fraud_exceptions,
     build_shift_variance_exceptions,
 )
-from app.resort_os.timezone_utils import business_today
+from app.resort_os.timezone_utils import business_today, local_date_to_utc_range
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -207,6 +207,22 @@ def delete_draft(db: Session, rule_id: int, owner_user_id: int, branch_id: int) 
 def _cairo_today() -> date:
     """تاريخ اليوم بتوقيت القاهرة — المصدر الوحيد لـ 'اليوم' في كل owner services."""
     return business_today(get_settings().TIMEZONE)
+
+
+def _utc_date_bounds(date_from: date, date_to: date) -> tuple[datetime, datetime]:
+    """Cairo-local inclusive date range converted to stored UTC-naive bounds."""
+    timezone_name = get_settings().TIMEZONE
+    range_start, _ = local_date_to_utc_range(date_from, timezone_name)
+    _, range_end = local_date_to_utc_range(date_to, timezone_name)
+    return range_start, range_end
+
+def _pagination_meta(page: int, size: int, total_items: int) -> dict[str, int]:
+    """Return stable pagination metadata without losing full-result totals."""
+    return {
+        "page": page, "size": size, "total_items": total_items,
+        "total_pages": (total_items + size - 1) // size if total_items else 0,
+    }
+
 
 
 def _is_period_provisional(db: Session, branch_id: int, for_date: date) -> bool:
@@ -383,7 +399,7 @@ def _fetch_b2b_receivables(db: Session, branch_id: int) -> tuple[list[B2BReceiva
 def _fetch_timeshare_receivables(
     db: Session, branch_id: int, today: date,
 ) -> tuple[list[TimeshareReceivableItem], Decimal]:
-    """A-5: ذمم تايم شير — أقساط unpaid/overdue بـ due_date <= اليوم.
+    """A-5: ذمم ملكية جزئية — أقساط unpaid/overdue بـ due_date <= اليوم.
 
     نجمّع بالعقد (contract_id) — لا نكشف اسم ضيف (Decision 0004 §Isolation
     model item 7). نحتاج join مع TimeshareContract للـ branch_id.
@@ -550,7 +566,7 @@ def get_owner_now(db: Session, branch_id: int) -> OwnerNowResponse:
     # A-4: ذمم B2B
     b2b_items, b2b_total = _fetch_b2b_receivables(db, branch_id)
 
-    # A-5: ذمم تايم شير
+    # A-5: ذمم ملكية جزئية
     ts_items, ts_total = _fetch_timeshare_receivables(db, branch_id, today)
 
     # A-6: إشغال الغرف
@@ -759,6 +775,7 @@ def get_sales_performance(
     from app.modules.dining.models import DiningOrder, DiningOrderItem  # noqa: PLC0415
     from app.modules.beach.models import BeachTransaction  # noqa: PLC0415
 
+    range_start_utc, range_end_utc = _utc_date_bounds(date_from, date_to)
     items: list[ItemMetric] = []
 
     # ── Dining items ──────────────────────────────────────────────────
@@ -776,15 +793,14 @@ def get_sales_performance(
             .filter(
                 DiningOrder.branch_id == branch_id,
                 DiningOrder.status == "paid",
-                DiningOrder.created_at >= datetime.combine(date_from, datetime.min.time()),
-                DiningOrder.created_at <= datetime.combine(date_to, datetime.max.time()),
+                DiningOrder.created_at >= range_start_utc,
+                DiningOrder.created_at <= range_end_utc,
                 DiningOrderItem.status != "cancelled",
             )
             .group_by(DiningOrderItem.item_id, DiningOrderItem.name)
             .order_by(sa_func.sum(
                 DiningOrderItem.unit_price * DiningOrderItem.quantity
             ).desc())
-            .limit(limit)
             .all()
         )
 
@@ -834,6 +850,7 @@ def get_sales_performance(
     items = enrich_items_with_margin(items)
 
     total_revenue = sum(i.revenue for i in items)
+    visible_items = items[:limit]
     is_prov = _is_period_provisional(db, branch_id, date_to)
 
     return SalesPerformanceResponse(
@@ -852,7 +869,7 @@ def get_sales_performance(
                 abc_class=i.abc_class,
                 cumulative_pct=i.cumulative_pct,
             )
-            for i in items
+            for i in visible_items
         ],
         total_revenue=total_revenue,
         is_provisional=is_prov,
@@ -968,6 +985,7 @@ def get_channel_analytics(
     from app.modules.beach.models import B2BContract, B2BContractDay  # noqa: PLC0415
     from app.modules.dining.models import DiningOrder  # noqa: PLC0415
 
+    range_start_utc, range_end_utc = _utc_date_bounds(date_from, date_to)
     contracts = (
         db.query(B2BContract)
         .filter(B2BContract.branch_id == branch_id, B2BContract.is_active.is_(True))
@@ -1013,8 +1031,8 @@ def get_channel_analytics(
         .filter(
             DiningOrder.b2b_contract_id.in_(contract_ids),
             DiningOrder.status == "paid",
-            DiningOrder.created_at >= datetime.combine(date_from, datetime.min.time()),
-            DiningOrder.created_at <= datetime.combine(date_to, datetime.max.time()),
+            DiningOrder.created_at >= range_start_utc,
+            DiningOrder.created_at <= range_end_utc,
         )
         .group_by(DiningOrder.b2b_contract_id)
         .all()
@@ -1662,7 +1680,7 @@ def get_hr_summary(db: Session, branch_id: int) -> HRSummaryResponse:
     import calendar  # noqa: PLC0415
     from app.modules.hr.models import Employee, PayrollLine, PayrollRun, AttendanceRecord  # noqa: PLC0415
 
-    today = date.today()
+    today = _cairo_today()
     month_start = today.replace(day=1)
     _, days_in_month = calendar.monthrange(today.year, today.month)
     month_end = today.replace(day=days_in_month)
@@ -1985,12 +2003,15 @@ def get_discount_analytics(
 
 def get_dining_item_detail(
     db: Session, branch_id: int, item_id: int, date_from: date, date_to: date,
+    *, page: int = 1, size: int = 50,
 ) -> DiningItemDetailResponse:
     """كل الطلبات اللي فيها صنف مطعم/كافيه معيّن — نفس فلتر get_sales_
     performance بالظبط (paid orders، غير ملغاة) بس على مستوى الطلب لا التجميع."""
+    from sqlalchemy import func as sa_func  # noqa: PLC0415
     from app.modules.dining.models import DiningOrder, DiningOrderItem, Outlet  # noqa: PLC0415
 
-    rows = (
+    range_start_utc, range_end_utc = _utc_date_bounds(date_from, date_to)
+    base_query = (
         db.query(DiningOrderItem, DiningOrder, Outlet.name.label("outlet_name"))
         .join(DiningOrder, DiningOrder.id == DiningOrderItem.order_id)
         .join(Outlet, Outlet.id == DiningOrder.outlet_id)
@@ -1999,14 +2020,28 @@ def get_dining_item_detail(
             DiningOrder.status == "paid",
             DiningOrderItem.item_id == item_id,
             DiningOrderItem.status != "cancelled",
-            DiningOrder.created_at >= datetime.combine(date_from, datetime.min.time()),
-            DiningOrder.created_at <= datetime.combine(date_to, datetime.max.time()),
+            DiningOrder.created_at >= range_start_utc,
+            DiningOrder.created_at <= range_end_utc,
         )
-        .order_by(DiningOrder.created_at.desc())
+    )
+    total_items = base_query.count()
+    totals = (
+        base_query
+        .with_entities(
+            sa_func.sum(DiningOrderItem.quantity).label("qty"),
+            sa_func.sum(DiningOrderItem.unit_price * DiningOrderItem.quantity).label("revenue"),
+        )
+        .one()
+    )
+    name_row = base_query.with_entities(DiningOrderItem.name).first()
+    rows = (
+        base_query.order_by(DiningOrder.created_at.desc(), DiningOrderItem.id.desc())
+        .offset((page - 1) * size)
+        .limit(size)
         .all()
     )
 
-    item_name = rows[0][0].name if rows else ""
+    item_name = name_row[0] if name_row else ""
     transactions = [
         DiningItemTransaction(
             order_id=item.order_id,
@@ -2028,20 +2063,23 @@ def get_dining_item_detail(
         period_from=date_from,
         period_to=date_to,
         transactions=transactions,
-        total_quantity=sum(t.quantity for t in transactions),
-        total_revenue=sum(t.line_total for t in transactions),
+        total_quantity=int(totals.qty or 0),
+        total_revenue=Decimal(str(totals.revenue or 0)),
+        **_pagination_meta(page, size, total_items),
         computed_at=datetime.utcnow(),
     )
 
 
 def get_beach_type_detail(
     db: Session, branch_id: int, tx_type: str, date_from: date, date_to: date,
+    *, page: int = 1, size: int = 50,
 ) -> BeachTypeDetailResponse:
     """كل معاملات نوع تذكرة شاطئ معيّن — نفس فلتر get_beach_performance."""
+    from sqlalchemy import func as sa_func  # noqa: PLC0415
     from app.modules.beach.models import BeachTransaction  # noqa: PLC0415
     from app.core.kernel.models.user import User  # noqa: PLC0415
 
-    rows = (
+    base_query = (
         db.query(BeachTransaction)
         .filter(
             BeachTransaction.branch_id == branch_id,
@@ -2050,8 +2088,15 @@ def get_beach_type_detail(
             BeachTransaction.tx_date >= date_from,
             BeachTransaction.tx_date <= date_to,
         )
-        .order_by(BeachTransaction.tx_date.desc(), BeachTransaction.id.desc())
-        .all()
+    )
+
+    total_items = base_query.count()
+    total_revenue = Decimal(str(
+        base_query.with_entities(sa_func.sum(BeachTransaction.total_amount)).scalar() or 0
+    ))
+    rows = (
+        base_query.order_by(BeachTransaction.tx_date.desc(), BeachTransaction.id.desc())
+        .offset((page - 1) * size).limit(size).all()
     )
 
     cashier_ids = {r.cashier_id for r in rows if r.cashier_id}
@@ -2077,17 +2122,20 @@ def get_beach_type_detail(
         period_from=date_from,
         period_to=date_to,
         transactions=transactions,
-        total_count=len(transactions),
-        total_revenue=sum(t.total_amount for t in transactions),
+        total_count=total_items,
+        total_revenue=total_revenue,
+        **_pagination_meta(page, size, total_items),
         computed_at=datetime.utcnow(),
     )
 
 
 def get_expense_detail(
     db: Session, branch_id: int, account_code: str, date_from: date, date_to: date,
+    *, page: int = 1, size: int = 50,
 ) -> ExpenseDetailResponse:
     """كل قيود اليومية (سطور المدين) داخل حساب مصروف معيّن — نفس فترة
     get_expense_analytics بس سطور خام بدل إجمالي الحساب."""
+    from sqlalchemy import func as sa_func  # noqa: PLC0415
     from app.modules.finance.models import Account, JournalEntry, JournalLine  # noqa: PLC0415
 
     account = db.query(Account).filter(
@@ -2098,9 +2146,10 @@ def get_expense_detail(
             account_code=account_code, account_name=account_code,
             period_from=date_from, period_to=date_to, lines=[],
             total_amount=Decimal("0"), computed_at=datetime.utcnow(),
+            **_pagination_meta(page, size, 0),
         )
 
-    rows = (
+    base_query = (
         db.query(JournalLine, JournalEntry)
         .join(JournalEntry, JournalEntry.id == JournalLine.entry_id)
         .filter(
@@ -2110,10 +2159,16 @@ def get_expense_detail(
             JournalEntry.entry_date <= date_to,
             JournalLine.debit > 0,
         )
-        .order_by(JournalEntry.entry_date.desc(), JournalEntry.id.desc())
-        .all()
     )
 
+    total_items = base_query.count()
+    total_amount = Decimal(str(
+        base_query.with_entities(sa_func.sum(JournalLine.debit)).scalar() or 0
+    ))
+    rows = (
+        base_query.order_by(JournalEntry.entry_date.desc(), JournalEntry.id.desc())
+        .offset((page - 1) * size).limit(size).all()
+    )
     lines = [
         ExpenseJournalLine(
             entry_id=entry.id,
@@ -2133,13 +2188,15 @@ def get_expense_detail(
         period_from=date_from,
         period_to=date_to,
         lines=lines,
-        total_amount=sum(l.amount for l in lines),
+        total_amount=total_amount,
+        **_pagination_meta(page, size, total_items),
         computed_at=datetime.utcnow(),
     )
 
 
 def get_supplier_detail(
     db: Session, branch_id: int, supplier_id: int, date_from: date, date_to: date,
+    *, page: int = 1, size: int = 50,
 ) -> SupplierDetailResponse:
     """كل أوامر الشراء المستلمة لمورد معيّن — نفس فلتر get_procurement_analytics."""
     from sqlalchemy import func as sa_func  # noqa: PLC0415
@@ -2149,7 +2206,7 @@ def get_supplier_detail(
         Supplier.id == supplier_id, Supplier.branch_id == branch_id,
     ).first()
 
-    rows = (
+    base_query = (
         db.query(
             PurchaseOrder,
             sa_func.count(PurchaseOrderItem.id).label("item_count"),
@@ -2163,7 +2220,23 @@ def get_supplier_detail(
             PurchaseOrder.ordered_at <= date_to,
         )
         .group_by(PurchaseOrder.id)
-        .order_by(PurchaseOrder.ordered_at.desc())
+    )
+    total_items = base_query.count()
+    total_amount = Decimal(str(
+        db.query(sa_func.sum(PurchaseOrder.total_amount))
+        .filter(
+            PurchaseOrder.branch_id == branch_id,
+            PurchaseOrder.supplier_id == supplier_id,
+            PurchaseOrder.status.in_(["received", "partial"]),
+            PurchaseOrder.ordered_at >= date_from,
+            PurchaseOrder.ordered_at <= date_to,
+        )
+        .scalar() or 0
+    ))
+    rows = (
+        base_query.order_by(PurchaseOrder.ordered_at.desc(), PurchaseOrder.id.desc())
+        .offset((page - 1) * size)
+        .limit(size)
         .all()
     )
 
@@ -2186,16 +2259,20 @@ def get_supplier_detail(
         period_from=date_from,
         period_to=date_to,
         orders=orders,
-        total_amount=sum(o.total_amount for o in orders),
+        total_amount=total_amount,
+        **_pagination_meta(page, size, total_items),
         computed_at=datetime.utcnow(),
     )
 
 
 def get_product_detail(
     db: Session, branch_id: int, product_id: int, date_from: date, date_to: date,
+    *, page: int = 1, size: int = 50,
 ) -> ProductDetailResponse:
     """حركات مخزون منتج معيّن (شراء/استهلاك/تعديل/تحويل) + الرصيد الحالي."""
+    from sqlalchemy import func as sa_func  # noqa: PLC0415
     from app.modules.inventory.models import Product, StockMovement, Warehouse  # noqa: PLC0415
+    range_start_utc, range_end_utc = _utc_date_bounds(date_from, date_to)
 
     product = db.query(Product).filter(
         Product.id == product_id, Product.branch_id == branch_id,
@@ -2206,19 +2283,31 @@ def get_product_detail(
             current_stock=Decimal("0"), cost_price=Decimal("0"),
             period_from=date_from, period_to=date_to, movements=[],
             total_in=Decimal("0"), total_out=Decimal("0"), computed_at=datetime.utcnow(),
+            **_pagination_meta(page, size, 0),
         )
 
-    rows = (
+    base_query = (
         db.query(StockMovement, Warehouse.name.label("warehouse_name"))
         .join(Warehouse, Warehouse.id == StockMovement.warehouse_id)
         .filter(
             StockMovement.branch_id == branch_id,
             StockMovement.product_id == product_id,
-            StockMovement.moved_at >= datetime.combine(date_from, datetime.min.time()),
-            StockMovement.moved_at <= datetime.combine(date_to, datetime.max.time()),
+            StockMovement.moved_at >= range_start_utc,
+            StockMovement.moved_at <= range_end_utc,
         )
-        .order_by(StockMovement.moved_at.desc())
-        .all()
+    )
+    total_items = base_query.count()
+    total_in = Decimal(str(
+        base_query.filter(StockMovement.quantity > 0)
+        .with_entities(sa_func.sum(StockMovement.quantity)).scalar() or 0
+    ))
+    total_out = -Decimal(str(
+        base_query.filter(StockMovement.quantity < 0)
+        .with_entities(sa_func.sum(StockMovement.quantity)).scalar() or 0
+    ))
+    rows = (
+        base_query.order_by(StockMovement.moved_at.desc(), StockMovement.id.desc())
+        .offset((page - 1) * size).limit(size).all()
     )
 
     movements = [
@@ -2243,8 +2332,9 @@ def get_product_detail(
         period_from=date_from,
         period_to=date_to,
         movements=movements,
-        total_in=sum((m.quantity for m in movements if m.quantity > 0), Decimal("0")),
-        total_out=sum((-m.quantity for m in movements if m.quantity < 0), Decimal("0")),
+        total_in=total_in,
+        total_out=total_out,
+        **_pagination_meta(page, size, total_items),
         computed_at=datetime.utcnow(),
     )
 

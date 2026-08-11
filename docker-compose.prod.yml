@@ -76,9 +76,12 @@ services:
 
   # ── Backend ───────────────────────────────────────────────────────────────
   backend:
+    image: resort-os-backend:${RESORT_RELEASE_SHA:-local}
     build:
       context: ./backend
       dockerfile: Dockerfile
+      args:
+        RESORT_RELEASE_SHA: ${RESORT_RELEASE_SHA:-unknown}
     restart: unless-stopped
     env_file: ./backend/.env.prod
     # RATE_LIMIT_TRUSTED_PROXY_HOPS معرّف هنا صراحةً (مش جوه .env.prod
@@ -102,9 +105,7 @@ services:
       retries: 5
 
   celery_worker:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
+    image: resort-os-backend:${RESORT_RELEASE_SHA:-local}
     restart: unless-stopped
     env_file: ./backend/.env.prod
     command: ["celery", "-A", "app.celery_app", "worker", "--loglevel=info", "--concurrency=4"]
@@ -127,9 +128,7 @@ services:
         condition: service_healthy
 
   celery_beat:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
+    image: resort-os-backend:${RESORT_RELEASE_SHA:-local}
     restart: unless-stopped
     env_file: ./backend/.env.prod
     command: ["celery", "-A", "app.celery_app", "beat", "--loglevel=info"]

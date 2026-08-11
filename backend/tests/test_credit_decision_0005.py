@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 import pytest
@@ -422,6 +422,7 @@ def test_dining_credit_settlement_is_atomic_and_idempotent(db):
     from app.modules.crm.models import Customer
     from app.modules.dining import services as dining_services
     from app.modules.finance.models import Account, Payment
+    from app.modules.finance import crud as finance_crud
     from tests.test_api.test_dining import (
         make_branch, make_finance_accounts, make_item, make_order, make_outlet,
     )
@@ -447,6 +448,19 @@ def test_dining_credit_settlement_is_atomic_and_idempotent(db):
     order = make_order(db, branch, outlet, item)
     order.customer_id = customer.id
     db.commit()
+    # ref_order_id متعدد المصادر: دفعة إيجار تحمل نفس الرقم لا يجوز أن
+    # تُحسب tender للدايننج أو تُعكس مع مرتجع الصنف.
+    finance_crud.create_direct_payment(
+        db,
+        branch_id=branch.id,
+        amount=Decimal("1.00"),
+        method="bank_transfer",
+        posted_at=datetime(2026, 8, 1),
+        reference=f"UNRELATED-{order.id}",
+        ref_order_id=order.id,
+        source="leasing_rent",
+    )
+    db.commit()
     key = f"dining-credit-{uuid.uuid4().hex}"
 
     paid = dining_services.settle_order(
@@ -470,7 +484,9 @@ def test_dining_credit_settlement_is_atomic_and_idempotent(db):
     assert paid.status == replay.status == "paid"
     assert charge.amount == paid.total
     assert crud.get_account(db, account.id).current_balance == paid.total
-    assert db.query(Payment).filter_by(ref_order_id=order.id).count() == 0
+    assert db.query(Payment).filter(
+        Payment.ref_order_id == order.id, Payment.source == "dining",
+    ).count() == 0
 
     refunded = dining_services.refund_order_item(
         db, order.id, paid.items[0].id, "مرتجع طلب آجل", refunded_by=1,
@@ -482,7 +498,9 @@ def test_dining_credit_settlement_is_atomic_and_idempotent(db):
     assert refund.amount == paid.total
     assert crud.get_account(db, account.id).current_balance == Decimal("0.00")
     assert crud.compute_balance_from_transactions(db, account.id) == Decimal("0.00")
-    assert db.query(Payment).filter_by(ref_order_id=order.id).count() == 0
+    assert db.query(Payment).filter(
+        Payment.ref_order_id == order.id, Payment.source == "dining",
+    ).count() == 0
 
 
 def test_split_dining_refunds_use_cumulative_credit_rounding_target(db):

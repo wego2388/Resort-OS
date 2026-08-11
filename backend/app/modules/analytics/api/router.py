@@ -472,7 +472,7 @@ def list_reviews(
     from app.modules.analytics.models import GuestReview  # noqa: PLC0415
     q = db.query(GuestReview).filter(GuestReview.branch_id == branch_id)
     if booking_id or timeshare_visit_id:
-        # عرض تقييمات مرجع محدد (بروفايل عميل تايم شير مثلاً) — يشمل الغير
+        # عرض تقييمات مرجع محدد (بروفايل عميل ملكية جزئية مثلاً) — يشمل الغير
         # منشورة كمان (الفريق الداخلي محتاج يشوف الصورة كاملة، مش بس المنشور
         # للعامة). القائمة العامة (من غير فلتر) لسه بتفلتر is_published فقط.
         if booking_id:
@@ -549,7 +549,7 @@ def full_dashboard(
             BeachTransaction.branch_id == bid, BeachTransaction.voided_at.is_(None),
             BeachTransaction.tx_date >= dfrom, BeachTransaction.tx_date <= dto,
         ).all())
-        # إيرادات الإيجار والتايم شير — paid_at مخزّن UTC، نفس نطاق range_start/end
+        # إيرادات الإيجار والملكية الجزئية — paid_at مخزّن UTC، نفس نطاق range_start/end
         try:
             from app.modules.leasing.models import LeasePayment  # noqa: PLC0415
             lease_rev = sum(p.amount for p in d.query(LeasePayment).filter(
@@ -626,7 +626,7 @@ async def submit_guest_review(
     data: GuestReviewSubmitRequest,
     token: str = Query(..., description="survey JWT from checkout"),
 ):
-    """يستقبل تقييم الضيف بعد checkout (حجز فندقي) أو بعد زيارة تايم شير —
+    """يستقبل تقييم الضيف بعد checkout (حجز فندقي) أو بعد زيارة ملكية جزئية —
     يتحقق من JWT أولاً، ويحدِّد نوع المرجع (ref_type) من التوكن نفسه.
     endpoint عام بالكامل (بدون auth، token JWT بس) — GuestReviewSubmitRequest
     (راجع schemas.py) بيفرض حدود المدخلات بدل dict خام."""
@@ -679,8 +679,8 @@ async def get_timeshare_survey_token(
     branch_id: int = Query(...),
     current_user=Depends(get_current_active_user),
 ):
-    """يُولِّد survey token لزيارة تايم شير — نفس شكل استجابة الحجز الفندقي
-    بالظبط، endpoint موازٍ مش تعديل على القديم (الحجز الفندقي والتايم شير
+    """يُولِّد survey token لزيارة ملكية جزئية — نفس شكل استجابة الحجز الفندقي
+    بالظبط، endpoint موازٍ مش تعديل على القديم (الحجز الفندقي والملكية الجزئية
     مصدرين مختلفين تمامًا، مش نفس الجدول). نفس تحقق الملكية اللي فوق —
     راجع تعليق get_survey_token."""
     from app.modules.timeshare.models import TimeshareVisit  # noqa: PLC0415
@@ -706,7 +706,7 @@ async def send_timeshare_survey(
     branch_id: int = Query(...),
     current_user=Depends(get_current_active_user),
 ):
-    """يبعت لينك الاستبيان لصاحب زيارة تايم شير فعليًا عبر واتساب (Celery،
+    """يبعت لينك الاستبيان لصاحب زيارة ملكية جزئية فعليًا عبر واتساب (Celery،
     مش synchronous — نفس نمط باقي إشعارات واتساب في المشروع).
 
     قبل الـ endpoint ده، get_timeshare_survey_token فوق كان بيولّد الـ token

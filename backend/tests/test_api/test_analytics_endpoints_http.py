@@ -329,7 +329,7 @@ class TestReviewsListEndpoint:
         assert body["items"][0]["guest_name"] == "ب"
 
     def test_filters_by_timeshare_visit_id_includes_unpublished(self, client: TestClient, db, manager_headers):
-        """بروفايل عميل تايم شير محتاج يشوف كل تقييمات الزيارة (حتى الغير
+        """بروفايل عميل ملكية جزئية محتاج يشوف كل تقييمات الزيارة (حتى الغير
         منشورة، rating <= 2) — الفلترة العامة (من غير فلتر) لسه بتفلتر
         is_published فقط، فده لازم يكون سلوك إضافي مش تغيير كاسر."""
         from decimal import Decimal as _D
@@ -344,8 +344,8 @@ class TestReviewsListEndpoint:
         db.add_all([unit1, unit2]); db.commit()
 
         contract = ts_services.create_contract(db, TimeshareContractCreate(
-            branch_id=branch.id, customer_name="عميل تايم شير", room_type="Studio", unit_capacity=2,
-            total_value=_D("120000"), down_payment=_D("20000"),
+            branch_id=branch.id, customer_name="عميل ملكية جزئية", room_type="Studio", unit_capacity=2,
+            total_value=_D("120000"), down_payment=_D("0"),
             installments=12, installment_period=1,
             first_installment_date=date(2026, 8, 1),
             partner_share_pct=_D("0"), start_date=date(2026, 7, 1),

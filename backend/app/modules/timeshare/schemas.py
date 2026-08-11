@@ -42,6 +42,7 @@ class TimeshareContractCreate(BaseModel):
     season:                 str = Field("high", pattern=r"^(high|low|both)$")
     total_value:            Decimal = Field(..., gt=0)
     down_payment:           Decimal = Field(..., ge=0)
+    down_payment_method:    Literal["cash", "card", "bank_transfer"] = "cash"
     installments:           int = Field(12, ge=1)
     installment_period:     int = Field(1, pattern=None)
     first_installment_date: date
@@ -202,7 +203,8 @@ class TimeshareContractRead(BaseModel):
     customer_phone_work: Optional[str] = None; customer_phone_home: Optional[str] = None
     mailing_address: Optional[str] = None
     unit_id: Optional[int]; week_number: Optional[int]; nights_per_year: int; season: str
-    total_value: Decimal; down_payment: Decimal; installments: int
+    total_value: Decimal; down_payment: Decimal; down_payment_method: Optional[str] = None
+    installments: int
     installment_period: int; first_installment_date: date
     partner_share_pct: Decimal; partner_company: Optional[str]
     status: str; booking_frozen: bool
@@ -217,6 +219,8 @@ class TimeshareContractRead(BaseModel):
     net_contract_value: Optional[Decimal]; over_under_price: Decimal
     years_count: int; payment_type: str
     cancelled_at: Optional[date]; cancel_amount: Decimal
+    cancelled_by: Optional[int] = None
+    refund_method: Optional[str] = None
     installments_list: list[InstallmentRead] = []
     maintenance_dues_list: list[TimeshareMaintenanceDueRead] = []
     created_at: datetime; updated_at: datetime
@@ -224,6 +228,7 @@ class TimeshareContractRead(BaseModel):
 
 class TimeshareCancelRequest(BaseModel):
     cancel_amount: Decimal = Field(Decimal("0"), ge=0)
+    refund_method: Literal["cash", "card", "bank_transfer"] = "cash"
 
 
 class TimeshareUnitTransferRequest(BaseModel):
@@ -238,14 +243,14 @@ class TimeshareUnitTransferRequest(BaseModel):
 
 class PayInstallmentRequest(BaseModel):
     paid_amount:    Decimal = Field(..., gt=0)
-    payment_method: str = Field(..., pattern=r"^(cash|card|bank_transfer|other)$")
+    payment_method: str = Field(..., pattern=r"^(cash|card|bank_transfer)$")
     receipt_number: Optional[str] = None
     notes:          Optional[str] = None
 
 
 class PayMaintenanceDueRequest(BaseModel):
     paid_amount:    Decimal = Field(..., gt=0)
-    payment_method: str = Field(..., pattern=r"^(cash|card|bank_transfer|other)$")
+    payment_method: str = Field(..., pattern=r"^(cash|card|bank_transfer)$")
     receipt_number: Optional[str] = None
     notes:          Optional[str] = None
 
@@ -479,7 +484,7 @@ class TimeshareTicketStatusUpdate(BaseModel):
     status: str = Field(..., pattern=r"^(open|in_progress|resolved|closed)$")
 
 
-# ── Timeshare Staff (مدير التايم شير بيدير موظفي وحدته، طلب Mohamed 2026-08-03) ──
+# ── Timeshare Staff (مدير الملكية الجزئية بيدير موظفي وحدته، طلب Mohamed 2026-08-03) ──
 
 class TimeshareStaffCreate(BaseModel):
     """role مش حقل هنا عمدًا — ثابت timeshare_agent دايمًا، مش قابل

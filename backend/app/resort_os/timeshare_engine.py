@@ -25,7 +25,7 @@ CONTRACT_STATUSES  = ("draft", "active", "suspended", "cancelled", "expired")
 PAYMENT_STATUSES   = ("pending", "partial", "paid", "overdue")
 WAITLIST_STATUSES  = ("waiting", "notified", "confirmed", "expired", "cancelled")
 
-# عقوبة تأخر الإيجار التجاري فقط — لا تُطبَّق على التايم شير
+# عقوبة تأخر الإيجار التجاري فقط — لا تُطبَّق على الملكية الجزئية
 LEASE_PENALTY_RULES = [
     (30, Decimal("0.10")),   # > 30 يوم → 10%
     (7,  Decimal("0.05")),   # > 7 أيام → 5%
@@ -305,7 +305,7 @@ def calculate_lease_penalty(
     today: Optional[date] = None,
 ) -> Decimal:
     """
-    عقوبة تأخر الإيجار التجاري فقط (Lease) — لا تُطبَّق على التايم شير.
+    عقوبة تأخر الإيجار التجاري فقط (Lease) — لا تُطبَّق على الملكية الجزئية.
     > 30 يوم: 10% / > 7 أيام: 5% / أقل: 0
     """
     today = today or date.today()

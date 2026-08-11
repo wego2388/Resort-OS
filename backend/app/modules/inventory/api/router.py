@@ -10,6 +10,7 @@ from app.core.deps import (
     DbDep, get_current_active_user, get_employee_user, get_manager_user, require_permission,
 )
 from app.modules.core import services as core_services
+from app.modules.finance.services import FinancialConfigurationError
 from app.modules.inventory import crud, services
 from app.modules.inventory.schemas import (
     CategoryCreate, CategoryRead, ProductCreate, ProductRead, ProductUpdate,
@@ -241,6 +242,10 @@ def receive_purchase_order(po_id: int, req: ReceiveItemsRequest, db: DbDep,
     _assert_inventory_branch(db, user, po.branch_id, "استلام أمر شراء")
     try:
         return services.receive_purchase_order(db, po_id, req, received_by=user.id)
+    except FinancialConfigurationError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {
+            "code": "FINANCIAL_CONFIGURATION_ERROR", "message": str(exc),
+        })
     except services.InventoryConcurrencyError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
     except ValueError as exc:

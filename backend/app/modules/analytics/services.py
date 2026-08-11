@@ -62,7 +62,7 @@ def create_survey_token(
     branch_id: int, booking_id: int | None = None, timeshare_visit_id: int | None = None,
 ) -> str:
     """ينشئ JWT صالح 7 أيام للاستبيان — يُرسل لشاشة checkout (حجز فندقي) أو
-    لزيارة تايم شير على حدٍّ سواء (ref_type يميّز بينهما، sub يحمل الـ id
+    لزيارة ملكية جزئية على حدٍّ سواء (ref_type يميّز بينهما، sub يحمل الـ id
     المناسب) — واحد بس لازم يتحدد، مش الاتنين ومش ولا واحد."""
     if bool(booking_id) == bool(timeshare_visit_id):
         raise ValueError("حدِّد إما booking_id أو timeshare_visit_id (واحد بالظبط)")
@@ -96,8 +96,8 @@ def submit_review(
     timeshare_visit_id: int | None = None,
 ) -> "GuestReview":
     """يُسجّل تقييم الضيف + ينشئ Activity(complaint) لو avg ≤ 2. يُربط إما
-    بحجز فندقي (booking_id) أو بزيارة تايم شير (timeshare_visit_id) — الاثنين
-    اختياريان ومستقلان (مش نفس الجدول، وحدات التايم شير مبنى منفصل)."""
+    بحجز فندقي (booking_id) أو بزيارة ملكية جزئية (timeshare_visit_id) — الاثنين
+    اختياريان ومستقلان (مش نفس الجدول، وحدات الملكية الجزئية مبنى منفصل)."""
     from app.modules.analytics.models import GuestReview, ReviewCategory
 
     overall = data.get("overall_rating", 3)
@@ -160,7 +160,7 @@ def _create_complaint_activity(
     if booking_id:
         ref_label = f"حجز #{booking_id}"
     elif timeshare_visit_id:
-        ref_label = f"زيارة تايم شير #{timeshare_visit_id}"
+        ref_label = f"زيارة ملكية جزئية #{timeshare_visit_id}"
     else:
         ref_label = "تقييم يدوي (بدون حجز أو زيارة)"
     db.add(Activity(

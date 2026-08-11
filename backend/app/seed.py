@@ -174,12 +174,12 @@ def _seed_demo_accounts(db: Session) -> None:
         ("chef@resortos.local",         "شيف تجريبي",         "chef"),
         ("kitchen@resortos.local",      "مطبخ تجريبي",        "kitchen"),
         ("employee@resortos.local",     "موظف تجريبي",        "employee"),
-        # timeshare_admin/timeshare_agent (2026-08-03) — وحدة التايم شير بقت
+        # timeshare_admin/timeshare_agent (2026-08-03) — وحدة الملكية الجزئية بقت
         # معزولة تمامًا عن باقي الأدوار (راجع app.core.deps.get_timeshare_user)،
         # فمحتاجين حسابين تجريبيين مخصوصين ليها بدل ما تتغطى بحساب manager
         # العادي زي باقي الموديولات.
-        ("timeshare_admin@resortos.local", "مدير تايم شير تجريبي", "timeshare_admin"),
-        ("timeshare_agent@resortos.local", "موظف تايم شير تجريبي", "timeshare_agent"),
+        ("timeshare_admin@resortos.local", "مدير ملكية جزئية تجريبي", "timeshare_admin"),
+        ("timeshare_agent@resortos.local", "موظف ملكية جزئية تجريبي", "timeshare_agent"),
     ]
     created = 0
     created_agent = False
@@ -536,9 +536,9 @@ def _seed_chart_of_accounts(db: Session) -> None:
         {"code": "1160", "name": "ذمم مدينة — حسابات آجلة شخصية", "account_type": "asset"},
         {"code": "1200", "name": "مخزون البضاعة",               "account_type": "asset"},
         {"code": "5200", "name": "تكلفة البضاعة المباعة (COGS)", "account_type": "expense"},
-        {"code": "2300", "name": "إيرادات مؤجَّلة (تايم شير) — قديم، لا يُستخدم في قيود جديدة", "account_type": "liability"},
-        {"code": "4600", "name": "إيرادات عقود التايم شير",      "account_type": "revenue"},
-        {"code": "4650", "name": "إيرادات صيانة عقود التايم شير", "account_type": "revenue"},
+        {"code": "2300", "name": "إيرادات مؤجَّلة (ملكية جزئية) — قديم، لا يُستخدم في قيود جديدة", "account_type": "liability"},
+        {"code": "4600", "name": "إيرادات عقود الملكية الجزئية",      "account_type": "revenue"},
+        {"code": "4650", "name": "إيرادات صيانة عقود الملكية الجزئية", "account_type": "revenue"},
         {"code": "1260", "name": "ذمم مستأجرين (إيجارات)",      "account_type": "asset"},
         {"code": "2150", "name": "تأمينات مستأجرين",            "account_type": "liability"},
         {"code": "4500", "name": "إيرادات إيجارات تجارية",      "account_type": "revenue"},
@@ -551,7 +551,7 @@ def _seed_chart_of_accounts(db: Session) -> None:
         # الخدمة عن الإيراد الصافي (FIN-TAX-01) والرصيد الافتتاحي والأصول.
         {"code": "1120", "name": "حساب وسيط تحصيلات الكارت",     "account_type": "asset"},
         {"code": "1130", "name": "حساب وسيط تحصيلات إلكترونية",  "account_type": "asset"},
-        {"code": "1170", "name": "ذمم أقساط التايم شير",         "account_type": "asset"},
+        {"code": "1170", "name": "ذمم أقساط الملكية الجزئية",         "account_type": "asset"},
         # OPS-DATA-02 §12 Phase 6 (Payroll GL): سلف الموظفين (H-01/H-02) كانت
         # بتتخصم من الراتب من غير أي حساب أصول مقابل — القيد المجمّع كان
         # فعليًا غير متوازن (مدين ≠ دائن) في أي كشف فيه سلفة. راجع
@@ -568,7 +568,7 @@ def _seed_chart_of_accounts(db: Session) -> None:
         {"code": "2165", "name": "رسم خدمة مستحق",                "account_type": "liability"},
         {"code": "2170", "name": "دفعات مقدمة من نزلاء",         "account_type": "liability"},
         {"code": "2180", "name": "مصروفات مستحقة",                "account_type": "liability"},
-        {"code": "2310", "name": "التزام عقود التايم شير",       "account_type": "liability"},
+        {"code": "2310", "name": "التزام عقود الملكية الجزئية",       "account_type": "liability"},
         {"code": "3100", "name": "رأس المال",                     "account_type": "equity"},
         {"code": "3200", "name": "أرباح مرحّلة",                  "account_type": "equity"},
     ]
@@ -646,7 +646,7 @@ def _seed_rooms(db: Session) -> None:
     """⚠️ ترقيم منطقي افتراضي مش أرقام غرف حقيقية موثّقة — لم يوجد أي مصدر
     بيانات فعلي لعدد/ترقيم غرف المنتجع الحقيقي وقت كتابة هذا الكود (2026-07-04).
     قبل هذا التعديل كان جدول rooms فاضي تمامًا (0 صف) رغم وجود 5 room_types
-    حقيقية — يعني حتى حجوزات الفندق العادية (مش بس التايم شير) كانت مستحيلة
+    حقيقية — يعني حتى حجوزات الفندق العادية (مش بس الملكية الجزئية) كانت مستحيلة
     تتربط بغرفة فعلية، وده كان بيمنع أي منع تعارض حجز حقيقي (double-booking)
     على مستوى الغرفة. قرار صاحب المنتجع: ازرع ترقيم منطقي متسلسل دلوقتي
     (مش نأجّله) — 101-110 مفردة، 201-220 مزدوجة، 301-315 ديلوكس بحري،
@@ -756,7 +756,7 @@ def _seed_bookings(db: Session) -> None:
 
 def _seed_timeshare_units(db: Session) -> None:
     """⚠️ نفس ملاحظة _seed_rooms — ترقيم منطقي افتراضي، مش أرقام وحدات
-    حقيقية موثّقة. وحدات التايم شير مبنى/مسكن منفصل فعليًا عن غرف الفندق
+    حقيقية موثّقة. وحدات الملكية الجزئية مبنى/مسكن منفصل فعليًا عن غرف الفندق
     (قرار صاحب المنتجع 2026-07-04) — لذلك جدول منفصل (timeshare_units)
     بترقيم مستقل (A-xxx بدل أرقام الغرف العادية)."""
     from app.modules.timeshare.models import TimeshareUnit
@@ -781,8 +781,8 @@ def _seed_timeshare_units(db: Session) -> None:
 
 
 def _seed_timeshare_contracts(db: Session) -> None:
-    """⚠️ عملاء وعقود تايم شير توضيحية (illustrative sample data) — مش سجلات
-    عملاء حقيقية للمنتجع. الغرض: تشغيل لوحات التايم شير (cs-summary / sales-
+    """⚠️ عملاء وعقود ملكية جزئية توضيحية (illustrative sample data) — مش سجلات
+    عملاء حقيقية للمنتجع. الغرض: تشغيل لوحات الملكية الجزئية (cs-summary / sales-
     dashboard / calendar / upcoming-visits / stats / installments) ببيانات
     متنوّعة واقعية بدل قواعد فاضية. الأسماء مصرية معقولة والأرقام بصيغة
     الموبايل المصري — لكنها مُلفَّقة للعرض فقط.
@@ -1884,7 +1884,7 @@ def _seed_crm(db: Session) -> None:
 
     # ── Call Notes — على أكتر من lead لعرض سجل مكالمات حقيقي ────────────────
     call_note_specs = [
-        ("عمر شريف نبيل", "outbound", 8, "اتصال أول تعريفي بعرض التايم شير، مهتم بمعرفة التفاصيل", "interested", 2),
+        ("عمر شريف نبيل", "outbound", 8, "اتصال أول تعريفي بعرض الملكية الجزئية، مهتم بمعرفة التفاصيل", "interested", 2),
         ("طارق مجدي سيد", "outbound", 15, "شرح تفصيلي للعقد والأقساط، طلب وقت للتفكير", "callback", 1),
         ("طارق مجدي سيد", "inbound", 5, "اتصل يسأل عن حالة العرض المُرسل بالإيميل", "no_decision", 0),
         ("حسام الدين فوزي", "outbound", 6, "أبلغ إنه غير مهتم حاليًا بسبب الميزانية", "not_interested", 8),
@@ -1900,7 +1900,7 @@ def _seed_crm(db: Session) -> None:
     # ── Campaigns ─────────────────────────────────────────────────────────
     campaign_specs = [
         ("عروض الصيف 2026", "social_media", -60, -10, "50000", "72000", 18, "completed"),
-        ("حملة التايم شير الخريفية", "email", -10, 20, "20000", "8500", 6, "active"),
+        ("حملة الملكية الجزئية الخريفية", "email", -10, 20, "20000", "8500", 6, "active"),
         ("معرض السياحة القادم", "event", 15, 20, "35000", "0", 0, "planned"),
     ]
     for name, ctype, start_off, end_off, budget, revenue, leads_gen, status in campaign_specs:
@@ -1915,7 +1915,7 @@ def _seed_crm(db: Session) -> None:
     # ── Opportunities ─────────────────────────────────────────────────────
     db.add(Opportunity(
         branch_id=branch.id, customer_id=customers["محمود عادل حلمي"].id,
-        title="تجديد عضوية VIP + وحدة تايم شير إضافية", product_type="timeshare",
+        title="تجديد عضوية VIP + وحدة ملكية جزئية إضافية", product_type="timeshare",
         stage="negotiation", expected_value=Decimal("250000"), probability=60,
         assigned_to=handler_id, expected_close=today + timedelta(days=25),
     ))
@@ -2117,7 +2117,7 @@ def _seed_suppliers_and_purchase_orders(db: Session) -> None:
 
     # (2) sent — اترسل للمورد، لسه منتظر التسليم (مفيش حالة "sent" service-level
     # فعلية في النظام، بس الـ status نفسه معرّف في الموديل — نفس نمط seed
-    # بيانات تايم شير "suspended" اللي اتحطّت مباشرة برضو)
+    # بيانات ملكية جزئية "suspended" اللي اتحطّت مباشرة برضو)
     po_sent = _po(suppliers[1], [(products[2], Decimal("20"))], ordered_days_ago=3)
     po_sent.status = "sent"
 

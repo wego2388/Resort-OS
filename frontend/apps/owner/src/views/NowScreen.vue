@@ -25,7 +25,7 @@ type ListKey = 'b2b' | 'timeshare' | 'credit' | null
 const openList = ref<ListKey>(null)
 const listTitle: Record<Exclude<ListKey, null>, string> = {
   b2b: 'كل ذمم فنادق B2B',
-  timeshare: 'كل ذمم التايم شير المتأخرة',
+  timeshare: 'كل ذمم الملكية الجزئية المتأخرة',
   credit: 'كل الحسابات الآجلة',
 }
 
@@ -163,9 +163,9 @@ const spark = computed(() => {
         </div>
       </div>
 
-      <!-- A-5: ذمم تايم شير -->
-      <div class="owner-card" role="region" aria-label="ذمم تايم شير">
-        <div class="section-label">ذمم تايم شير</div>
+      <!-- A-5: ذمم ملكية جزئية -->
+      <div class="owner-card" role="region" aria-label="ذمم ملكية جزئية">
+        <div class="section-label">ذمم ملكية جزئية</div>
         
         <div class="metric-value text-owner-red mb-4">
           {{ formatMoney(data.timeshare_total_overdue) }}

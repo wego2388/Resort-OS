@@ -332,7 +332,7 @@ class TestGuestReviewInsights:
         assert resp.json()["category_breakdown"] == []
 
     def test_timeshare_visit_survey_token_and_submit(self, client: TestClient, db, manager_headers):
-        """مسار مواز لـ survey-token/{booking_id} — لكن لزيارة تايم شير بدل
+        """مسار مواز لـ survey-token/{booking_id} — لكن لزيارة ملكية جزئية بدل
         حجز فندقي (GET /analytics/reviews/survey-token/timeshare/{visit_id}).
         نفس شكل الاستجابة بالظبط، ونفس POST /analytics/reviews/submit."""
         from decimal import Decimal
@@ -345,8 +345,8 @@ class TestGuestReviewInsights:
         db.add(unit); db.commit()
 
         contract = ts_services.create_contract(db, TimeshareContractCreate(
-            branch_id=branch.id, customer_name="عميل تايم شير", room_type="Studio", unit_capacity=2,
-            total_value=Decimal("120000"), down_payment=Decimal("20000"),
+            branch_id=branch.id, customer_name="عميل ملكية جزئية", room_type="Studio", unit_capacity=2,
+            total_value=Decimal("120000"), down_payment=Decimal("0"),
             installments=12, installment_period=1,
             first_installment_date=date(2026, 8, 1),
             partner_share_pct=Decimal("0"), start_date=date(2026, 7, 1),
@@ -368,7 +368,7 @@ class TestGuestReviewInsights:
         submit_resp = client.post(
             "/api/v1/analytics/reviews/submit",
             params={"token": token},
-            json={"guest_name": "عميل تايم شير", "overall_rating": 5, "comment": "ممتاز"},
+            json={"guest_name": "عميل ملكية جزئية", "overall_rating": 5, "comment": "ممتاز"},
         )
         assert submit_resp.status_code == 200, submit_resp.text
 
@@ -411,8 +411,8 @@ class TestGuestReviewInsights:
         unit = TimeshareUnit(branch_id=real_branch.id, unit_number="A-103", unit_type="Studio")
         db.add(unit); db.commit()
         contract = ts_services.create_contract(db, TimeshareContractCreate(
-            branch_id=real_branch.id, customer_name="عميل تايم شير آخر", room_type="Studio", unit_capacity=2,
-            total_value=Decimal("120000"), down_payment=Decimal("20000"),
+            branch_id=real_branch.id, customer_name="عميل ملكية جزئية آخر", room_type="Studio", unit_capacity=2,
+            total_value=Decimal("120000"), down_payment=Decimal("0"),
             installments=12, installment_period=1,
             first_installment_date=date(2026, 8, 1),
             partner_share_pct=Decimal("0"), start_date=date(2026, 7, 1),
@@ -446,9 +446,9 @@ class TestGuestReviewInsights:
         db.add(unit); db.commit()
 
         contract = ts_services.create_contract(db, TimeshareContractCreate(
-            branch_id=branch.id, customer_name="عميل تايم شير", room_type="Studio", unit_capacity=2,
+            branch_id=branch.id, customer_name="عميل ملكية جزئية", room_type="Studio", unit_capacity=2,
             customer_phone="+201001234567",
-            total_value=Decimal("120000"), down_payment=Decimal("20000"),
+            total_value=Decimal("120000"), down_payment=Decimal("0"),
             installments=12, installment_period=1,
             first_installment_date=date(2026, 8, 1),
             partner_share_pct=Decimal("0"), start_date=date(2026, 7, 1),

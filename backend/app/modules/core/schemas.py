@@ -272,14 +272,14 @@ class StaffUserCreate(BaseModel):
     role: Literal[
         "admin", "accountant", "hr_manager", "manager", "supervisor",
         "receptionist", "cashier", "waiter", "chef", "kitchen",
-        # timeshare_agent (level=25): موظف تايم شير متخصص — راجع
+        # timeshare_agent (level=25): موظف ملكية جزئية متخصص — راجع
         # app.core.deps.get_timeshare_user وapp.modules.timeshare.api.router
         # للـworkflow الكامل (الدور والصلاحيات كانوا موجودين بالكامل من قبل،
         # بس مالوش أي طريقة فعلية ينضاف بيها حساب بيه — باج حقيقي اتصلح
         # 2026-08-03). دلوقتي بيتنشأ عادةً عبر POST /timeshare/staff
         # (timeshare_admin) مش هنا، بس السطر ده لسه لازم عشان super_admin
         # يقدر ينشئ أول حساب لو محتاج.
-        # timeshare_admin (level=55): تحكم كامل في وحدة التايم شير، معزول
+        # timeshare_admin (level=55): تحكم كامل في وحدة الملكية الجزئية، معزول
         # عن باقي المنتجع بالكامل — راجع app.core.deps.get_timeshare_admin_user.
         "timeshare_agent", "timeshare_admin", "employee",
     ]

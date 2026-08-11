@@ -335,9 +335,18 @@ def cancel_salary_advance(
         core_services.assert_branch_access(
             db, user, advance.branch_id, "إلغاء سلفة موظف",
         )
-        return services.cancel_salary_advance(db, advance_id, data.reason)
+        return services.cancel_salary_advance(
+            db,
+            advance_id,
+            data.reason,
+            cancelled_by=user.id,
+        )
     except PermissionError as exc:
         raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+    except FinancialConfigurationError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {
+            "code": "FINANCIAL_CONFIGURATION_ERROR", "message": str(exc),
+        })
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 

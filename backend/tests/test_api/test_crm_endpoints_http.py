@@ -349,7 +349,7 @@ class TestOpportunitiesEndpoints:
         create_resp = client.post(
             "/api/v1/crm/opportunities",
             json={
-                "branch_id": branch.id, "customer_id": customer["id"], "title": "بيع وحدة تايم شير",
+                "branch_id": branch.id, "customer_id": customer["id"], "title": "بيع وحدة ملكية جزئية",
                 "product_type": "timeshare", "expected_value": "50000.00",
             },
             headers=waiter_headers,

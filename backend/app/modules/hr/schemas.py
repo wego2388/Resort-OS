@@ -230,7 +230,7 @@ class AttendanceImportResult(BaseModel):
     """POST /hr/attendance/import-excel — نتيجة استيراد ملف حضور Excel
     (wagdy.md H-07). imported = عدد خلايا (موظف × يوم) اتحوّلت لسجل حضور
     حقيقي بنجاح (إنشاء أو تحديث — upsert، مش رفض التكرار). errors محدودة
-    بـ 20 سطر (نفس نمط استيراد عقود التايم شير) عشان الرد ميضخمش على ملف
+    بـ 20 سطر (نفس نمط استيراد عقود الملكية الجزئية) عشان الرد ميضخمش على ملف
     فيه مشاكل كتير. unmatched_employees = القيم في عمود تعريف الموظف (كود
     أو اسم) اللي مالقتلهاش أي Employee مطابق في الفرع — أكتر سبب واقعي
     للفشل الجزئي، فبتترجع صريحة بدل ما تتخبّى جوه errors العامة."""
@@ -278,6 +278,8 @@ class SalaryAdvanceRead(BaseModel):
     notes:                     Optional[str]
     created_by:                int
     created_at:                datetime
+    cancelled_by:              Optional[int] = None
+    cancelled_at:              Optional[datetime] = None
 
 
 class SalaryAdvanceCancel(BaseModel):

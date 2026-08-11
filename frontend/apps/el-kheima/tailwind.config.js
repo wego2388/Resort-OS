@@ -13,7 +13,7 @@ export default {
   // presets، وdsPreset بعده — presets بتتدمج بالترتيب ده فعليًا (defaultTheme
   // أساس، dsPreset extend عليه، بعدين theme.extend تحت ده extend نهائي).
   presets: [defaultTheme, dsPreset],
-  // ⚠️ باج حقيقي اتكشف أثناء اختبار حي لشاشة التايم شير: content مكنش شامل
+  // ⚠️ باج حقيقي اتكشف أثناء اختبار حي لشاشة الملكية الجزئية: content مكنش شامل
   // '../../packages/ui/src' (@resort-os/ui — مصدر مباشر، مفيش build step،
   // مكوّناته بتتحمّل زي أي كود تاني في المشروع). يعني أي Tailwind class
   // مستخدمة بس جوه مكوّنات الباكدج المشتركة (ToastContainer، ConfirmDialogContainer)

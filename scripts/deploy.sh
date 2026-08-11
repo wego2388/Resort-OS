@@ -85,6 +85,8 @@ fi
 log "Step 2/5 — تحديث origin/$DEPLOY_BRANCH"
 git fetch origin "$DEPLOY_BRANCH" || err "git fetch فشل"
 git merge --ff-only "origin/$DEPLOY_BRANCH" || err "التحديث ليس fast-forward؛ لا نشر تلقائي"
+RESORT_RELEASE_SHA="$(git rev-parse HEAD)"
+export RESORT_RELEASE_SHA
 
 CURRENT_COMMIT=$(git log --oneline -1)
 log "آخر commit: $CURRENT_COMMIT"

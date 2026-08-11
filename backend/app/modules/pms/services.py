@@ -408,7 +408,7 @@ def checkin_booking(
     # بيتضاعف تقريبًا لأي إقامة بتعدّي دورة Night Audit واحدة على الأقل،
     # وذمم الفوليو 1150 كانت بتفضل عندها رصيد متبقي دايم بعد كل checkout
     # لأن checkout_booking بيسوّي بس قيمة total_rate مرة واحدة). راجع §18
-    # في CLAUDE.md — التصميم النهائي (تمييز إيراد التايم شير عن إيراد
+    # في CLAUDE.md — التصميم النهائي (تمييز إيراد الملكية الجزئية عن إيراد
     # الحجز الفندقي في نفس الحساب) لسه محتاج مراجعة صريحة مع Mohamed.
 
     db.commit()
@@ -639,13 +639,44 @@ def request_early_late(db: Session, booking_id: int, data: "EarlyLateRequest") -
                 # في الإنتاج من أول ما الميزة دي اتعملت — الحجز كان بيتحدّث
                 # (extra_charge/total_rate) لكن الفوليو نفسه كان يفضل زي ما
                 # هو. اتصلح بإضافة posted_at (نفس نمط beach/dining).
-                finance_services.add_folio_charge(db, booking.folio_id, FolioChargeCreate(
+                charge = finance_services.add_folio_charge(db, booking.folio_id, FolioChargeCreate(
                     description=label,
                     amount=data.charge,
                     charge_type="room_extra",
                     posted_at=datetime.utcnow(),
                     ref_order_id=None,
                 ))
+                # ⚠️ باج محاسبي حقيقي كان هنا (اتصلح 2026-08-11، §5): الشحنة
+                # كانت بتتسجّل على الفوليو وتتحصّل فعليًا وقت الـcheckout
+                # (جزء من booking.total_rate اللي checkout settlement بيقفلها)
+                # لكن من غير أي قيد إيراد يترحّل وقت تسجيل الرسم نفسه — بعكس
+                # beach/dining اللي بترحّل Dr.1150/Cr.إيراد الموديول وقت
+                # "الشحن على الغرفة" مباشرة. النتيجة: كاش بيتحصّل فعليًا آخر
+                # الإقامة من غير أي إيراد مقابل معترف بيه محاسبيًا خالص —
+                # حساب 1150 (ذمم الفوليو) كان بيتقفل بمبلغ أكبر مما اتقيّد
+                # فيه فعليًا. بيترحّل هنا Dr.1150/Cr.4100 (نفس حساب إيراد
+                # الغرف اللي Night Audit بيستخدمه — الرسم ده إيراد غرفة
+                # بطبيعته، مش نوع منفصل) وقت تسجيل الرسم نفسه، مش وقت
+                # الـcheckout — يمنع الازدواج مع Night Audit (اللي بيحسب
+                # room_revenue من BookingRoom.daily_rate بس، من غير
+                # extra_charge خالص) ومع تسوية الـcheckout (اللي تسوية ذمة
+                # فقط، مش ترحيل إيراد). source_id=charge.id (مفتاح فريد لكل
+                # استدعاء فعلي — request_early_late بيسمح بتكرار النداء
+                # وبيجمّع الرسوم، مش بيستبدلها، فكل رسم جديد له قيد منفصل
+                # مربوط بصف الشحنة بتاعه بالظبط — idempotent بطبيعته).
+                from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
+                from app.resort_os.timezone_utils import local_today  # noqa: PLC0415
+
+                post_simple_revenue_journal(
+                    db, booking.branch_id, local_today(settings.TIMEZONE),
+                    debit_account_code="1150", credit_account_code="4100",
+                    amount=data.charge,
+                    reference=f"PMS-EL-{booking.booking_number}-{charge.id}",
+                    description=f"إيراد {label} — {booking.booking_number}",
+                    source="pms_early_late", source_id=charge.id,
+                    cost_center_code="ROOM",
+                    strict=True, commit_cost_centers=False,
+                )
             except Exception:
                 db.rollback()
                 raise

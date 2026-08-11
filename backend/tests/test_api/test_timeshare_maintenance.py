@@ -1,13 +1,13 @@
 """
 tests/test_api/test_timeshare_maintenance.py
-اختبارات نظام رسوم الصيانة السنوية لعقود التايم شير (2026-07-26) — تفعيل
+اختبارات نظام رسوم الصيانة السنوية لعقود الملكية الجزئية (2026-07-26) — تفعيل
 TimeshareContract.maintenance_fee/maintenance_increase الخاملَين + استحقاق/
 تحصيل/قيد محاسبي/تجميد حجز حقيقي، مربوط بنموذج الحجز الداخلي الرسمي اللي
 بيشترط سداد الصيانة لتأكيد أي حجز أسبوع سنوي.
 """
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -27,6 +27,12 @@ def branch(db: Session):
     from app.modules.core.models import Branch
     b = Branch(name="Test", name_ar="اختبار", code=f"TSM-{uuid.uuid4().hex[:6].upper()}")
     db.add(b); db.flush()
+    from app.modules.finance.models import CashierShift
+    db.add(CashierShift(
+        branch_id=b.id, cashier_id=1, opened_by=1,
+        opened_at=datetime.utcnow(), opening_float=Decimal("0"), status="open",
+    ))
+    db.flush()
     return b
 
 
@@ -151,7 +157,7 @@ class TestAnnualBatchGeneration:
 
     def test_cancelled_contract_skipped(self, db, branch):
         contract = make_contract_with_maintenance(db, branch, contract_date=date(2026, 1, 10))
-        services.cancel_contract(db, contract.id, Decimal("0"))
+        services.cancel_contract(db, contract.id, Decimal("0"), cancelled_by=1)
         created = _generate_annual_maintenance_dues(db, branch.id, 2027)
         db.commit()
         assert created == 0
@@ -163,7 +169,7 @@ class TestPayMaintenanceDue:
         contract = make_contract_with_maintenance(db, branch, contract_date=date(2026, 1, 10))
         due = crud.list_maintenance_dues(db, contract.id)[0]
         req = PayMaintenanceDueRequest(paid_amount=due.amount, payment_method="cash", receipt_number="R-1")
-        paid = services.pay_maintenance_due(db, due.id, req)
+        paid = services.pay_maintenance_due(db, due.id, req, collected_by=1)
         assert paid.status == "paid"
         assert paid.paid_amount == due.amount
 
@@ -171,7 +177,7 @@ class TestPayMaintenanceDue:
         contract = make_contract_with_maintenance(db, branch, contract_date=date(2026, 1, 10))
         due = crud.list_maintenance_dues(db, contract.id)[0]
         paid = services.pay_maintenance_due(
-            db, due.id, PayMaintenanceDueRequest(paid_amount=due.amount / 2, payment_method="cash"),
+            db, due.id, PayMaintenanceDueRequest(paid_amount=due.amount / 2, payment_method="cash"), collected_by=1,
         )
         assert paid.status == "partial"
 
@@ -181,24 +187,24 @@ class TestPayMaintenanceDue:
         with pytest.raises(ValueError, match="أكبر من المتبقي"):
             services.pay_maintenance_due(
                 db, due.id,
-                PayMaintenanceDueRequest(paid_amount=due.amount + Decimal("500"), payment_method="cash"),
+                PayMaintenanceDueRequest(paid_amount=due.amount + Decimal("500"), payment_method="cash"), collected_by=1,
             )
 
     def test_cannot_pay_on_cancelled_contract(self, db, branch):
         contract = make_contract_with_maintenance(db, branch, contract_date=date(2026, 1, 10))
         due = crud.list_maintenance_dues(db, contract.id)[0]
-        services.cancel_contract(db, contract.id, Decimal("0"))
+        services.cancel_contract(db, contract.id, Decimal("0"), cancelled_by=1)
         with pytest.raises(ValueError, match="ملغي"):
             services.pay_maintenance_due(
-                db, due.id, PayMaintenanceDueRequest(paid_amount=due.amount, payment_method="cash"),
+                db, due.id, PayMaintenanceDueRequest(paid_amount=due.amount, payment_method="cash"), collected_by=1,
             )
 
     def test_already_paid_due_rejected(self, db, branch):
         contract = make_contract_with_maintenance(db, branch, contract_date=date(2026, 1, 10))
         due = crud.list_maintenance_dues(db, contract.id)[0]
-        services.pay_maintenance_due(db, due.id, PayMaintenanceDueRequest(paid_amount=due.amount, payment_method="cash"))
+        services.pay_maintenance_due(db, due.id, PayMaintenanceDueRequest(paid_amount=due.amount, payment_method="cash"), collected_by=1)
         with pytest.raises(ValueError, match="مدفوع"):
-            services.pay_maintenance_due(db, due.id, PayMaintenanceDueRequest(paid_amount=due.amount, payment_method="cash"))
+            services.pay_maintenance_due(db, due.id, PayMaintenanceDueRequest(paid_amount=due.amount, payment_method="cash"), collected_by=1)
 
     def test_pay_maintenance_due_posts_journal_entry_to_4650(self, db, branch):
         """4650 منفصل عمدًا عن 4600 (إيراد سعر الشراء) — رسم خدمة سنوي
@@ -208,7 +214,7 @@ class TestPayMaintenanceDue:
         due = crud.list_maintenance_dues(db, contract.id)[0]
 
         services.pay_maintenance_due(
-            db, due.id, PayMaintenanceDueRequest(paid_amount=due.amount, payment_method="cash"),
+            db, due.id, PayMaintenanceDueRequest(paid_amount=due.amount, payment_method="cash"), collected_by=1,
         )
 
         entries, _total = finance_crud.list_journal_entries(db, branch.id, source="timeshare")
@@ -240,7 +246,7 @@ class TestFreezeUnfreezeInteraction:
 
         # سداد كل الأقساط (اللي مش متأخرة أصلاً) ميفكّش التجميد
         for inst in contract.installments_list:
-            services.pay_installment(db, inst.id, PayInstallmentRequest(paid_amount=inst.amount, payment_method="cash"))
+            services.pay_installment(db, inst.id, PayInstallmentRequest(paid_amount=inst.amount, payment_method="cash"), collected_by=1)
         db.refresh(contract)
         assert contract.booking_frozen is True
 
@@ -250,7 +256,7 @@ class TestFreezeUnfreezeInteraction:
         db.commit()
         db.refresh(due)
 
-        services.pay_maintenance_due(db, due.id, PayMaintenanceDueRequest(paid_amount=due.amount, payment_method="cash"))
+        services.pay_maintenance_due(db, due.id, PayMaintenanceDueRequest(paid_amount=due.amount, payment_method="cash"), collected_by=1)
         db.refresh(contract)
         assert contract.booking_frozen is False
 
@@ -265,12 +271,12 @@ class TestFreezeUnfreezeInteraction:
         assert contract.booking_frozen is True
 
         overdue_inst = next(i for i in contract.installments_list if i.status == "overdue")
-        services.pay_installment(db, overdue_inst.id, PayInstallmentRequest(paid_amount=overdue_inst.amount, payment_method="cash"))
+        services.pay_installment(db, overdue_inst.id, PayInstallmentRequest(paid_amount=overdue_inst.amount, payment_method="cash"), collected_by=1)
         db.refresh(contract)
         assert contract.booking_frozen is True, "لسه الصيانة متأخرة — ميفكّش"
 
         db.refresh(due)
-        services.pay_maintenance_due(db, due.id, PayMaintenanceDueRequest(paid_amount=due.amount, payment_method="cash"))
+        services.pay_maintenance_due(db, due.id, PayMaintenanceDueRequest(paid_amount=due.amount, payment_method="cash"), collected_by=1)
         db.refresh(contract)
         assert contract.booking_frozen is False
 
@@ -292,7 +298,7 @@ class TestPayInstallmentUnfreezeBugFix:
 
         # دفعة جزئية بس — القسط يبقى "partial" (لسه متأخر فعليًا) مش "paid"
         services.pay_installment(
-            db, inst.id, PayInstallmentRequest(paid_amount=inst.amount / 2, payment_method="cash"),
+            db, inst.id, PayInstallmentRequest(paid_amount=inst.amount / 2, payment_method="cash"), collected_by=1,
         )
         db.refresh(contract)
         assert contract.booking_frozen is True, (
@@ -316,7 +322,7 @@ class TestListMaintenanceDuesForBranch:
     def test_filters_by_status(self, db, branch):
         contract = make_contract_with_maintenance(db, branch, contract_date=date(2026, 1, 10))
         due = crud.list_maintenance_dues(db, contract.id)[0]
-        services.pay_maintenance_due(db, due.id, PayMaintenanceDueRequest(paid_amount=due.amount, payment_method="cash"))
+        services.pay_maintenance_due(db, due.id, PayMaintenanceDueRequest(paid_amount=due.amount, payment_method="cash"), collected_by=1)
 
         result = services.list_maintenance_dues_for_branch(db, branch.id, status="paid")
         assert result["total"] == 1
@@ -349,7 +355,7 @@ class TestCreateVisitRejectsForMaintenanceOverdue:
 
         visit_data = TimeshareVisitCreate(
             branch_id=branch.id, contract_id=contract.id,
-            check_in=date(2027, 8, 1), check_out=date(2027, 8, 8),
+            check_in=date(2027, 8, 1), check_out=date(2027, 8, 8), collected_by=1,
         )
         with pytest.raises(ValueError, match="رسوم صيانة متأخرة"):
             services.create_visit(db, visit_data)

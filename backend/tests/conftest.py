@@ -535,9 +535,9 @@ def waiter_headers(setup_db) -> dict[str, str]:
 @pytest.fixture
 def timeshare_admin_headers(setup_db) -> dict[str, str]:
     # timeshare_admin (2026-08-03) — بديل manager_headers لكل تستات وحدة
-    # التايم شير بعد ما بقت معزولة تمامًا عن هرمية الأدوار العامة (راجع
+    # الملكية الجزئية بعد ما بقت معزولة تمامًا عن هرمية الأدوار العامة (راجع
     # app.core.deps.get_timeshare_admin_user). manager_headers العادي
-    # مبقاش عنده أي وصول للتايم شير خالص، حتى لو مستواه العام أعلى.
+    # مبقاش عنده أي وصول للملكية جزئية خالص، حتى لو مستواه العام أعلى.
     _create_test_user("timeshare-admin@test.local", "timeshare_admin")
     return {"Authorization": f"Bearer {_make_token('timeshare-admin@test.local')}"}
 

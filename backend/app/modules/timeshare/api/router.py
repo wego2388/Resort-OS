@@ -3,7 +3,7 @@
 نظام الصلاحيات (معزول تمامًا عن باقي المنتجع، طلب Mohamed 2026-08-03 —
 راجع docstring get_timeshare_user/get_timeshare_admin_user في deps.py
 للتفاصيل الكاملة، خصوصًا الباج القديم اللي كان بيدّي أي كاشير/مدير في أي
-موديول وصول تلقائي لبيانات عملاء التايم شير):
+موديول وصول تلقائي لبيانات عملاء الملكية الجزئية):
   - get_timeshare_user       : الحد الأدنى لأي endpoint في الوحدة —
                                 super_admin، أو timeshare_admin، أو
                                 timeshare_agent مع permission صريح بس.
@@ -11,7 +11,7 @@
                                 عاديين مبقاش عندهم وصول تلقائي خالص).
   - get_timeshare_admin_user : عمليات الإدارة (إنشاء/تعديل/إلغاء/نقل وحدة/
                                 تقارير/الموافقة على طلبات الزيارة/إدارة
-                                موظفي التايم شير) — role='timeshare_admin'
+                                موظفي الملكية الجزئية) — role='timeshare_admin'
                                 فقط (أو super_admin)، مش get_manager_user
                                 العام.
   - require_permission       : عمليات حساسة تستحق override فردي
@@ -36,7 +36,7 @@ timeshare_agent workflow:
        timeshare.support_tickets / view    ← عرض تذاكر دعم العملاء
        timeshare.support_tickets / respond ← الرد على تذكرة دعم
   3. العمليات الإدارية (إنشاء عقد، إلغاء، نقل وحدة، تقارير، الموافقة/رفض
-     طلب زيارة، إدارة موظفي التايم شير) تبقى timeshare_admin فقط — طلب
+     طلب زيارة، إدارة موظفي الملكية الجزئية) تبقى timeshare_admin فقط — طلب
      Mohamed صريح: "المسؤول هو اللي يوافق ويحدد الأسبوع".
 
 الإيرادات المالية لسه بترحّل وتظهر للمحاسبة/الإدارة العامة زي ما هي بالظبط
@@ -94,7 +94,7 @@ router = APIRouter(tags=["timeshare"])
 
 def _assert_timeshare_branch(db, user, branch_id: int, action_desc: str) -> None:
     """Gate 4B-style branch isolation — كانت غايبة بالكامل من موديول
-    التايم شير (اتكشف 2026-07-28: get_contract/get_installment/get_visit
+    الملكية الجزئية (اتكشف 2026-07-28: get_contract/get_installment/get_visit
     كل واحد فيهم بيدوّر بالـid بس من غير أي فلترة فرع، ومفيش أي
     assert_branch_access في الراوتر كله). كاشير فرع A كان يقدر يحصّل قسط/
     يلغي عقد/ينقل وحدة فرع B بمجرد تخمين الرقم."""
@@ -121,7 +121,7 @@ def list_contracts(
     search: Optional[str] = Query(None),
     page: int = Query(1, ge=1), size: int = Query(20, ge=1, le=100),
 ):
-    _assert_timeshare_branch(db, user, branch_id, "عرض عقود التايم شير")
+    _assert_timeshare_branch(db, user, branch_id, "عرض عقود الملكية الجزئية")
     items, total = crud.list_contracts(db, branch_id, contract_status, search,
                                        skip=(page - 1) * size, limit=size)
     return PaginatedResponse(total=total, page=page, size=size,
@@ -132,9 +132,14 @@ def list_contracts(
              status_code=status.HTTP_201_CREATED,
              dependencies=[Depends(require_permission("timeshare.contracts", "create", min_role_level=55))])
 def create_contract(data: TimeshareContractCreate, db: DbDep, user=Depends(get_timeshare_admin_user)):
-    _assert_timeshare_branch(db, user, data.branch_id, "إنشاء عقد تايم شير")
+    _assert_timeshare_branch(db, user, data.branch_id, "إنشاء عقد ملكية جزئية")
     try:
-        return services.create_contract(db, data, signed_by=user.id)
+        return services.create_contract(
+            db,
+            data,
+            signed_by=user.id,
+            collection_actor_id=user.id,
+        )
     except FinancialConfigurationError as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {
             "code": "FINANCIAL_CONFIGURATION_ERROR", "message": str(exc),
@@ -146,7 +151,7 @@ def create_contract(data: TimeshareContractCreate, db: DbDep, user=Depends(get_t
 @router.get("/timeshare/contracts/{contract_id}", response_model=TimeshareContractRead)
 def get_contract(contract_id: int, db: DbDep, user=Depends(get_timeshare_user)):
     c = _get_contract_or_404(db, contract_id)
-    _assert_timeshare_branch(db, user, c.branch_id, "عرض عقد تايم شير")
+    _assert_timeshare_branch(db, user, c.branch_id, "عرض عقد ملكية جزئية")
     return TimeshareContractRead.model_validate(c)
 
 
@@ -155,9 +160,9 @@ def get_contract(contract_id: int, db: DbDep, user=Depends(get_timeshare_user)):
 def update_contract(contract_id: int, data: TimeshareContractUpdate, db: DbDep,
                     user=Depends(get_timeshare_admin_user)):
     c = _get_contract_or_404(db, contract_id)
-    _assert_timeshare_branch(db, user, c.branch_id, "تعديل عقد تايم شير")
+    _assert_timeshare_branch(db, user, c.branch_id, "تعديل عقد ملكية جزئية")
     try:
-        return services.update_contract(db, contract_id, data)
+        return services.update_contract(db, contract_id, data, updated_by=user.id)
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
@@ -174,7 +179,7 @@ def list_installments(
     search: Optional[str] = Query(None),
     limit: int = Query(200, ge=1, le=1000),
 ):
-    _assert_timeshare_branch(db, user, branch_id, "عرض أقساط التايم شير")
+    _assert_timeshare_branch(db, user, branch_id, "عرض أقساط الملكية الجزئية")
     result = services.list_installments(db, branch_id, status_filter, contract_id, month, search, limit)
     installments = []
     for i in result["installments"]:
@@ -198,9 +203,9 @@ def pay_installment(inst_id: int, req: PayInstallmentRequest, db: DbDep,
     inst = crud.get_installment(db, inst_id)
     if not inst:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"القسط {inst_id} غير موجود")
-    _assert_timeshare_branch(db, user, inst.contract.branch_id, "تحصيل قسط تايم شير")
+    _assert_timeshare_branch(db, user, inst.contract.branch_id, "تحصيل قسط ملكية جزئية")
     try:
-        return services.pay_installment(db, inst_id, req)
+        return services.pay_installment(db, inst_id, req, collected_by=user.id)
     except services.PaymentConflictError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
     except FinancialConfigurationError as exc:
@@ -282,7 +287,7 @@ def pay_maintenance_due(due_id: int, req: PayMaintenanceDueRequest, db: DbDep,
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"مستحق الصيانة {due_id} غير موجود")
     _assert_timeshare_branch(db, user, due.contract.branch_id, "تحصيل مستحق صيانة")
     try:
-        return services.pay_maintenance_due(db, due_id, req)
+        return services.pay_maintenance_due(db, due_id, req, collected_by=user.id)
     except services.PaymentConflictError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
     except FinancialConfigurationError as exc:
@@ -446,7 +451,7 @@ def update_waitlist_status(
 @router.get("/timeshare/contracts/{contract_id}/pdf", response_model=None)
 def download_contract_pdf(contract_id: int, db: DbDep, user=Depends(get_timeshare_user)):
     c = _get_contract_or_404(db, contract_id)
-    _assert_timeshare_branch(db, user, c.branch_id, "تحميل PDF عقد تايم شير")
+    _assert_timeshare_branch(db, user, c.branch_id, "تحميل PDF عقد ملكية جزئية")
     try:
         pdf = services.generate_contract_pdf(db, contract_id)
         return Response(
@@ -490,7 +495,7 @@ def get_calendar(
     db: DbDep, user=Depends(get_timeshare_user),
     branch_id: int = Query(...), year: Optional[int] = Query(None),
 ):
-    _assert_timeshare_branch(db, user, branch_id, "عرض كالندر التايم شير")
+    _assert_timeshare_branch(db, user, branch_id, "عرض كالندر الملكية الجزئية")
     return services.get_calendar(db, branch_id, year)
 
 
@@ -518,7 +523,7 @@ def get_upcoming_visits(
 
 @router.get("/timeshare/stats", response_model=None)
 def get_stats(db: DbDep, user=Depends(get_timeshare_user), branch_id: int = Query(...)):
-    _assert_timeshare_branch(db, user, branch_id, "عرض إحصائيات التايم شير")
+    _assert_timeshare_branch(db, user, branch_id, "عرض إحصائيات الملكية الجزئية")
     return services.get_stats(db, branch_id)
 
 
@@ -531,9 +536,15 @@ def cancel_contract(
     user=Depends(get_timeshare_admin_user),
 ):
     c = _get_contract_or_404(db, contract_id)
-    _assert_timeshare_branch(db, user, c.branch_id, "إلغاء عقد تايم شير")
+    _assert_timeshare_branch(db, user, c.branch_id, "إلغاء عقد ملكية جزئية")
     try:
-        return services.cancel_contract(db, contract_id, data.cancel_amount, cancelled_by=user.id)
+        return services.cancel_contract(
+            db,
+            contract_id,
+            data.cancel_amount,
+            refund_method=data.refund_method,
+            cancelled_by=user.id,
+        )
     except FinancialConfigurationError as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {
             "code": "FINANCIAL_CONFIGURATION_ERROR", "message": str(exc),
@@ -548,7 +559,7 @@ def transfer_unit(
     user=Depends(get_timeshare_admin_user),
 ):
     c = _get_contract_or_404(db, contract_id)
-    _assert_timeshare_branch(db, user, c.branch_id, "نقل وحدة عقد تايم شير")
+    _assert_timeshare_branch(db, user, c.branch_id, "نقل وحدة عقد ملكية جزئية")
     try:
         return services.transfer_unit(db, contract_id, data, transferred_by=user.id)
     except ValueError as exc:
@@ -564,7 +575,7 @@ def list_visits(
     contract_id: Optional[int] = Query(None),
     status_filter: Optional[str] = Query(None, alias="status"),
 ):
-    _assert_timeshare_branch(db, user, branch_id, "عرض زيارات التايم شير")
+    _assert_timeshare_branch(db, user, branch_id, "عرض زيارات الملكية الجزئية")
     return [TimeshareVisitRead.model_validate(v) for v in crud.list_visits(db, branch_id, contract_id, status_filter)]
 
 
@@ -572,7 +583,7 @@ def list_visits(
              status_code=status.HTTP_201_CREATED,
              dependencies=[Depends(require_permission("timeshare.visits", "create", min_role_level=40))])
 def create_visit(data: TimeshareVisitCreate, db: DbDep, user=Depends(get_timeshare_user)):
-    _assert_timeshare_branch(db, user, data.branch_id, "إنشاء زيارة تايم شير")
+    _assert_timeshare_branch(db, user, data.branch_id, "إنشاء زيارة ملكية جزئية")
     try:
         return services.create_visit(db, data)
     except services.VisitConflictError as exc:
@@ -588,7 +599,7 @@ def update_visit(visit_id: int, data: TimeshareVisitUpdate, db: DbDep,
     visit = crud.get_visit(db, visit_id)
     if not visit:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"الزيارة {visit_id} غير موجودة")
-    _assert_timeshare_branch(db, user, visit.branch_id, "تعديل زيارة تايم شير")
+    _assert_timeshare_branch(db, user, visit.branch_id, "تعديل زيارة ملكية جزئية")
     try:
         return services.update_visit(db, visit_id, data)
     except ValueError as exc:
@@ -604,7 +615,7 @@ def list_units(
     unit_type: Optional[str] = Query(None),
     status_filter: Optional[str] = Query(None, alias="status"),
 ):
-    _assert_timeshare_branch(db, user, branch_id, "عرض وحدات التايم شير")
+    _assert_timeshare_branch(db, user, branch_id, "عرض وحدات الملكية الجزئية")
     return [TimeshareUnitRead.model_validate(u) for u in crud.list_units(db, branch_id, unit_type, status_filter)]
 
 
@@ -613,7 +624,7 @@ def list_units(
 def create_unit(data: TimeshareUnitCreate, db: DbDep, user=Depends(get_timeshare_admin_user)):
     """2026-08-03: مخزون الوحدات كان بدون أي مسار إنشاء خالص — وحدة جديدة
     كانت تحتاج تعديل مباشر في قاعدة البيانات."""
-    _assert_timeshare_branch(db, user, data.branch_id, "إضافة وحدة تايم شير")
+    _assert_timeshare_branch(db, user, data.branch_id, "إضافة وحدة ملكية جزئية")
     try:
         return services.create_unit(db, data)
     except ValueError as exc:
@@ -625,7 +636,7 @@ def update_unit(unit_id: int, data: TimeshareUnitUpdate, db: DbDep, user=Depends
     unit = crud.get_unit(db, unit_id)
     if not unit:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "الوحدة غير موجودة")
-    _assert_timeshare_branch(db, user, unit.branch_id, "تعديل وحدة تايم شير")
+    _assert_timeshare_branch(db, user, unit.branch_id, "تعديل وحدة ملكية جزئية")
     try:
         return services.update_unit(db, unit_id, data)
     except ValueError as exc:
@@ -639,7 +650,7 @@ def list_unit_pairs(
     db: DbDep, user=Depends(get_timeshare_user),
     branch_id: int = Query(...), active_only: bool = Query(True),
 ):
-    _assert_timeshare_branch(db, user, branch_id, "عرض أزواج وحدات التايم شير")
+    _assert_timeshare_branch(db, user, branch_id, "عرض أزواج وحدات الملكية الجزئية")
     return crud.list_unit_pairs(db, branch_id, active_only)
 
 
@@ -648,7 +659,7 @@ def list_unit_pairs(
 def create_unit_pair(data: TimeshareUnitPairCreate, db: DbDep, user=Depends(get_timeshare_admin_user)):
     """ربط شاليه+استوديو كزوج Family Compound معتمد — لازم قبل أي زيارة
     استحقاق فعلية لعقد سعة 6 (راجع services._create_entitlement_pair_visit)."""
-    _assert_timeshare_branch(db, user, data.branch_id, "إضافة زوج وحدات تايم شير")
+    _assert_timeshare_branch(db, user, data.branch_id, "إضافة زوج وحدات ملكية جزئية")
     try:
         return services.create_unit_pair(db, data)
     except ValueError as exc:
@@ -661,7 +672,7 @@ def deactivate_unit_pair(pair_id: int, db: DbDep, user=Depends(get_timeshare_adm
     pair = crud.get_unit_pair(db, pair_id)
     if not pair:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"زوج الوحدات {pair_id} غير موجود")
-    _assert_timeshare_branch(db, user, pair.branch_id, "إلغاء تفعيل زوج وحدات تايم شير")
+    _assert_timeshare_branch(db, user, pair.branch_id, "إلغاء تفعيل زوج وحدات ملكية جزئية")
     try:
         return services.deactivate_unit_pair(db, pair_id)
     except ValueError as exc:
@@ -879,7 +890,7 @@ def reject_visit_request(request_id: int, data: TimeshareVisitRequestReject, db:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
-# ── Support Tickets (خدمة عملاء التايم شير، staff) ───────────────────
+# ── Support Tickets (خدمة عملاء الملكية الجزئية، staff) ───────────────────
 
 @router.get("/timeshare/support-tickets", response_model=list[TimeshareSupportTicketRead],
             dependencies=[Depends(require_permission("timeshare.support_tickets", "view", min_role_level=25))])
@@ -888,7 +899,7 @@ def list_support_tickets(
     branch_id: int = Query(...),
     status_filter: Optional[str] = Query(None, alias="status"),
 ):
-    _assert_timeshare_branch(db, user, branch_id, "عرض تذاكر دعم التايم شير")
+    _assert_timeshare_branch(db, user, branch_id, "عرض تذاكر دعم الملكية الجزئية")
     result = []
     for t in crud.list_support_tickets_for_branch(db, branch_id, status_filter):
         read = TimeshareSupportTicketRead.model_validate(t)
@@ -930,7 +941,7 @@ def update_support_ticket_status(ticket_id: int, data: TimeshareTicketStatusUpda
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Timeshare Staff — مدير التايم شير بيدير موظفي وحدته (طلب Mohamed 2026-08-03).
+# Timeshare Staff — مدير الملكية الجزئية بيدير موظفي وحدته (طلب Mohamed 2026-08-03).
 # timeshare_admin فقط (أو super_admin) — مفيش أي مسار تفويض لـtimeshare_agent
 # نفسه، فمفيش داعي لـrequire_permission override هنا زي باقي الـendpoints —
 # get_timeshare_admin_user وحدها كافية، نفس نمط download_contract_pdf.
@@ -939,7 +950,7 @@ def update_support_ticket_status(ticket_id: int, data: TimeshareTicketStatusUpda
 @router.post("/timeshare/staff", response_model=TimeshareStaffProvisioned,
              status_code=status.HTTP_201_CREATED)
 def create_timeshare_staff(data: TimeshareStaffCreate, db: DbDep, user=Depends(get_timeshare_admin_user)):
-    _assert_timeshare_branch(db, user, data.branch_id, "إنشاء حساب موظف تايم شير")
+    _assert_timeshare_branch(db, user, data.branch_id, "إنشاء حساب موظف ملكية جزئية")
     try:
         return services.provision_timeshare_agent(
             db, email=data.email, full_name=data.full_name, phone=data.phone,
@@ -952,7 +963,7 @@ def create_timeshare_staff(data: TimeshareStaffCreate, db: DbDep, user=Depends(g
 
 @router.get("/timeshare/staff", response_model=list[TimeshareStaffRead])
 def list_timeshare_staff(db: DbDep, user=Depends(get_timeshare_admin_user), branch_id: int = Query(...)):
-    _assert_timeshare_branch(db, user, branch_id, "عرض موظفي التايم شير")
+    _assert_timeshare_branch(db, user, branch_id, "عرض موظفي الملكية الجزئية")
     return [TimeshareStaffRead.model_validate(u) for u in services.list_timeshare_staff(db, branch_id)]
 
 

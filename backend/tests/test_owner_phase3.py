@@ -113,7 +113,7 @@ def test_owner_now_returns_all_seven_metrics(client, db, setup_db):
     assert isinstance(data["b2b_receivables"], list)
     assert "b2b_total_outstanding" in data
 
-    # التحقق من ذمم تايم شير (A-5)
+    # التحقق من ذمم ملكية جزئية (A-5)
     assert "timeshare_receivables" in data
     assert isinstance(data["timeshare_receivables"], list)
     assert "timeshare_total_overdue" in data

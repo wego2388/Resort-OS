@@ -119,7 +119,7 @@ class B2BReceivableItem(BaseModel):
 
 
 class TimeshareReceivableItem(BaseModel):
-    """ذمم تايم شير — أقساط مستحقة اليوم أو متأخرة."""
+    """ذمم ملكية جزئية — أقساط مستحقة اليوم أو متأخرة."""
     contract_id:      int
     total_overdue:    Decimal   = Field(description="مجموع أقساط status IN ('unpaid','overdue') due_date <= today")
     installment_count: int
@@ -169,7 +169,7 @@ class OwnerNowResponse(BaseModel):
     # A-4: ذمم B2B — قائمة مفصّلة بدون بيانات ضيف
     b2b_receivables:        list[B2BReceivableItem]
     b2b_total_outstanding:  Decimal
-    # A-5: ذمم تايم شير
+    # A-5: ذمم ملكية جزئية
     timeshare_receivables:  list[TimeshareReceivableItem]
     timeshare_total_overdue: Decimal
     # A-6: إشغال الغرف الحالي
@@ -658,6 +658,14 @@ class PerformanceBreakdown(BaseModel):
 # (فترة + معرّف العنصر)، مصدر بيانات واحد بس (نفس الجداول المستخدمة في
 # التجميع)، صفر منطق مالي جديد.
 
+class PaginationMeta(BaseModel):
+    """Bounded drill-down pagination metadata; totals always cover all rows."""
+    page:        int = 1
+    size:        int = 50
+    total_items: int = 0
+    total_pages: int = 0
+
+
 class DiningItemTransaction(BaseModel):
     order_id:      int
     order_number:  str
@@ -670,7 +678,7 @@ class DiningItemTransaction(BaseModel):
     ordered_at:    datetime
 
 
-class DiningItemDetailResponse(BaseModel):
+class DiningItemDetailResponse(PaginationMeta):
     """GET /api/v1/owner/sales/item-detail — كل الطلبات اللي فيها صنف معيّن."""
     item_id:       int
     item_name:     str
@@ -691,7 +699,7 @@ class BeachTypeTransaction(BaseModel):
     cashier_name:   Optional[str] = None
 
 
-class BeachTypeDetailResponse(BaseModel):
+class BeachTypeDetailResponse(PaginationMeta):
     """GET /api/v1/owner/beach/type-detail — كل معاملات نوع تذكرة معيّن."""
     tx_type:        str
     period_from:    date
@@ -712,7 +720,7 @@ class ExpenseJournalLine(BaseModel):
     cost_center:  Optional[str] = None
 
 
-class ExpenseDetailResponse(BaseModel):
+class ExpenseDetailResponse(PaginationMeta):
     """GET /api/v1/owner/expense-detail — كل قيود اليومية داخل فئة مصروف معيّنة."""
     account_code:  str
     account_name:  str
@@ -733,7 +741,7 @@ class SupplierPurchaseOrder(BaseModel):
     total_amount: Decimal
 
 
-class SupplierDetailResponse(BaseModel):
+class SupplierDetailResponse(PaginationMeta):
     """GET /api/v1/owner/procurement-detail — كل أوامر الشراء لمورد معيّن."""
     supplier_id:   int
     supplier_name: str
@@ -754,7 +762,7 @@ class ProductMovement(BaseModel):
     notes:          Optional[str] = None
 
 
-class ProductDetailResponse(BaseModel):
+class ProductDetailResponse(PaginationMeta):
     """GET /api/v1/owner/product-detail — حركات مخزون منتج معيّن + الرصيد الحالي."""
     product_id:      int
     product_name:    str

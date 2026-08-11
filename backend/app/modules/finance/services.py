@@ -467,6 +467,58 @@ def _lock_open_shift_or_conflict(db: Session, branch_id: int, cashier_id: int) -
         ) from exc
 
 
+class OpenCashierShiftRequiredError(ValueError):
+    """A live cash receipt/refund cannot exist outside an open drawer shift."""
+
+
+def record_external_payment(
+    db: Session,
+    *,
+    branch_id: int,
+    amount: Decimal,
+    payment_method: str,
+    collector_id: int,
+    reference: str,
+    source: str,
+    source_id: int,
+    require_cash_shift: bool = True,
+) -> Payment:
+    """Record a module receipt/refund in the shared shift ledger.
+
+    Only physical cash belongs to a drawer. Card and bank transfers retain the
+    real collector for auditability but are deliberately excluded from shift
+    totals by leaving shift_id unset.
+    """
+    if collector_id <= 0:
+        raise ValueError("المستخدم المحصل مطلوب")
+    if amount == 0:
+        raise ValueError("مبلغ التحصيل أو الرد لا يمكن أن يكون صفرًا")
+    if payment_method not in {"cash", "card", "bank_transfer"}:
+        raise ValueError("طريقة الدفع يجب أن تكون cash أو card أو bank_transfer")
+
+    shift_id = None
+    if payment_method == "cash" and require_cash_shift:
+        shift = _lock_open_shift_or_conflict(db, branch_id, collector_id)
+        if not shift:
+            raise OpenCashierShiftRequiredError(
+                "لا توجد وردية كاشير مفتوحة للمستخدم — افتح الوردية قبل تسجيل حركة كاش"
+            )
+        shift_id = shift.id
+
+    return crud.create_direct_payment(
+        db,
+        branch_id=branch_id,
+        amount=amount,
+        method=payment_method,
+        posted_at=datetime.utcnow(),
+        shift_id=shift_id,
+        cashier_id=collector_id,
+        reference=reference,
+        ref_order_id=source_id,
+        source=source,
+    )
+
+
 def open_shift(db: Session, cashier_id: int, opened_by: int, data: CashierShiftOpen) -> CashierShift:
     """Gate 4B: فتح الوردية بقى محمي بـ DB invariant حقيقي
     (uq_open_shift_per_branch_cashier، partial unique index على status='open')
@@ -1208,7 +1260,7 @@ def post_simple_revenue_journal(
     strict: bool = False,
 ) -> Optional[JournalEntry]:
     """يرحّل قيد بسيط بسطرين (Dr. حساب / Cr. حساب) — النمط المتكرر اللي كان
-    منسوخ في 6 موديولات (مطعم/كافيه/شاطئ/PMS/تايم شير/إيجارات) كل واحد بنسخته
+    منسوخ في 6 موديولات (مطعم/كافيه/شاطئ/PMS/ملكية جزئية/إيجارات) كل واحد بنسخته
     الخاصة. بيبتلع أي خطأ عمدًا (حساب مش معرّف للفرع، مبلغ صفري...) وبيرجّع
     None بدل ما يرفع — عشان فشل الترحيل المحاسبي ميمنعش إتمام العملية
     التشغيلية الحقيقية (بيع/حجز/عقد) اللي استدعته. لاحظ إنه بينادي
@@ -1240,6 +1292,30 @@ def post_simple_revenue_journal(
             if strict:
                 raise FinancialConfigurationError("مبلغ القيد المحاسبي غير صالح (صفر أو سالب)")
             return None
+        # كل حركة مالية حقيقية بتمرر source/source_id/reference ثابتين. إعادة
+        # المحاولة (timeout عند العميل، Celery retry، أو reconciliation command
+        # اتشغلت مرتين) لازم ترجع نفس القيد بدل ما تسجّل إيراد/تسوية مرتين.
+        # reference جزء من المفتاح عمدًا لأن بعض الموديولات تستخدم نفس source
+        # وsource_id لأحداث مختلفة على نفس الكيان (مثال عقد + دفعاته).
+        if source and source_id is not None:
+            existing = (
+                db.query(JournalEntry)
+                .filter(
+                    JournalEntry.branch_id == branch_id,
+                    JournalEntry.source == source,
+                    JournalEntry.source_id == source_id,
+                    JournalEntry.reference == reference,
+                )
+                .first()
+            )
+            if existing:
+                logger.info(
+                    "post_simple_revenue_journal: entry already posted for source=%s "
+                    "source_id=%s reference=%s — returning entry %s",
+                    source, source_id, reference, existing.id,
+                )
+                return existing
+
         debit_acc = crud.get_account_by_code(db, branch_id, debit_account_code)
         credit_acc = crud.get_account_by_code(db, branch_id, credit_account_code)
         if not debit_acc or not credit_acc:
@@ -1733,7 +1809,7 @@ DEFAULT_COST_CENTERS = [
     {"code": "REST",  "name": "المطعم"},
     {"code": "CAFE",  "name": "الكافيه"},
     {"code": "BEACH", "name": "الشاطئ"},
-    {"code": "TS",    "name": "التايم شير"},
+    {"code": "TS",    "name": "الملكية الجزئية"},
     # OPS-DATA-02 §11.1
     {"code": "LEASE", "name": "الإيجارات"},
     {"code": "MAINT", "name": "الصيانة"},
@@ -1764,7 +1840,7 @@ def ensure_default_cost_centers(db: Session, branch_id: int, *, commit: bool = T
 
 
 def get_cost_center_report(db: Session, branch_id: int, date_from: date, date_to: date) -> CostCenterReport:
-    """تقرير مركز التكلفة (الفندق/المطعم/الكافيه/الشاطئ/التايم شير) — إيراد
+    """تقرير مركز التكلفة (الفندق/المطعم/الكافيه/الشاطئ/الملكية الجزئية) — إيراد
     *ومصروف* كل واحد سطر منفصل، الاتنين من journal_lines.cost_center_id
     مباشرة (Batch 3) — مش استنتاج بعدي من جداول عمليات منفصلة (folio_charges/
     beach_transactions) زي قبل كده. الوسم بيحصل وقت الترحيل نفسه (راجع

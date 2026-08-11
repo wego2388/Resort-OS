@@ -156,7 +156,7 @@ _LIMITED_ROUTES: dict[tuple[str, str], tuple[str, int, int]] = {
     ("POST", "/api/v1/chat/conversations/start"):    ("public", 30, 60),
     ("POST", "/api/v1/chat/conversations/rate"):     ("public", 20, 60),
     ("POST", "/api/v1/chat/conversations/end"):      ("public", 20, 60),
-    # بوابة عميل التايم شير العامة (2026-08-03) — طبقة حماية إضافية على
+    # بوابة عميل الملكية الجزئية العامة (2026-08-03) — طبقة حماية إضافية على
     # مستوى IP فوق الحدود الداخلية بالفعل (per-contract/per-phone) في
     # services.request_owner_otp/confirm_owner_otp. verify-request/confirm
     # أضيق بكتير من التصفح العادي — كود OTP لازم يتحمى من التخمين بالقوة

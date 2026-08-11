@@ -21,7 +21,7 @@ const watchlist = useOwnerWatchlist();
 const openList = ref(null);
 const listTitle = {
     b2b: 'كل ذمم فنادق B2B',
-    timeshare: 'كل ذمم التايم شير المتأخرة',
+    timeshare: 'كل ذمم الملكية الجزئية المتأخرة',
     credit: 'كل الحسابات الآجلة',
 };
 const metricLabels = {
@@ -307,7 +307,7 @@ else if (__VLS_ctx.data) {
     __VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
         ...{ class: "owner-card" },
         role: "region",
-        'aria-label': "ذمم تايم شير",
+        'aria-label': "ذمم ملكية جزئية",
     });
     __VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
         ...{ class: "section-label" },

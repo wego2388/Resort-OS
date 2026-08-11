@@ -84,7 +84,9 @@ def generate(db: "Session", ctx: "ScenarioContext") -> dict:
         db.flush()
         assets.append(asset)
 
-    result = run_depreciation(db, branch_id, ctx.period_year, ctx.period_month, user_id=0)
+    result = run_depreciation(
+        db, branch_id, ctx.period_year, ctx.period_month, user_id=ctx.actor_id,
+    )
 
     return {
         "counts": {

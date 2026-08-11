@@ -182,6 +182,11 @@ def list_unaccrued_due_payments(db: Session, branch_id: int, as_of: date) -> lis
             LeasePayment.due_date <= as_of,
             LeasePayment.accrued.is_(False),
         )
+        # Serialize the daily task, inline receipts and the production
+        # backfill. PostgreSQL skips a row already owned by another worker;
+        # SQLite ignores the lock clause, which is sufficient for its
+        # single-session unit tests.
+        .with_for_update(skip_locked=True)
         .order_by(LeasePayment.due_date)
         .all()
     )

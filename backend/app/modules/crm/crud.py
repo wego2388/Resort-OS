@@ -458,7 +458,7 @@ def get_loyalty_account_by_customer_for_update(
     بيقرا الرصيد القديم قبل ما التاني يعمل commit)، فيتقبل الاتنين ويتخصم
     نصيب واحد بس فعليًا من الرصيد (lost update) — خصم فعلي مزدوج على فاتورتين
     حقيقيتين بينما دفتر النقاط بيوريه مرة واحدة بس. نفس فئة الباج اللي
-    اتصلحت قبل كده في المخزون/الشاطئ/التايم شير (راجع CLAUDE.md §13 بند ⓫)."""
+    اتصلحت قبل كده في المخزون/الشاطئ/الملكية الجزئية (راجع CLAUDE.md §13 بند ⓫)."""
     return (
         db.query(LoyaltyAccount)
         .filter(LoyaltyAccount.branch_id == branch_id, LoyaltyAccount.customer_id == customer_id)

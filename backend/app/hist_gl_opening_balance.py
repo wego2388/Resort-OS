@@ -36,7 +36,7 @@ _LINES: tuple[tuple[str, Decimal, Decimal, str], ...] = (
     ("1100", Decimal("150000.00"), Decimal("0"), "رصيد كاش افتتاحي — الصندوق والأدراج"),
     ("1110", Decimal("950000.00"), Decimal("0"), "رصيد بنكي افتتاحي"),
     ("1150", Decimal("85000.00"), Decimal("0"), "ذمم فندقية مفتوحة (guest folios) حتى 2026-06-30"),
-    ("1170", Decimal("320000.00"), Decimal("0"), "ذمم أقساط تايم شير مستحقة حتى 2026-06-30"),
+    ("1170", Decimal("320000.00"), Decimal("0"), "ذمم أقساط ملكية جزئية مستحقة حتى 2026-06-30"),
     ("1200", Decimal("420000.00"), Decimal("0"), "تقييم مخزون افتتاحي (Food&Bev/Housekeeping/Maintenance/Beach)"),
     ("1210", Decimal("75000.00"), Decimal("0"), "مصروفات مدفوعة مقدمًا (تأمينات/تراخيص/اشتراكات)"),
     # ── الأصول الثابتة الإجمالية 19,670,000 — مفصّلة على 6 حسابات فرعية
@@ -53,7 +53,7 @@ _LINES: tuple[tuple[str, Decimal, Decimal, str], ...] = (
     ("2160", Decimal("0"), Decimal("95000.00"), "ضريبة قيمة مضافة مستحقة (VAT payable) حتى 2026-06-30"),
     ("2170", Decimal("0"), Decimal("140000.00"), "دفعات مقدمة من نزلاء (guest advances)"),
     ("2150", Decimal("0"), Decimal("276000.00"), "تأمينات مستأجرين محصّلة (tenant deposits — عقود الإيجار الخمسة)"),
-    ("2310", Decimal("0"), Decimal("360000.00"), "التزام عقود/صيانة تايم شير (contract + maintenance liability)"),
+    ("2310", Decimal("0"), Decimal("360000.00"), "التزام عقود/صيانة ملكية جزئية (contract + maintenance liability)"),
     ("2180", Decimal("0"), Decimal("45000.00"), "مصروفات مرافق مستحقة (كهرباء/مياه/إنترنت) حتى 2026-06-30"),
     ("3100", Decimal("0"), Decimal("17500000.00"), "رأس المال"),
     ("3200", Decimal("0"), Decimal("292821.43"), "أرباح مرحّلة"),
@@ -90,7 +90,7 @@ def generate(db: "Session", ctx: "ScenarioContext") -> dict:
         branch_id=branch_id, entry_date=_OPENING_DATE, reference="HIST-GL-OPENING-2026-06-30",
         description="قيد الافتتاح الصناعي 2026-06-30 (OPS-DATA-02 §11.3) — Trial synthetic, ليس تقييمًا حقيقيًا",
         source="opening_balance", lines=lines,
-    ), user_id=0)
+    ), user_id=ctx.actor_id)
 
     return {
         "counts": {"journal_lines": len(lines)},

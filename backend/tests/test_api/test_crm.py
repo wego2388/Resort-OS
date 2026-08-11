@@ -148,7 +148,7 @@ class TestOpportunity:
         data = OpportunityCreate(
             branch_id=branch.id,
             customer_id=customer.id,
-            title="بيع وحدة تايم شير 2R",
+            title="بيع وحدة ملكية جزئية 2R",
             product_type="timeshare",
             expected_value=Decimal("120000"),
             probability=60,

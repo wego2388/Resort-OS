@@ -64,13 +64,13 @@ class LeaseContractRead(BaseModel):
 
 class PayLeaseRequest(BaseModel):
     paid_amount:    Decimal = Field(..., gt=0)
-    payment_method: str = Field(..., pattern=r"^(cash|card|bank_transfer|other)$")
+    payment_method: str = Field(..., pattern=r"^(cash|card|bank_transfer)$")
     receipt_number: Optional[str] = None
     notes:          Optional[str] = None
 
 
 class ConfirmDepositRequest(BaseModel):
-    payment_method: str = Field(..., pattern=r"^(cash|card|bank_transfer|other)$")
+    payment_method: str = Field(..., pattern=r"^(cash|card|bank_transfer)$")
 
 
 class TenantAgingRow(BaseModel):
@@ -94,7 +94,7 @@ class TenantCashLogCreate(BaseModel):
     contract_id:    int
     amount:         Decimal = Field(..., gt=0)
     activity_type:  str = Field("rent_payment", pattern=r"^(rent_payment|penalty|deposit|refund|maintenance|revenue_share|other)$")
-    payment_method: Optional[str] = Field(None, max_length=30)
+    payment_method: str = Field(..., pattern=r"^(cash|card|bank_transfer)$")
     reference:      Optional[str] = Field(None, max_length=50)
     notes:          Optional[str] = None
 

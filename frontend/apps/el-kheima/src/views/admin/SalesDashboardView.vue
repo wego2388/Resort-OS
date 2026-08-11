@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// لوحة مبيعات التايم شير — لفريق المبيعات (مختلفة عن لوحة الإدارة في TimeshareView).
+// لوحة مبيعات الملكية الجزئية — لفريق المبيعات (مختلفة عن لوحة الإدارة في TimeshareView).
 // الهدف: مين نشط/متأخر/منتهي، مين يستاهل مكالمة النهاردة (بالتليفون)، والـ pipeline العام.
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'

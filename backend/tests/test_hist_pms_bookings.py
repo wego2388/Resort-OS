@@ -93,6 +93,7 @@ class _Ctx:
         self.period_year = 2026
         self.period_month = 7
         self.tz_name = "Africa/Cairo"
+        self.actor_id = 1
         self.period_end_day = None
 
 
@@ -119,8 +120,16 @@ class TestHistPmsBookingsGenerator:
 
     def test_generate_posts_exact_gl_room_revenue_before_vat_service(self, hist_db: Session):
         """صافي إيراد الغرف قبل VAT/الخدمة = 70×2500 + 75×3500 + 25×4500 =
-        550,000 EGP بالظبط (OPS-DATA-02 §10.2) — بيتحقق من حساب 4100
-        الحقيقي بعد كل الـ31 يوم Night Audit، مش من رقم مفترض."""
+        550,000 EGP (OPS-DATA-02 §10.2) + 250 EGP رسوم وصول مبكر/مغادرة
+        متأخرة (150 + 100 — راجع HIST-01 فوق) = 550,250 بالظبط.
+
+        ⚠️ 2026-08-11 (§5): قبل إصلاح ترحيل إيراد رسوم الوصول المبكر/
+        المغادرة المتأخرة، الرقم القديم هنا (550,000) كان بيتجاهل الـ250
+        جنيه دول تمامًا — نفس الباج بالظبط اللي أدى لوجود حالتين حقيقيتين
+        على الإنتاج (250 جنيه) محتاجتين تسوية يدوية لاحقة (راجع تعليق
+        management command الجديد تحت). الرقم الجديد هنا بيتحقق من حساب
+        4100 الحقيقي بعد كل الـ31 يوم Night Audit + رسوم الوصول/المغادرة،
+        مش من رقم مفترض."""
         from app.modules.finance.models import Account, JournalLine
 
         db = hist_db
@@ -137,7 +146,7 @@ class TestHistPmsBookingsGenerator:
             .all()
         )
         net_revenue = sum(l.credit for l in total_credit)
-        assert net_revenue == Decimal("550000.00")
+        assert net_revenue == Decimal("550250.00")
 
     def test_generate_posts_correct_vat_and_service_totals(self, hist_db: Session):
         from app.modules.finance.models import Account, JournalLine

@@ -1,4 +1,4 @@
-"""HIST-01 — مولّد بيانات التايم شير التاريخية ليوليو 2026 (OPS-DATA-02 §10.8).
+"""HIST-01 — مولّد بيانات الملكية الجزئية التاريخية ليوليو 2026 (OPS-DATA-02 §10.8).
 
 بيستخدم services الحقيقية بس (create_contract/pay_installment/
 pay_maintenance_due/cancel_contract) — صفر SQL مباشر.
@@ -86,7 +86,7 @@ def generate(db: "Session", ctx: "ScenarioContext") -> dict:
                 first_installment_date=_FIRST_INSTALLMENT_DATE,
                 start_date=_CONTRACT_DATE, contract_date=_CONTRACT_DATE,
                 maintenance_fee=spec.maintenance_fee,
-            ), signed_by=0)
+            ), signed_by=ctx.actor_id)
             contracts.append((spec, contract))
 
         # قسط يونيو (الأول) — تاريخ مستقر سابق على سيناريو يوليو نفسه، راجع
@@ -97,7 +97,7 @@ def generate(db: "Session", ctx: "ScenarioContext") -> dict:
             june_installment = contract.installments_list[0]
             ts_services.pay_installment(db, june_installment.id, PayInstallmentRequest(
                 paid_amount=june_installment.amount, payment_method="bank_transfer",
-            ))
+            ), collected_by=contract.signed_by or 1, enforce_cash_shift=False)
 
     # ── سيناريو يوليو الفعلي: القسط التاني (استحقاق 1 يوليو) ────────────
     total_collected = Decimal("0")
@@ -107,7 +107,7 @@ def generate(db: "Session", ctx: "ScenarioContext") -> dict:
             db.refresh(contract)
             if spec.july_scenario == "cancelled":
                 ts_services.cancel_contract(
-                    db, contract.id, cancel_amount=Decimal("500.00"), cancelled_by=0,
+                    db, contract.id, cancel_amount=Decimal("500.00"), cancelled_by=contract.signed_by or 1, enforce_cash_shift=False,
                 )
                 cancelled_count += 1
                 continue
@@ -122,7 +122,7 @@ def generate(db: "Session", ctx: "ScenarioContext") -> dict:
             )
             ts_services.pay_installment(db, july_installment.id, PayInstallmentRequest(
                 paid_amount=amount, payment_method=spec.july_method,
-            ))
+            ), collected_by=contract.signed_by or 1, enforce_cash_shift=False)
             total_collected += amount
 
     # ── مستحقات الصيانة — العقود اللي عندها رسم صيانة فعلي بتسدده في يوليو
@@ -138,7 +138,7 @@ def generate(db: "Session", ctx: "ScenarioContext") -> dict:
             due = contract.maintenance_dues_list[0]
             ts_services.pay_maintenance_due(db, due.id, PayMaintenanceDueRequest(
                 paid_amount=due.amount, payment_method="cash",
-            ))
+            ), collected_by=contract.signed_by or 1, enforce_cash_shift=False)
             maintenance_collected += due.amount
             maintenance_paid_count += 1
 

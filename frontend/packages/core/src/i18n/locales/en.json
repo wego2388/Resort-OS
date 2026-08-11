@@ -3456,7 +3456,7 @@
       "finance": "Finance",
       "creditAccounts": "Credit Accounts",
       "eInvoice": "E-Invoice",
-      "timeshare": "Timeshare",
+      "timeshare": "Fractional Ownership",
       "sales": "Sales Dashboard",
       "beachLive": "Live Beach Dashboard",
       "beachAdmin": "Beach Management",
@@ -3851,8 +3851,8 @@
         "waiter": "Waiter",
         "chef": "Chef",
         "kitchen": "Kitchen",
-        "timeshare_admin": "Timeshare Admin",
-        "timeshare_agent": "Timeshare Agent",
+        "timeshare_admin": "Fractional Ownership Admin",
+        "timeshare_agent": "Fractional Ownership Agent",
         "employee": "Employee"
       },
       "modules": {
@@ -3860,7 +3860,7 @@
         "dining": "Dining",
         "beach": "Beach",
         "hr": "HR",
-        "timeshare": "Timeshare",
+        "timeshare": "Fractional Ownership",
         "pms": "Hotel/PMS",
         "inventory": "Inventory",
         "crm": "CRM"
@@ -4422,7 +4422,7 @@
       "itemsNeedReorder": "items need reordering",
       "outOfStock": "out of stock",
       "noData": "No data",
-      "upcomingVisits": "Upcoming timeshare visits",
+      "upcomingVisits": "Upcoming fractional ownership visits",
       "viewAll": "View all",
       "updatedNow": "Just now",
       "updatedSecondsAgo": "{count}s ago",
@@ -4439,7 +4439,7 @@
       }
     },
     "salesDashboard": {
-      "title": "Timeshare Sales Dashboard",
+      "title": "Fractional Ownership Sales Dashboard",
       "subtitle": "Who deserves a call today, and overall contract status",
       "exportExcel": "Export Excel",
       "exporting": "Exporting...",
@@ -4552,7 +4552,7 @@
         "lost": "Lost"
       },
       "interest": {
-        "timeshare": "Timeshare",
+        "timeshare": "Fractional Ownership",
         "leasing": "Leasing",
         "booking": "Booking",
         "membership": "Membership",
@@ -4566,7 +4566,7 @@
         "appointmentSet": "Appointment set"
       },
       "productType": {
-        "timeshare": "Timeshare",
+        "timeshare": "Fractional Ownership",
         "leasing": "Leasing",
         "membership": "Membership",
         "groupBooking": "Group booking",
@@ -6057,11 +6057,11 @@
       "exportError": "Couldn't export the report"
     },
     "timeshare": {
-      "title": "Timeshare",
+      "title": "Fractional Ownership",
       "workspaceHint": "Track contracts, occupancy, collections, and visits from one operational workspace.",
       "importExcel": "Import Excel",
       "refresh": "Refresh",
-      "tabsLabel": "Timeshare sections",
+      "tabsLabel": "Fractional Ownership sections",
       "previousYear": "Previous year",
       "nextYear": "Next year",
       "loadingCalendar": "Loading occupancy calendar...",
@@ -6206,13 +6206,13 @@
       "confirmGenerateDues": "Generate {year} maintenance dues for every active contract that doesn't have one for this year yet? Safe to re-run — existing dues are never duplicated.",
       "yesGenerate": "Yes, generate",
       "currency": "EGP",
-      "calendarPrintTitle": "Timeshare Calendar {year}",
+      "calendarPrintTitle": "Fractional Ownership Calendar {year}",
       "bookedWeeksPrint": "Booked weeks: {count}",
       "exportedByPrint": "Exported by: {name}",
       "exportedAtPrint": "On: {date}",
       "printHint": "Press Ctrl+P to print or save as PDF",
       "msg": {
-        "loadUnitsError": "Failed to load timeshare units",
+        "loadUnitsError": "Failed to load fractional ownership units",
         "unitNumberRequired": "Unit number is required",
         "unitAdded": "Unit added",
         "unitSaveError": "Failed to save the unit",
@@ -6225,7 +6225,7 @@
         "loadProfileError": "Failed to load the full customer profile",
         "surveySent": "Satisfaction survey sent",
         "surveyError": "Couldn't send the survey",
-        "loadSummaryError": "Failed to load the timeshare summary",
+        "loadSummaryError": "Failed to load the fractional ownership summary",
         "loadCalendarError": "Failed to load the calendar",
         "noCalendarData": "No calendar data to print",
         "popupBlocked": "The browser blocked the print window — enable pop-ups",
@@ -6253,7 +6253,7 @@
         "replyError": "Failed to send the reply",
         "ticketStatusUpdated": "Ticket status updated",
         "ticketStatusError": "Failed to update ticket status",
-        "loadStaffError": "Failed to load timeshare staff",
+        "loadStaffError": "Failed to load fractional ownership staff",
         "createStaffError": "Failed to create the staff account",
         "staffStatusUpdated": "Staff account status updated",
         "staffStatusError": "Failed to update staff account status",
@@ -6281,7 +6281,7 @@
       "confirmStatusChange": "Confirm status change from {from} to {to}?",
       "loadingRequests": "Loading visit requests...",
       "loadingTickets": "Loading support tickets...",
-      "loadingStaff": "Loading timeshare staff...",
+      "loadingStaff": "Loading fractional ownership staff...",
       "approve": "Approve",
       "reject": "Reject",
       "approveRequestTitle": "Approve visit request",

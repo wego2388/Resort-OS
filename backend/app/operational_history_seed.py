@@ -52,6 +52,7 @@ class ScenarioContext:
     period_year: int
     period_month: int
     tz_name: str
+    actor_id: int
     # None = المولّدات تستخدم آخر يوم في الشهر التقويمي زي ما هو (الافتراضي
     # المحلي/trial). لو محدَّد، بيحدّ آخر يوم يتولّد له نشاط — الحالة
     # الحقيقية اللي احتجناها له: فرع VPS حي بيقفل الليالي أوتوماتيكيًا كل
@@ -177,7 +178,7 @@ def _resolve_branch(db: Session, branch_code: str):
     return branch
 
 
-def _resolve_actor(db: Session, actor_id: Optional[int]) -> str:
+def _resolve_actor(db: Session, actor_id: Optional[int]):
     from app.core.kernel.models.user import User  # noqa: PLC0415
 
     query = db.query(User).filter(User.is_active.is_(True))
@@ -186,7 +187,7 @@ def _resolve_actor(db: Session, actor_id: Optional[int]) -> str:
     actors = [u for u in query.all() if getattr(u.role, "value", u.role) == "super_admin"]
     if len(actors) != 1:
         raise RuntimeError("Resolve exactly one active super_admin actor, or pass --actor-id")
-    return actors[0].email
+    return actors[0]
 
 
 def _check_preconditions(db: Session, branch_id: int) -> list[str]:
@@ -295,7 +296,7 @@ def prepare_batch(
 
     _acquire_lock(db)
     branch = _resolve_branch(db, branch_code)
-    actor_email = _resolve_actor(db, actor_id)
+    actor = _resolve_actor(db, actor_id)
 
     existing = _existing_batch(db, branch.id, period)
     if existing and existing.status == "completed":
@@ -325,7 +326,7 @@ def prepare_batch(
     checksum = hashlib.sha256(manifest_source.encode()).hexdigest()
     batch = ImportBatch(
         branch_id=branch.id, dataset_version=DATASET_VERSION, period=period,
-        checksum=checksum, status="running", actor=actor_email,
+        checksum=checksum, status="running", actor=actor.email,
         started_at=datetime.now(timezone.utc),
     )
     db.add(batch)
@@ -333,7 +334,7 @@ def prepare_batch(
 
     ctx = ScenarioContext(
         branch_id=branch.id, period_year=period_year, period_month=period_month,
-        tz_name=settings.TIMEZONE, period_end_day=period_end_day,
+        tz_name=settings.TIMEZONE, actor_id=actor.id, period_end_day=period_end_day,
     )
     return _PreparedBatch(batch=batch, branch_id=branch.id, ctx=ctx, already_completed_result=None)
 

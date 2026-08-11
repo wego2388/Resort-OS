@@ -293,7 +293,7 @@ async def create_booking(
     # الأساسي بالظبط هو الثلاث عمليات دي، كان عمليًا يشوف زرار "تسجيل دخول"
     # في الشاشة ويضغط عليه فيرجّعله 403 كل مرة، من غير أي طريقة حقيقية
     # يسجّل بيها نزيل. نفس فئة الباج الموثّقة في §18/CLAUDE.md لتحصيل قسط
-    # التايم شير (كانت محتاجة get_manager_user برضه رغم إن الكاشير level 40
+    # الملكية الجزئية (كانت محتاجة get_manager_user برضه رغم إن الكاشير level 40
     # المفروض يقدر يحصّل) — هنا get_cashier_user (level 40+) هو الحد الأدنى
     # الصحيح فعليًا لعمليات الاستقبال اليومية.
     _assert_pms_branch(db, user, data.branch_id, "إنشاء حجز")
@@ -439,6 +439,10 @@ def request_early_late(
     _booking_for_access(db, user, booking_id, "تعديل موعد حجز")
     try:
         return services.request_early_late(db, booking_id, data)
+    except FinancialConfigurationError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {
+            "code": "FINANCIAL_CONFIGURATION_ERROR", "message": str(exc),
+        })
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 

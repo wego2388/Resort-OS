@@ -75,8 +75,8 @@ echo "    waiter@resortos.local        waiter"
 echo "    chef@resortos.local          chef"
 echo "    kitchen@resortos.local       kitchen"
 echo "    employee@resortos.local      employee"
-echo "    timeshare_admin@resortos.local  timeshare_admin  ${DIM}(كل صلاحيات وحدة التايم شير، معزول عن باقي المنتجع)${RESET}"
-echo "    timeshare_agent@resortos.local  timeshare_agent  ${DIM}(وصول محدود لوحدة التايم شير)${RESET}"
+echo "    timeshare_admin@resortos.local  timeshare_admin  ${DIM}(كل صلاحيات وحدة الملكية الجزئية، معزول عن باقي المنتجع)${RESET}"
+echo "    timeshare_agent@resortos.local  timeshare_agent  ${DIM}(وصول محدود لوحدة الملكية الجزئية)${RESET}"
 echo
 
 

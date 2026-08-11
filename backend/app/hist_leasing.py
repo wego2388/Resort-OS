@@ -103,8 +103,11 @@ def generate(db: "Session", ctx: "ScenarioContext") -> dict:
                 base_rent=spec.monthly_rent, billing_day=1,
                 security_deposit=spec.security_deposit,
                 notes=spec.code,
-            ), signed_by=0)
-            leasing_services.confirm_deposit_received(db, contract.id, spec.deposit_method, received_by=0)
+            ), signed_by=ctx.actor_id)
+            leasing_services.confirm_deposit_received(
+                db, contract.id, spec.deposit_method,
+                received_by=ctx.actor_id, enforce_cash_shift=False,
+            )
             contracts[spec.code] = contract
 
         for spec in _CONTRACTS:
@@ -112,7 +115,7 @@ def generate(db: "Session", ctx: "ScenarioContext") -> dict:
             june_payment = payments[0]
             leasing_services.pay_payment(db, june_payment.id, PayLeaseRequest(
                 paid_amount=june_payment.amount, payment_method="bank_transfer",
-            ))
+            ), collected_by=ctx.actor_id, enforce_cash_shift=False)
 
     # ── 2) عمود "سيناريو يوليو" الفعلي من §10.5 — كل عقد بتاريخه الحقيقي.
     penalty_details: dict[str, Decimal] = {}
@@ -129,7 +132,7 @@ def generate(db: "Session", ctx: "ScenarioContext") -> dict:
                 for method, amount in spec.july_splits:
                     leasing_services.pay_payment(db, july_payment.id, PayLeaseRequest(
                         paid_amount=amount, payment_method=method,
-                    ))
+                    ), collected_by=ctx.actor_id, enforce_cash_shift=False)
             else:
                 # SHOP1 — لازم تطبيق الغرامة الفعلية (المحرك الحقيقي، مش
                 # رقم افتراضي — راجع docstring الملف) قبل تحديد المبلغ الكامل.
@@ -139,7 +142,7 @@ def generate(db: "Session", ctx: "ScenarioContext") -> dict:
                 total_due = july_payment.amount + july_payment.penalty - july_payment.paid_amount
                 leasing_services.pay_payment(db, july_payment.id, PayLeaseRequest(
                     paid_amount=total_due, payment_method="cash",
-                ))
+                ), collected_by=ctx.actor_id, enforce_cash_shift=False)
 
     # ── 3) SHOP2: يتحقق (accrue) عند الاستحقاق زي أي عقد، لكن يفضل غير
     # مسدد ويتحدد overdue بغرامته الفعلية في 31 يوليو (نفس اللي

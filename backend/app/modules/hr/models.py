@@ -240,6 +240,8 @@ class SalaryAdvance(Base, TimestampMixin):
     status:                    Mapped[str]        = mapped_column(String(20), default="active")  # active|settled|cancelled
     notes:                     Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_by:                Mapped[int]        = mapped_column(Integer)
+    cancelled_by:              Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cancelled_at:              Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     employee: Mapped["Employee"] = relationship("Employee", lazy="select")
 

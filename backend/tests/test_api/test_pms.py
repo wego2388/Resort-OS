@@ -399,6 +399,182 @@ class TestCheckinCheckout:
         finally:
             fresh.close()
 
+    def test_early_checkin_fee_posts_revenue_journal(self, db):
+        """§5: رسم وصول مبكر لازم يترحّل كإيراد فور تسجيله (Dr.1150/Cr.4100)
+        — مش بس يتحصّل صامت وقت الـcheckout من غير أي قيد إيراد مقابل."""
+        from datetime import datetime as _dt, timedelta as _td
+        from app.modules.finance import crud as finance_crud
+        from app.modules.pms.schemas import EarlyLateRequest
+
+        branch = make_branch(db)
+        make_finance_accounts(db, branch)
+        rt = make_room_type(db, branch)
+        room = make_room(db, branch, rt)
+        booking = make_booking(db, branch, room)
+        checked_in = services.checkin_booking(db, booking.id)
+
+        services.request_early_late(db, booking.id, EarlyLateRequest(
+            early_checkin_at=_dt.utcnow() + _td(hours=3),
+            charge=Decimal("150.00"),
+        ))
+
+        entries, total = finance_crud.list_journal_entries(db, branch.id, source="pms_early_late")
+        assert total == 1
+        entry = entries[0]
+        assert sum(l.debit for l in entry.lines) == sum(l.credit for l in entry.lines) == Decimal("150.00")
+
+    def test_late_checkout_fee_posts_revenue_journal(self, db):
+        from datetime import datetime as _dt, timedelta as _td
+        from app.modules.finance import crud as finance_crud
+        from app.modules.pms.schemas import EarlyLateRequest
+
+        branch = make_branch(db)
+        make_finance_accounts(db, branch)
+        rt = make_room_type(db, branch)
+        room = make_room(db, branch, rt)
+        booking = make_booking(db, branch, room)
+        services.checkin_booking(db, booking.id)
+
+        services.request_early_late(db, booking.id, EarlyLateRequest(
+            late_checkout_at=_dt.utcnow() + _td(hours=2),
+            charge=Decimal("100.00"),
+        ))
+
+        entries, total = finance_crud.list_journal_entries(db, branch.id, source="pms_early_late")
+        assert total == 1
+        assert sum(l.debit for l in entries[0].lines) == Decimal("100.00")
+
+    def test_early_late_fee_fails_atomically_when_account_missing(self, db):
+        """§5/§4: من غير 4100، تسجيل رسم الوصول المبكر كله لازم يفشل — مفيش
+        تعديل على extra_charge/total_rate، مفيش FolioCharge، مفيش قيد."""
+        from datetime import datetime as _dt, timedelta as _td
+        from app.modules.finance.services import FinancialConfigurationError
+        from app.modules.finance.models import Account
+        from app.modules.pms.schemas import EarlyLateRequest
+
+        branch = make_branch(db)
+        make_finance_accounts(db, branch)
+        db.query(Account).filter_by(branch_id=branch.id, code="4100").delete()
+        db.commit()
+        rt = make_room_type(db, branch)
+        room = make_room(db, branch, rt)
+        booking = make_booking(db, branch, room)
+        services.checkin_booking(db, booking.id)
+        original_total_rate = booking.total_rate
+
+        with pytest.raises(FinancialConfigurationError):
+            services.request_early_late(db, booking.id, EarlyLateRequest(
+                early_checkin_at=_dt.utcnow() + _td(hours=2),
+                charge=Decimal("150.00"),
+            ))
+
+        db.refresh(booking)
+        assert booking.total_rate == original_total_rate
+        assert booking.early_checkin_at is None
+
+    def test_early_late_fee_does_not_double_post_with_night_audit_and_checkout(self, db):
+        """§5: الرسم بيترحّل إيراد وقت التسجيل بس (مش وقت Night Audit ومش
+        وقت الـcheckout تاني) — 1150 لازم يتقفل بالظبط صفر بعد التسوية،
+        من غير رصيد متبقي أو مزدوج."""
+        from datetime import datetime as _dt, timedelta as _td
+        from app.modules.finance import crud as finance_crud
+        from app.modules.finance.models import Account, JournalLine
+        from app.modules.pms.schemas import EarlyLateRequest
+
+        branch = make_branch(db)
+        make_finance_accounts(db, branch)
+        rt = make_room_type(db, branch)
+        room = make_room(db, branch, rt)
+        booking = make_booking(db, branch, room)
+        services.checkin_booking(db, booking.id)
+        services.request_early_late(db, booking.id, EarlyLateRequest(
+            late_checkout_at=_dt.utcnow() + _td(hours=2),
+            charge=Decimal("100.00"),
+        ))
+        # make_booking عبارة عن إقامة ليلتين — Night Audit لازم يتشغّل لكل
+        # ليلة فعليًا قبل الـcheckout، وإلا 1150 هيفضله رصيد ليلة متبقية
+        # ماحصلش عليها audit، مش باج في الإصلاح نفسه.
+        from datetime import timedelta as _td2
+        services.run_night_audit(db, branch.id, booking.check_in)
+        services.run_night_audit(db, branch.id, booking.check_in + _td2(days=1))
+        services.checkout_booking(db, booking.id)
+
+        ar_account = db.query(Account).filter_by(branch_id=branch.id, code="1150").first()
+        net_ar = db.query(JournalLine).filter(JournalLine.account_id == ar_account.id).all()
+        balance = sum(l.debit - l.credit for l in net_ar)
+        assert balance == Decimal("0.00")
+
+        fee_entries, fee_total = finance_crud.list_journal_entries(db, branch.id, source="pms_early_late")
+        assert fee_total == 1  # قيد واحد بس للرسم — مفيش ازدواج مع Night Audit ولا checkout
+    def test_early_late_reconciliation_is_dry_run_and_rerunnable(self, db):
+        from datetime import datetime as _dt, timedelta as _td
+        from app.modules.finance.models import JournalEntry, JournalLine
+        from app.modules.pms.schemas import EarlyLateRequest
+        from scripts.reconcile_pms_early_late_revenue import (
+            apply_reconciliation,
+            list_reconciliation_items,
+        )
+
+        branch = make_branch(db)
+        make_finance_accounts(db, branch)
+        rt = make_room_type(db, branch)
+        room = make_room(db, branch, rt)
+        booking = make_booking(db, branch, room)
+        services.checkin_booking(db, booking.id)
+        services.request_early_late(db, booking.id, EarlyLateRequest(
+            early_checkin_at=_dt.utcnow() + _td(hours=2),
+            charge=Decimal("150.00"),
+        ))
+        services.run_night_audit(db, branch.id, booking.check_in)
+        services.run_night_audit(db, branch.id, booking.check_in + _td(days=1))
+        services.checkout_booking(db, booking.id)
+
+        from app.modules.finance.models import FolioCharge
+
+        charge = db.query(FolioCharge).filter_by(
+            folio_id=booking.folio_id,
+            charge_type="room_extra",
+        ).order_by(FolioCharge.id.desc()).first()
+        original = db.query(JournalEntry).filter_by(
+            source="pms_early_late",
+            source_id=charge.id,
+        ).one()
+        db.query(JournalLine).filter_by(entry_id=original.id).delete()
+        db.delete(original)
+        db.commit()
+
+        preview = [
+            item for item in list_reconciliation_items(db)
+            if item.booking_id == booking.id
+        ]
+        assert len(preview) == 1
+        assert preview[0].already_posted is False
+        assert preview[0].amount == Decimal("150.00")
+        assert db.query(JournalEntry).filter_by(
+            source="pms_early_late",
+            source_id=charge.id,
+        ).count() == 0
+
+        from app.core.kernel.models.user import User
+        actor = User(
+            email=f"pms-reconcile-{uuid.uuid4().hex}@test.local",
+            password_hash="not-used",
+            full_name="PMS Reconciliation Test Actor",
+            role="super_admin",
+        )
+        db.add(actor)
+        db.flush()
+        first = apply_reconciliation(db, actor_id=actor.id)
+        second = apply_reconciliation(db, actor_id=actor.id)
+        assert len(first) == 1
+        assert second == []
+        restored = db.query(JournalEntry).filter_by(
+            source="pms_early_late",
+            source_id=charge.id,
+        ).one()
+        assert restored.created_by == actor.id
+
+
     def test_checkout_updates_linked_customer_stats(self, db):
         from app.modules.crm import services as crm_services
         from app.modules.crm.schemas import CustomerCreate

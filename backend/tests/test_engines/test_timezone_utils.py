@@ -3,7 +3,7 @@ tests/test_engines/test_timezone_utils.py
 اختبارات app/resort_os/timezone_utils.py — كانت 0% تغطية بالكامل رغم استخدامها
 فعليًا في restaurant/cafe/analytics (فلترة "طلبات اليوم"، local_date_to_utc_range).
 
-business_today() أضيفت في التايم شير (حساب "اليوم" للوحة CS، تحديد الأقساط
+business_today() أضيفت في الملكية الجزئية (حساب "اليوم" للوحة CS، تحديد الأقساط
 المتأخرة، وتذكيرات الواتساب) — نفس فئة باج توقيت تذاكر المطبخ (KDS).
 
 local_today() أضيفت بعد باج حقيقي حي (2026-07-05): HR attendance (punch-in/

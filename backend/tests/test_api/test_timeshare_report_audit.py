@@ -24,7 +24,7 @@ def _make_branch(db):
     )
     db.add(b)
     db.commit()
-    # Gate 4B: عمليات التايم شير بقت تفرض branch isolation server-side
+    # Gate 4B: عمليات الملكية الجزئية بقت تفرض branch isolation server-side
     # (2026-07-28) — راجع test_timeshare_http.py's make_branch_committed لنفس النمط.
     _link_shared_users_to_branch(db, b.id)
     # ⚠️ 2026-08-11 (strict=True — راجع §4): تحصيل قسط بدون 1100/1120/4600
@@ -42,13 +42,15 @@ def _make_branch(db):
 
 def _link_shared_users_to_branch(db, branch_id: int) -> None:
     from app.core.kernel.models.user import User
-    from tests.conftest import assign_test_user_to_branch
+    from tests.conftest import assign_test_user_to_branch, open_cashier_shift
 
     for email in ("cashier@test.local", "manager@test.local", "timeshare-admin@test.local"):
         user = db.query(User).filter(User.email == email).first()
         if user:
             assign_test_user_to_branch(db, user.id, branch_id)
+            open_cashier_shift(db, branch_id, user.id)
     db.commit()
+    open_cashier_shift(db, branch_id, 1)
 
 
 def _make_manager(db):
@@ -329,7 +331,7 @@ class TestInstallmentPaymentAuditLog:
         inst = _make_installment(db, contract.id, due_date=date.today() + timedelta(days=30))
 
         req = PayInstallmentRequest(paid_amount=Decimal("1500"), payment_method="cash")
-        ts_services.pay_installment(db, inst.id, req)
+        ts_services.pay_installment(db, inst.id, req, collected_by=1)
 
         logs = db.query(AuditLog).filter(
             AuditLog.entity_type == "timeshare_installment",

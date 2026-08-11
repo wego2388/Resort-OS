@@ -1,6 +1,7 @@
 """app/modules/leasing/services.py"""
 from __future__ import annotations
 
+import json
 import logging
 
 from datetime import date, datetime, timezone
@@ -97,8 +98,31 @@ _PAYMENT_METHOD_DEBIT_ACCOUNT = {
 }
 
 
+def _audit_leasing_action(
+    db: Session,
+    *,
+    user_id: int,
+    branch_id: int,
+    action: str,
+    entity_type: str,
+    entity_id: int,
+    old_data: dict | None = None,
+    new_data: dict | None = None,
+) -> None:
+    """Append an operator-attributed audit row inside the caller transaction."""
+    from app.modules.core.crud import create_audit_log  # noqa: PLC0415
+    from app.modules.core.schemas import AuditLogCreate  # noqa: PLC0415
+
+    create_audit_log(db, AuditLogCreate(
+        user_id=user_id, branch_id=branch_id, action=action,
+        entity_type=entity_type, entity_id=entity_id,
+        old_data=json.dumps(old_data, ensure_ascii=False, default=str) if old_data is not None else None,
+        new_data=json.dumps(new_data, ensure_ascii=False, default=str) if new_data is not None else None,
+    ))
+
 def confirm_deposit_received(
     db: Session, contract_id: int, payment_method: str, received_by: int,
+    *, enforce_cash_shift: bool = True,
 ) -> LeaseContract:
     """يرحّل قيد التأمين فقط عند التأكيد الفعلي لاستلامه — Dr Cash/Bank/Card
     (حسب طريقة الدفع الفعلية) / Cr تأمينات مستأجرين (2150). idempotent
@@ -116,7 +140,21 @@ def confirm_deposit_received(
         if (contract.security_deposit or Decimal("0")) <= 0:
             raise ValueError(f"العقد {contract.contract_number} بلا تأمين مطلوب")
 
-        from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
+        from app.modules.finance.services import (  # noqa: PLC0415
+            post_simple_revenue_journal, record_external_payment,
+        )
+
+        collection = record_external_payment(
+            db,
+            branch_id=contract.branch_id,
+            amount=contract.security_deposit,
+            payment_method=payment_method,
+            collector_id=received_by,
+            reference=f"LC-DEP-{contract.contract_number}",
+            source="leasing_deposit",
+            source_id=contract.id,
+            require_cash_shift=enforce_cash_shift,
+        )
 
         debit_code = _PAYMENT_METHOD_DEBIT_ACCOUNT.get(payment_method, "1100")
         post_simple_revenue_journal(
@@ -125,7 +163,7 @@ def confirm_deposit_received(
             amount=contract.security_deposit,
             reference=f"LC-DEP-{contract.contract_number}",
             description=f"استلام تأمين عقد إيجار — {contract.contract_number} ({contract.tenant_name})",
-            source="leasing", source_id=contract.id,
+            source="leasing", source_id=collection.id,
             created_by=received_by, cost_center_code="LEASE",
             strict=True, commit_cost_centers=False,
         )
@@ -133,6 +171,15 @@ def confirm_deposit_received(
         contract.deposit_received_at = datetime.now(timezone.utc)
         contract.deposit_payment_method = payment_method
         contract.deposit_received_by = received_by
+        _audit_leasing_action(
+            db, user_id=received_by, branch_id=contract.branch_id,
+            action="confirm_deposit_receipt", entity_type="lease_contract",
+            entity_id=contract.id, old_data={"deposit_received": False},
+            new_data={
+                "deposit_received": True, "amount": contract.security_deposit,
+                "payment_method": payment_method, "payment_id": collection.id,
+            },
+        )
         db.commit()
         db.refresh(contract)
         return contract
@@ -141,7 +188,13 @@ def confirm_deposit_received(
         raise
 
 
-def _accrue_single_payment(db: "Session", payment: "LeasePayment", contract: "LeaseContract") -> None:
+def _accrue_single_payment(
+    db: "Session",
+    payment: "LeasePayment",
+    contract: "LeaseContract",
+    *,
+    created_by: int | None = None,
+) -> None:
     """Dr ذمم مستأجرين (1260) / Cr إيرادات إيجارات تجارية (4500) — يثبت
     الإيراد عند الاستحقاق بغض النظر عن التحصيل الفعلي (OPS-DATA-02 §10.5).
     idempotent عبر payment.accrued — استدعاء تاني على نفس الدفعة no-op.
@@ -164,7 +217,8 @@ def _accrue_single_payment(db: "Session", payment: "LeasePayment", contract: "Le
         reference=f"LSE-ACR-{payment.id:06d}",
         description=f"استحقاق إيجار — {contract.contract_number} ({contract.tenant_name})",
         source="leasing", source_id=payment.id,
-        created_by=contract.signed_by or 0, cost_center_code="LEASE",
+        created_by=created_by if created_by is not None else (contract.signed_by or 0),
+        cost_center_code="LEASE",
         strict=True, commit_cost_centers=False,
     )
     payment.accrued = True
@@ -172,7 +226,15 @@ def _accrue_single_payment(db: "Session", payment: "LeasePayment", contract: "Le
     db.flush()
 
 
-def accrue_due_rents(db: Session, branch_id: int, as_of: date | None = None) -> list[LeasePayment]:
+def accrue_due_rents(
+    db: Session,
+    branch_id: int,
+    as_of: date | None = None,
+    *,
+    created_by: int | None = None,
+    raise_on_error: bool = False,
+    commit: bool = True,
+) -> list[LeasePayment]:
     """يرحّل استحقاق كل دفعات الإيجار اللي وصل تاريخ استحقاقها ولسه ما
     اتحقّقتش محاسبيًا (accrued=False) — بتُستدعى يوميًا من
     app.tasks.leasing_tasks.accrue_due_rents، ومن pay_payment/record_cash_log
@@ -193,21 +255,31 @@ def accrue_due_rents(db: Session, branch_id: int, as_of: date | None = None) -> 
             continue
         try:
             with db.begin_nested():
-                _accrue_single_payment(db, payment, contract)
+                _accrue_single_payment(
+                    db, payment, contract, created_by=created_by,
+                )
             accrued_payments.append(payment)
         except Exception:
             logger.error(
                 "accrue_due_rents: فشل استحقاق دفعة %s (عقد %s) — تحتاج مراجعة يدوية",
                 payment.id, contract.contract_number, exc_info=True,
             )
-    if accrued_payments:
+            if raise_on_error:
+                raise
+    if accrued_payments and commit:
         db.commit()
     return accrued_payments
 
 
 def _post_rent_receipt_journal(
-    db: "Session", source_obj, contract: "LeaseContract",
-    collected_amount: Decimal, payment_method: str | None,
+    db: "Session",
+    source_obj,
+    contract: "LeaseContract",
+    collected_amount: Decimal,
+    payment_method: str,
+    *,
+    collection_payment_id: int,
+    collected_by: int,
 ) -> None:
     """Dr Cash/Bank/Card (حسب طريقة الدفع الفعلية) / Cr ذمم مستأجرين (1260)
     — تحصيل فعلي بس، بعد ما الإيراد يكون اتحقّق (accrued) بالفعل. `source_obj`
@@ -230,15 +302,21 @@ def _post_rent_receipt_journal(
         amount=collected_amount,
         reference=f"LSE-RCV-{source_obj.id:06d}",
         description=f"تحصيل إيجار — {contract.contract_number} ({contract.tenant_name})",
-        source="leasing", source_id=source_obj.id,
-        created_by=contract.signed_by or 0, cost_center_code="LEASE",
+        source="leasing", source_id=collection_payment_id,
+        created_by=collected_by, cost_center_code="LEASE",
         strict=True, commit_cost_centers=False,
     )
 
 
 def _post_direct_rent_journal(
-    db: "Session", source_obj, contract: "LeaseContract",
-    amount: Decimal, payment_method: str | None,
+    db: "Session",
+    source_obj,
+    contract: "LeaseContract",
+    amount: Decimal,
+    payment_method: str,
+    *,
+    collection_payment_id: int,
+    collected_by: int,
 ) -> None:
     """قيد واحد مباشر Dr Cash/Bank/Card / Cr إيراد — لتسويات كاش فورية
     (TenantCashLog) بدون جدول استحقاق مسبق (مركز غوص/واتر سبورت بيدفعوا
@@ -258,15 +336,26 @@ def _post_direct_rent_journal(
         amount=amount,
         reference=f"LSE-CL-{source_obj.id:06d}",
         description=f"تسوية كاش مستأجر — {contract.contract_number} ({contract.tenant_name})",
-        source="leasing", source_id=source_obj.id,
-        created_by=contract.signed_by or 0, cost_center_code="LEASE",
+        source="leasing", source_id=collection_payment_id,
+        created_by=collected_by, cost_center_code="LEASE",
         strict=True, commit_cost_centers=False,
     )
 
 
-def update_contract(db: Session, contract_id: int, data: LeaseContractUpdate) -> LeaseContract:
+def update_contract(
+    db: Session, contract_id: int, data: LeaseContractUpdate, *, updated_by: int | None = None,
+) -> LeaseContract:
     contract = get_contract_or_404(db, contract_id)
+    changes = data.model_dump(exclude_unset=True)
+    old_status = contract.status
     obj = crud.update_contract(db, contract, data)
+    if updated_by is not None and changes:
+        _audit_leasing_action(
+            db, user_id=updated_by, branch_id=contract.branch_id,
+            action="update_contract", entity_type="lease_contract", entity_id=contract.id,
+            old_data={"status": old_status},
+            new_data={"status": contract.status, "changed_fields": sorted(changes)},
+        )
     db.commit()
     db.refresh(obj)
     return obj
@@ -335,7 +424,10 @@ def _lock_payment_or_raise(db: Session, payment_id: int) -> LeasePayment:
     return locked
 
 
-def pay_payment(db: Session, payment_id: int, req: PayLeaseRequest) -> LeasePayment:
+def pay_payment(
+    db: Session, payment_id: int, req: PayLeaseRequest, *, collected_by: int,
+    enforce_cash_shift: bool = True,
+) -> LeasePayment:
     """⚠️ نفس فئة الباجين اللي اتصلحوا قبل كده في `timeshare.services.pay_installment`
     (الموديول الشقيق)، اتكشفوا هنا كمان أثناء اختبار حي كمدير إيجارات — الكود كان
     منسوخ جزئيًا من غير الإصلاحين:
@@ -362,12 +454,40 @@ def pay_payment(db: Session, payment_id: int, req: PayLeaseRequest) -> LeasePaym
                 f"الدفعة ({remaining:,.2f} ج) — تحقّق من المبلغ قبل التسجيل"
             )
 
+        previous_status = payment.status
+        previous_paid_amount = payment.paid_amount
+        from app.modules.finance.services import record_external_payment  # noqa: PLC0415
+        collection = record_external_payment(
+            db,
+            branch_id=contract.branch_id,
+            amount=req.paid_amount,
+            payment_method=req.payment_method,
+            collector_id=collected_by,
+            reference=f"LSE-RCV-{payment.id:06d}",
+            source="leasing_rent",
+            source_id=payment.id,
+            require_cash_shift=enforce_cash_shift,
+        )
         # الإيراد لازم يكون اتحقّق (accrued) قبل أي تحصيل — لو التحصيل حصل في
         # نفس يوم/قبل ما مهمة accrue_due_rents اليومية تشتغل، بنحقّقه هنا
         # inline (idempotent، مفيش خطر ترحيل مزدوج).
         _accrue_single_payment(db, payment, contract)
         obj = crud.pay_payment(db, payment, req)
-        _post_rent_receipt_journal(db, obj, contract, req.paid_amount, req.payment_method)
+        _post_rent_receipt_journal(
+            db, obj, contract, req.paid_amount, req.payment_method,
+            collection_payment_id=collection.id, collected_by=collected_by,
+        )
+        _audit_leasing_action(
+            db, user_id=collected_by, branch_id=contract.branch_id,
+            action="collect_lease_payment", entity_type="lease_payment",
+            entity_id=payment.id,
+            old_data={"status": previous_status, "paid_amount": previous_paid_amount},
+            new_data={
+                "status": obj.status, "paid_amount": obj.paid_amount,
+                "collected_amount": req.paid_amount, "payment_method": req.payment_method,
+                "receipt_number": req.receipt_number, "payment_id": collection.id,
+            },
+        )
         db.commit()
         db.refresh(obj)
         return obj
@@ -400,8 +520,35 @@ def record_cash_log(db: Session, data: TenantCashLogCreate, recorded_by: int) ->
                 raise ValueError(f"العقد {contract.contract_number} منتهي — لا يمكن تحصيل إيجار عليه")
         log = crud.create_cash_log(db, data, recorded_by)
 
+        from app.modules.finance.services import record_external_payment  # noqa: PLC0415
+        ledger_amount = -data.amount if data.activity_type == "refund" else data.amount
+        collection = record_external_payment(
+            db,
+            branch_id=contract.branch_id,
+            amount=ledger_amount,
+            payment_method=data.payment_method,
+            collector_id=recorded_by,
+            reference=data.reference or f"LSE-CL-{log.id:06d}",
+            source="leasing_cash_log",
+            source_id=log.id,
+        )
+
         if data.activity_type in ("rent_payment", "revenue_share"):
-            _post_direct_rent_journal(db, log, contract, data.amount, data.payment_method)
+            _post_direct_rent_journal(
+                db, log, contract, data.amount, data.payment_method,
+                collection_payment_id=collection.id, collected_by=recorded_by,
+            )
+        _audit_leasing_action(
+            db, user_id=recorded_by, branch_id=contract.branch_id,
+            action="record_tenant_cash_log", entity_type="tenant_cash_log",
+            entity_id=log.id,
+            new_data={
+                "contract_id": contract.id, "activity_type": data.activity_type,
+                "amount": data.amount, "payment_method": data.payment_method,
+                "reference": data.reference, "payment_id": collection.id,
+            },
+        )
+
     except Exception:
         db.rollback()
         raise

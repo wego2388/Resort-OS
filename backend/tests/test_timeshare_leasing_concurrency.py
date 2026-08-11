@@ -166,7 +166,7 @@ class TestInstallmentPaymentRace:
             try:
                 barrier.wait(timeout=5)
                 res = ts_services.pay_installment(
-                    db, inst_id, PayInstallmentRequest(paid_amount=Decimal("6000"), payment_method="cash"),
+                    db, inst_id, PayInstallmentRequest(paid_amount=Decimal("6000"), payment_method="cash"), collected_by=1,
                 )
                 outcome[tag] = ("ok", res.paid_amount)
             except Exception as exc:  # noqa: BLE001

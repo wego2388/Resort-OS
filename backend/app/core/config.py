@@ -76,7 +76,7 @@ class Settings(CoreSettings):
 
     # ── Timeshare Owner Portal Token (مفتاح منفصل لعزل الأمان، زي
     # SURVEY_TOKEN_SECRET بالظبط) — طلب Mohamed 2026-08-03: صفحة على الموقع
-    # العام يتحقق فيها صاحب عقد تايم شير من هويته (رقم العقد + رقم موبايله
+    # العام يتحقق فيها صاحب عقد ملكية جزئية من هويته (رقم العقد + رقم موبايله
     # المسجّل + كود OTP يوصله واتساب)، وبعدين يشوف عقده/دفعاته ويطلب زيارة/
     # يفتح تذكرة دعم. الـtoken ده session-like (بيتعاد استخدامه لأكتر من
     # نداء، مش رابط استُخدم مرة واحدة زي survey token) — فبيتبعت كـheader
@@ -237,7 +237,7 @@ class Settings(CoreSettings):
         _issue_owner_portal_token) بس مالهومش أي validator زي SECRET_KEY —
         لو الإنتاج بدأ بمفتاح فاضي/افتراضي (زي TIMESHARE_PORTAL_TOKEN_SECRET
         اللي مكانش أصلاً في .env.prod)، أي حد يعرف الكود (المستودع عام على
-        GitHub) يقدر يزوّر توكن صالح لبوابة أي عميل تايم شير — يشوف بياناته
+        GitHub) يقدر يزوّر توكن صالح لبوابة أي عميل ملكية جزئية — يشوف بياناته
         المالية ويقدّم طلبات باسمه، من غير ما يعدي أي تحقق OTP خالص."""
         for field_name, label in (
             ("SURVEY_TOKEN_SECRET", "SURVEY_TOKEN_SECRET"),

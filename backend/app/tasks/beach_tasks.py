@@ -1,7 +1,7 @@
 """app/tasks/beach_tasks.py — Beach reservation no-show processing + B2B dunning
 
 ⚠️ باج توقيت حقيقي كان هنا (نفس فئة الباج الموثّقة في resort_os/timezone_utils.py
-واللي اتكشفت في KDS/PMS/تايم-شير/موارد بشرية/إيجارات/شاطئ يوم 2026-07-06):
+واللي اتكشفت في KDS/PMS/ملكية جزئية/موارد بشرية/إيجارات/شاطئ يوم 2026-07-06):
 `process_reservation_no_shows` كانت بتستخدم `date.today()` (توقيت السيرفر، UTC
 غالبًا في الإنتاج) بدل توقيت المنتجع (Africa/Cairo) — بقى بيستخدم business_today.
 

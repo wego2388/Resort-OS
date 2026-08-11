@@ -432,6 +432,17 @@ def get_salary_advance(db: Session, advance_id: int) -> Optional[SalaryAdvance]:
     return db.query(SalaryAdvance).filter(SalaryAdvance.id == advance_id).first()
 
 
+def lock_salary_advance_for_update(db: Session, advance_id: int) -> Optional[SalaryAdvance]:
+    """Lock a salary advance before a one-time state transition."""
+    return (
+        db.query(SalaryAdvance)
+        .filter(SalaryAdvance.id == advance_id)
+        .with_for_update()
+        .populate_existing()
+        .first()
+    )
+
+
 def create_salary_advance(db: Session, data: SalaryAdvanceCreate, created_by: int) -> SalaryAdvance:
     advance = SalaryAdvance(
         **data.model_dump(),

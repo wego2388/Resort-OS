@@ -123,7 +123,7 @@ def generate(db: "Session", ctx: "ScenarioContext") -> dict:
                 items=[{"item_id": item.id, "received_qty": received_qty}],
                 warehouse_id=warehouse.id,
                 received_at=month_start + timedelta(days=receive_offset),
-            ), received_by=0)
+            ), received_by=ctx.actor_id)
             return po
 
         po1 = _receive_po("fb", p_rice, Decimal("2000"), Decimal("2000"), 2, 5)       # 40,000 full

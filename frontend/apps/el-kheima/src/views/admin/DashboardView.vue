@@ -28,7 +28,7 @@ const loading = ref(false)
 const loadError = ref(false)
 
 // #17: كارت "تنبيهات عاجلة" مجمّع — المدير كان محتاج يفتح 4 شاشات منفصلة
-// (مخزون/صيانة/تايم شير/حسابات) عشان يعرف فيه مشكلة. كل رقم هنا بيجي من
+// (مخزون/صيانة/ملكية جزئية/حسابات) عشان يعرف فيه مشكلة. كل رقم هنا بيجي من
 // endpoint موجود بالفعل (مفيش منطق عمل جديد، بس تجميع للعرض).
 interface UrgentAlerts {
   lowStock: number; overdueMaintenance: number; overdueInstallments: number | null; bouncedChecks: number

@@ -44,7 +44,7 @@ def check_due_reminders(self):
 
 
 def _check_timeshare_dues(db, branch_id: int, remind_date: date) -> None:
-    """تذكيرات أقساط التايم شير (نداء مبكر 3 أيام قبل الاستحقاق — النداء التاني
+    """تذكيرات أقساط الملكية الجزئية (نداء مبكر 3 أيام قبل الاستحقاق — النداء التاني
     عند 7 أيام موجود في timeshare_tasks.send_installment_reminders).
 
     check_due_reminders بينادي الدالة دي مرة لكل فرع نشط. branch_id كان

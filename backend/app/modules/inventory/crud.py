@@ -323,7 +323,7 @@ def receive_purchase_order(
     warehouse_id: int,
     received_at,
     received_by: int,
-) -> tuple[PurchaseOrder, Decimal]:
+) -> tuple[PurchaseOrder, Decimal, int | None]:
     """يُسجّل استلام البضاعة ويُحدّث المخزون.
 
     ⚠️ يقفل صف كل Product (SELECT FOR UPDATE NOWAIT، راجع lock_product_for_update)
@@ -334,8 +334,8 @@ def receive_purchase_order(
     NOWAIT (بيرفض فورًا مش بيستنى، فمفيش deadlock حقيقي ممكن يحصل)، بس بيقلل
     تضارب الأقفال غير الضروري ونفس الممارسة المتبعة.
 
-    بيرجّع (po, received_value) — received_value هي قيمة **دفعة الاستلام دي
-    بس** (qty × unit_cost لكل صنف اتسلّم دلوقتي، مش إجمالي أمر الشراء كله —
+    بيرجّع (po, received_value, receipt_movement_id) — received_value هي قيمة
+    **دفعة الاستلام دي بس** (qty × unit_cost، مش إجمالي أمر الشراء كله —
     مهم للاستلام الجزئي/partial)، عشان services.receive_purchase_order يقدر
     يرحّل قيد محاسبي حقيقي بنفس المبلغ الصح (راجع services._post_purchase_
     receipt_journal)."""
@@ -352,6 +352,7 @@ def receive_purchase_order(
     resolved.sort(key=lambda pair: pair[0].product_id)
 
     received_value = sum((item.unit_cost * qty for item, qty in resolved), Decimal("0"))
+    receipt_movements: list[StockMovement] = []
 
     all_received = True
     for item, qty in resolved:
@@ -371,6 +372,7 @@ def receive_purchase_order(
             moved_at=datetime.combine(received_at, datetime.min.time()) if hasattr(received_at, 'year') else datetime.utcnow(),
         )
         db.add(mov)
+        receipt_movements.append(mov)
 
         # تحديث المخزون + متوسط التكلفة المتحرك — بعد قفل الصف
         product = lock_product_for_update(db, item.product_id)
@@ -391,7 +393,8 @@ def receive_purchase_order(
     po.status = "received" if all_received else "partial"
     po.received_at = received_at
     db.flush()
-    return po, received_value
+    receipt_movement_id = receipt_movements[0].id if receipt_movements else None
+    return po, received_value, receipt_movement_id
 
 
 # ── PurchaseRequest ───────────────────────────────────────────────────

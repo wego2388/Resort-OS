@@ -8,7 +8,7 @@ permission dependencies and Pydantic validation (not direct service calls).
 from __future__ import annotations
 
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 from fastapi.testclient import TestClient
@@ -16,11 +16,11 @@ from fastapi.testclient import TestClient
 
 def make_branch_committed(db):
     from app.modules.core.models import Branch
-    b = Branch(name="Timeshare HTTP Branch", name_ar="فرع تايم شير",
+    b = Branch(name="Timeshare HTTP Branch", name_ar="فرع ملكية جزئية",
                code=f"TS-{uuid.uuid4().hex[:8].upper()}")
     db.add(b)
     db.commit()
-    # Gate 4B: عمليات التايم شير بقت تفرض branch isolation server-side
+    # Gate 4B: عمليات الملكية الجزئية بقت تفرض branch isolation server-side
     # (2026-07-28) — نفس نمط test_finance_http.py's _link_shared_users_to_branch.
     # الـheaders fixtures المشتركة (cashier/manager) بلا عضوية فرع أصلاً،
     # فبنربطها (upsert) بالفرع الجديد ده عشان تستات الـHTTP تفضل تمثّل
@@ -51,12 +51,17 @@ def _seed_finance_accounts(db, branch) -> None:
 
 def _link_shared_users_to_branch(db, branch_id: int) -> None:
     from app.core.kernel.models.user import User
+    from app.modules.finance.models import CashierShift
     from tests.conftest import assign_test_user_to_branch
 
     for email in ("cashier@test.local", "manager@test.local", "timeshare-admin@test.local"):
         user = db.query(User).filter(User.email == email).first()
         if user:
             assign_test_user_to_branch(db, user.id, branch_id)
+            db.add(CashierShift(
+                branch_id=branch_id, cashier_id=user.id, opened_by=user.id,
+                opened_at=datetime.utcnow(), opening_float=Decimal("0"), status="open",
+            ))
     db.commit()
 
 
@@ -482,7 +487,7 @@ def _set_installment_status(db, inst_id: int, status: str) -> None:
 
 
 class TestTimeshareReportingHttp:
-    """الـ 5 endpoints بتوع لوحات التايم شير (cs-summary / sales-dashboard /
+    """الـ 5 endpoints بتوع لوحات الملكية الجزئية (cs-summary / sales-dashboard /
     calendar / upcoming-visits / stats) — بتتنادى من TimeshareView.vue كل تحميل.
     تُختبر HTTP-level حقيقي مع تأكيد القيم المحسوبة الفعلية (مش مجرد 200 OK)."""
 
@@ -578,7 +583,7 @@ class TestTimeshareReportingHttp:
     def test_sales_dashboard_export_returns_valid_excel_for_manager(
         self, client: TestClient, db, fake_redis, timeshare_admin_headers,
     ):
-        """wagdy.md #12: export Excel للوحة مبيعات التايم شير — مدير+ بس."""
+        """wagdy.md #12: export Excel للوحة مبيعات الملكية الجزئية — مدير+ بس."""
         branch = make_branch_committed(db)
         client.post("/api/v1/timeshare/contracts", json=contract_payload(branch.id), headers=timeshare_admin_headers)
 

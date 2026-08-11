@@ -13,7 +13,7 @@
 ### المرحلة 1 — عقود المقاييس ✅
 الوثيقة الكاملة: `docs/owner/kpi-contracts.md`
 - كل مقياس له: مصدر الحقيقة، الصيغة، الفترة، حالة الاكتمال، مسار الـ drill-down
-- قرار مسجّل: ذمم B2B وتايم شير تُعرض كـ buckets منفصلة (ليس مجموعاً واحداً)
+- قرار مسجّل: ذمم B2B وملكية جزئية تُعرض كـ buckets منفصلة (ليس مجموعاً واحداً)
 
 ### المرحلة 2 — العزل والأمان ✅
 
@@ -127,14 +127,14 @@
 3. `docs/owner/kpi-contracts.md` — مصدر الحقيقة لكل مقياس ستبنيه
 
 **النقطة الأولى في المرحلة 3:**
-- `GET /api/v1/owner/now` — يعيد: إيراد اليوم (A-1)، كاش الأدراج (A-2)، مصروفات اليوم (A-3)، ذمم B2B (A-4)، ذمم تايم شير (A-5)، إشغال الغرف الآن (A-6)، سعة الشاطئ اليوم (A-7).
+- `GET /api/v1/owner/now` — يعيد: إيراد اليوم (A-1)، كاش الأدراج (A-2)، مصروفات اليوم (A-3)، ذمم B2B (A-4)، ذمم ملكية جزئية (A-5)، إشغال الغرف الآن (A-6)، سعة الشاطئ اليوم (A-7).
 - `GET /api/v1/owner/performance` — مقارنة فترات: اليوم vs أمس، الأسبوع vs الأسبوع الماضي، الشهر vs الشهر الماضي.
 
 **مصادر البيانات جاهزة — لا تعيد بناء أي دالة موجودة:**
 - إيراد/مصروفات: `finance.services.get_income_statement(db, branch_id, date_from, date_to)`
 - كاش الأدراج: `finance.services.build_active_shifts_response(db, branch_id)`
 - ذمم B2B: `beach.models.B2BContract` + `B2BContractDay`
-- ذمم تايم شير: `timeshare.models.TimeshareInstallment`
+- ذمم ملكية جزئية: `timeshare.models.TimeshareInstallment`
 - إشغال الغرف: `pms.models.Room` حيث `status='occupied'`
 - سعة الشاطئ: `beach.models.BeachInventory`
 

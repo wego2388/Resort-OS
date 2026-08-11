@@ -486,7 +486,7 @@ class TestCallNotes:
             json={
                 "branch_id": branch.id, "lead_id": lead["id"],
                 "direction": "outbound", "duration_min": 6,
-                "summary": "اتكلمنا عن أسعار التايم شير", "outcome": "interested",
+                "summary": "اتكلمنا عن أسعار الملكية الجزئية", "outcome": "interested",
             },
             headers=manager_headers,
         )

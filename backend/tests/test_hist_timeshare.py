@@ -13,7 +13,7 @@ from app.hist_timeshare import generate as generate_timeshare
 @pytest.fixture
 def branch(db: Session):
     from app.modules.core.models import Branch
-    b = Branch(name="Test Timeshare HIST", name_ar="اختبار تايم شير تاريخي",
+    b = Branch(name="Test Timeshare HIST", name_ar="اختبار ملكية جزئية تاريخي",
                code=f"HT-{uuid.uuid4().hex[:6].upper()}")
     db.add(b)
     db.commit()
@@ -37,6 +37,7 @@ class _Ctx:
         self.period_year = 2026
         self.period_month = 7
         self.tz_name = "Africa/Cairo"
+        self.actor_id = 1
 
 
 class TestHistTimeshareGenerator:

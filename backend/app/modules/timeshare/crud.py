@@ -43,6 +43,17 @@ def get_contract(db: Session, contract_id: int) -> Optional[TimeshareContract]:
     return db.query(TimeshareContract).filter(TimeshareContract.id == contract_id).first()
 
 
+def lock_contract_for_update(db: Session, contract_id: int) -> Optional[TimeshareContract]:
+    """Serialize cancellation/refund so the same contract cannot be refunded twice."""
+    return (
+        db.query(TimeshareContract)
+        .filter(TimeshareContract.id == contract_id)
+        .with_for_update()
+        .populate_existing()
+        .first()
+    )
+
+
 def get_contract_by_number(db: Session, contract_number: str) -> Optional[TimeshareContract]:
     """بوابة العميل العامة (verify-request) — contract_number فريد عالميًا
     (unique=True على العمود)، فمحتاجناش branch_id للبحث."""
@@ -665,10 +676,18 @@ def overall_collection(db: Session, branch_id: int) -> dict:
     return {"collected": collected, "pending": pending, "overdue": overdue}
 
 
-def cancel_contract(db: Session, contract: TimeshareContract, cancel_amount: Decimal) -> TimeshareContract:
+def cancel_contract(
+    db: Session,
+    contract: TimeshareContract,
+    cancel_amount: Decimal,
+    refund_method: Optional[str],
+    cancelled_by: int,
+) -> TimeshareContract:
     contract.status = "cancelled"
     contract.cancelled_at = business_today(settings.TIMEZONE)
     contract.cancel_amount = cancel_amount
+    contract.refund_method = refund_method
+    contract.cancelled_by = cancelled_by
     db.flush()
     return contract
 

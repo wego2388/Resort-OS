@@ -53,6 +53,16 @@ def product(db: Session, branch, warehouse):
     )
     return services.create_product(db, data)
 
+def _seed_purchase_accounts(db: Session, branch) -> None:
+    from app.modules.finance.models import Account
+
+    db.add_all([
+        Account(branch_id=branch.id, code="1200", name="Inventory", account_type="asset"),
+        Account(branch_id=branch.id, code="2200", name="Supplier AP", account_type="liability"),
+    ])
+    db.flush()
+
+
 
 class TestProduct:
 
@@ -311,6 +321,7 @@ class TestPurchaseOrder:
             PurchaseOrderCreate, PurchaseOrderItemCreate, ReceiveItemsRequest,
         )
         from datetime import date
+        _seed_purchase_accounts(db, branch)
 
         po_data = PurchaseOrderCreate(
             branch_id=branch.id,

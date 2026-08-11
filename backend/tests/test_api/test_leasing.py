@@ -4,7 +4,7 @@ Integration tests for leasing module.
 """
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -22,6 +22,20 @@ def branch(db: Session):
     from app.modules.core.models import Branch
     b = Branch(name="Test", name_ar="اختبار", code=f"LS-{uuid.uuid4().hex[:6].upper()}")
     db.add(b); db.flush()
+    from app.modules.finance.models import Account, CashierShift
+    db.add_all([
+        Account(branch_id=b.id, code="1100", name="Cash", account_type="asset"),
+        Account(branch_id=b.id, code="1110", name="Bank", account_type="asset"),
+        Account(branch_id=b.id, code="1120", name="Card", account_type="asset"),
+        Account(branch_id=b.id, code="1260", name="Tenant AR", account_type="asset"),
+        Account(branch_id=b.id, code="2150", name="Tenant Deposits", account_type="liability"),
+        Account(branch_id=b.id, code="4500", name="Lease Revenue", account_type="revenue"),
+        CashierShift(
+            branch_id=b.id, cashier_id=1, opened_by=1, opened_at=datetime.utcnow(),
+            opening_float=Decimal("0"), status="open",
+        ),
+    ])
+    db.flush()
     return b
 
 
@@ -77,7 +91,7 @@ class TestLeasePayment:
     def test_pay_full(self, db, contract):
         payment = contract.payments[0]
         req = PayLeaseRequest(paid_amount=payment.amount, payment_method="bank_transfer")
-        paid = services.pay_payment(db, payment.id, req)
+        paid = services.pay_payment(db, payment.id, req, collected_by=1)
         assert paid.status == "paid"
 
     def test_partial_payment(self, db, contract):
@@ -86,15 +100,15 @@ class TestLeasePayment:
             paid_amount=payment.amount / Decimal("2"),
             payment_method="cash",
         )
-        paid = services.pay_payment(db, payment.id, req)
+        paid = services.pay_payment(db, payment.id, req, collected_by=1)
         assert paid.status == "partial"
 
     def test_cannot_pay_already_paid(self, db, contract):
         payment = contract.payments[0]
         req = PayLeaseRequest(paid_amount=payment.amount, payment_method="cash")
-        services.pay_payment(db, payment.id, req)
+        services.pay_payment(db, payment.id, req, collected_by=1)
         with pytest.raises(ValueError, match="مسددة"):
-            services.pay_payment(db, payment.id, req)
+            services.pay_payment(db, payment.id, req, collected_by=1)
 
     def test_penalty_included_in_full_pay(self, db, contract):
         payment = contract.payments[0]
@@ -103,7 +117,7 @@ class TestLeasePayment:
 
         # دفع المبلغ بدون الغرامة → partial
         req = PayLeaseRequest(paid_amount=payment.amount, payment_method="cash")
-        paid = services.pay_payment(db, payment.id, req)
+        paid = services.pay_payment(db, payment.id, req, collected_by=1)
         assert paid.status == "partial"
 
     def test_receipt_pdf_uses_freshly_computed_penalty_not_stale_column(self, db, contract):

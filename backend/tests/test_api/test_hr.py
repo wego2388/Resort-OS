@@ -1205,8 +1205,89 @@ class TestSalaryAdvance:
             amount=Decimal("2000"), disbursed_date=date(2026, 1, 5),
             monthly_deduction_amount=Decimal("400"),
         ), created_by=1)
-        cancelled = services.cancel_salary_advance(db, advance.id, reason="غلط في الإدخال")
+        cancelled = services.cancel_salary_advance(
+            db, advance.id, reason="غلط في الإدخال", cancelled_by=2,
+        )
         assert cancelled.status == "cancelled"
+        assert cancelled.cancelled_by == 2
+        assert cancelled.cancelled_at is not None
+
+        from app.modules.finance.models import JournalEntry, JournalLine
+        reversal = (
+            db.query(JournalEntry)
+            .filter(
+                JournalEntry.source == "payroll_advance_cancel",
+                JournalEntry.source_id == advance.id,
+            )
+            .one()
+        )
+        assert reversal.created_by == 2
+        reversal_lines = {
+            line.account.code: (line.debit, line.credit)
+            for line in db.query(JournalLine).filter(JournalLine.entry_id == reversal.id).all()
+        }
+        assert reversal_lines["1100"] == (Decimal("2000.00"), Decimal("0.00"))
+        assert reversal_lines["1180"] == (Decimal("0.00"), Decimal("2000.00"))
+
+        all_lines = (
+            db.query(JournalLine)
+            .join(JournalEntry, JournalEntry.id == JournalLine.entry_id)
+            .filter(
+                JournalEntry.source.in_(["payroll_advance", "payroll_advance_cancel"]),
+                JournalEntry.source_id == advance.id,
+            )
+            .all()
+        )
+        assert sum(
+            line.debit - line.credit
+            for line in all_lines
+            if line.account.code == "1100"
+        ) == 0
+        assert sum(
+            line.debit - line.credit
+            for line in all_lines
+            if line.account.code == "1180"
+        ) == 0
+
+        with pytest.raises(ValueError, match="لا يمكن إلغاؤها"):
+            services.cancel_salary_advance(db, advance.id, cancelled_by=2)
+        assert (
+            db.query(JournalEntry)
+            .filter(
+                JournalEntry.source == "payroll_advance_cancel",
+                JournalEntry.source_id == advance.id,
+            )
+            .count()
+        ) == 1
+
+    def test_cancel_advance_fails_atomically_when_account_missing(self, db, branch, employee):
+        from app.modules.finance.models import Account, JournalEntry
+        from app.modules.finance.services import FinancialConfigurationError
+
+        advance = services.create_salary_advance(db, SalaryAdvanceCreate(
+            employee_id=employee.id, branch_id=branch.id,
+            amount=Decimal("2000"), disbursed_date=date(2026, 1, 5),
+            monthly_deduction_amount=Decimal("400"),
+        ), created_by=1)
+        cash = db.query(Account).filter_by(branch_id=branch.id, code="1100").one()
+        cash.code = "1100_DISABLED"
+        db.commit()
+
+        with pytest.raises(FinancialConfigurationError):
+            services.cancel_salary_advance(db, advance.id, cancelled_by=2)
+
+        db.refresh(advance)
+        assert advance.status == "active"
+        assert advance.cancelled_by is None
+        assert advance.cancelled_at is None
+        assert (
+            db.query(JournalEntry)
+            .filter(
+                JournalEntry.source == "payroll_advance_cancel",
+                JournalEntry.source_id == advance.id,
+            )
+            .count()
+        ) == 0
 
     def test_cancel_advance_with_deduction_raises(self, db, branch, employee, si_config, tax_brackets):
         """سلفة اتخصم منها قسط بالفعل (عبر تشغيل كشف رواتب) ما ينفعش تتلغي —
@@ -1219,7 +1300,7 @@ class TestSalaryAdvance:
         services.run_payroll_for_branch(db, branch.id, 2026, 6)
 
         with pytest.raises(ValueError, match="تم خصم أقساط منها بالفعل"):
-            services.cancel_salary_advance(db, advance.id)
+            services.cancel_salary_advance(db, advance.id, cancelled_by=1)
 
 
 class TestAdvancePayment:
@@ -1380,7 +1461,7 @@ class TestPayrollAdvanceDeductionIntegration:
             amount=Decimal("1000"), disbursed_date=date(2026, 1, 5),
             monthly_deduction_amount=Decimal("300"),
         ), created_by=1)
-        services.cancel_salary_advance(db, advance.id)
+        services.cancel_salary_advance(db, advance.id, cancelled_by=1)
 
         run = services.run_payroll_for_branch(db, branch.id, 2026, 6)
         line = crud.list_lines_for_run(db, run.id)[0]

@@ -30,7 +30,7 @@ from app.resort_os.timeshare_engine import (
 
 
 class VisitConflictError(Exception):
-    """وحدة تايم شير مقفولة فعلاً أو ماسكاها transaction تانية الآن — 409، مش 400."""
+    """وحدة ملكية جزئية مقفولة فعلاً أو ماسكاها transaction تانية الآن — 409، مش 400."""
 
 
 class PaymentConflictError(Exception):
@@ -77,7 +77,13 @@ def get_contract_or_404(db: Session, contract_id: int) -> TimeshareContract:
     return c
 
 
-def create_contract(db: Session, data: TimeshareContractCreate, signed_by: int) -> TimeshareContract:
+def create_contract(
+    db: Session,
+    data: TimeshareContractCreate,
+    signed_by: int,
+    *,
+    collection_actor_id: Optional[int] = None,
+) -> TimeshareContract:
     if data.down_payment > data.total_value:
         raise ValueError("الدفعة الأولى لا يمكن أن تتجاوز إجمالي قيمة العقد")
     if data.end_date and data.end_date <= data.start_date:
@@ -106,7 +112,27 @@ def create_contract(db: Session, data: TimeshareContractCreate, signed_by: int) 
         # الترحيل الصارم أصلاً (post_simple_revenue_journal(strict=True) بيرفض
         # مبلغ صفري كخطأ تجهيز، مش no-op شرعي).
         if contract.down_payment and contract.down_payment > 0:
-            _post_deferred_revenue_journal(db, contract)
+            collection_payment_id = None
+            if collection_actor_id is not None:
+                from app.modules.finance.services import record_external_payment  # noqa: PLC0415
+
+                collection = record_external_payment(
+                    db,
+                    branch_id=contract.branch_id,
+                    amount=contract.down_payment,
+                    payment_method=contract.down_payment_method or "cash",
+                    collector_id=collection_actor_id,
+                    reference=f"TS-DP-{contract.contract_number}",
+                    source="timeshare_down_payment",
+                    source_id=contract.id,
+                )
+                collection_payment_id = collection.id
+            _post_deferred_revenue_journal(
+                db,
+                contract,
+                collection_payment_id=collection_payment_id,
+                collected_by=collection_actor_id or signed_by,
+            )
 
         # مستحق الصيانة الأول للعقد — لو التوليد الجماعي السنوي (1 يناير) كان
         # اشتغل بالفعل قبل ما العقد ده يتوقّع، كان هيفضل من غير مستحق صيانة
@@ -141,12 +167,18 @@ def _generate_maintenance_due_for_new_contract(db: "Session", contract: "Timesha
     )
 
 
-def _post_deferred_revenue_journal(db: "Session", contract: "TimeshareContract") -> None:
-    """Dr. Cash (1100) / Cr. إيرادات عقود التايم شير (4600) عند إنشاء العقد.
+def _post_deferred_revenue_journal(
+    db: "Session",
+    contract: "TimeshareContract",
+    *,
+    collection_payment_id: Optional[int],
+    collected_by: int,
+) -> None:
+    """Dr. tender account / Cr. timeshare revenue for the down payment.
 
     ⚠️ باج محاسبي حقيقي كان هنا (اتصلح 2026-07-07، قرار Mohamed): كان بيرحّل
     لحساب 2300 ("إيرادات مؤجَّلة") وهو حساب liability مش revenue — يعني كل
-    دفعة أولى ولا قسط تايم شير من أول ما اتعمل الموديول كان بيتراكم في حساب
+    دفعة أولى ولا قسط ملكية جزئية من أول ما اتعمل الموديول كان بيتراكم في حساب
     التزامات للأبد، بدون أي خطوة "تحرير" لاحقة تنقله لإيراد فعلي، فمكانش
     بيظهر في قائمة الدخل خالص. القرار: تسجيل إيراد فوري وقت كل دفعة (نفس
     فلسفة حجز الغرف)، لحساب Revenue مخصص منفصل عن إيراد حجوزات الغرف
@@ -159,34 +191,68 @@ def _post_deferred_revenue_journal(db: "Session", contract: "TimeshareContract")
 
     post_simple_revenue_journal(
         db, contract.branch_id, business_today(settings.TIMEZONE),
-        debit_account_code="1100", credit_account_code="4600",
+        debit_account_code=_PAYMENT_METHOD_DEBIT_ACCOUNT.get(
+            contract.down_payment_method or "cash", "1100",
+        ),
+        credit_account_code="4600",
         amount=contract.down_payment or _D("0"),
         reference=f"TS-DP-{contract.contract_number}",
-        description=f"دفعة أولى تايم شير — {contract.contract_number}",
-        source="timeshare", source_id=contract.id,
-        created_by=contract.signed_by or 0,
+        description=f"دفعة أولى ملكية جزئية — {contract.contract_number}",
+        source="timeshare",
+        source_id=collection_payment_id or contract.id,
+        created_by=collected_by,
         cost_center_code="TS",
         strict=True, commit_cost_centers=False,
     )
 
 
-def update_contract(db: Session, contract_id: int, data: TimeshareContractUpdate) -> TimeshareContract:
+def update_contract(
+    db: Session, contract_id: int, data: TimeshareContractUpdate,
+    *, updated_by: int | None = None,
+) -> TimeshareContract:
+    import json as _json  # noqa: PLC0415
+    from app.modules.core.crud import create_audit_log  # noqa: PLC0415
+    from app.modules.core.schemas import AuditLogCreate  # noqa: PLC0415
+
     contract = get_contract_or_404(db, contract_id)
+    changes = data.model_dump(exclude_unset=True)
+    if data.status == "cancelled" and contract.status != "cancelled":
+        raise ValueError("استخدم إجراء إلغاء العقد المخصص لتسجيل الرد والقيد وسجل التدقيق")
     if data.unit_capacity is not None:
         effective_room_type = contract.room_type
         if effective_room_type == "Studio" and data.unit_capacity != 2:
             raise ValueError("Studio دايمًا سعة 2 أفراد")
         if effective_room_type == "Chalet" and data.unit_capacity not in (4, 6):
             raise ValueError("Chalet سعة 4 أو 6 أفراد (6 = باقة Family Compound)")
-    obj = crud.update_contract(db, contract, data)
-    db.commit()
-    db.refresh(obj)
-    return obj
+    old_values = {field: getattr(contract, field) for field in changes}
+    try:
+        obj = crud.update_contract(db, contract, data)
+        if changes:
+            create_audit_log(db, AuditLogCreate(
+                user_id=updated_by, branch_id=contract.branch_id,
+                action="update_contract", entity_type="timeshare_contract",
+                entity_id=contract.id,
+                old_data=_json.dumps(old_values, ensure_ascii=False, default=str),
+                new_data=_json.dumps(changes, ensure_ascii=False, default=str),
+            ))
+        db.commit()
+        db.refresh(obj)
+        return obj
+    except Exception:
+        db.rollback()
+        raise
 
 
-def pay_installment(db: Session, inst_id: int, req: PayInstallmentRequest) -> TimeshareInstallment:
+def pay_installment(
+    db: Session,
+    inst_id: int,
+    req: PayInstallmentRequest,
+    *,
+    collected_by: int,
+    enforce_cash_shift: bool = True,
+) -> TimeshareInstallment:
     """⚠️ 3 باجات حقيقية اتصلحوا هنا (اتكشفوا أثناء اختبار حي كمدير خدمة عملاء
-    تايم شير):
+    ملكية جزئية):
     1. مفيش أي تحقق من حالة العقد — كان ممكن تسجّل تحصيل قسط على عقد **ملغي**
        أو **منتهي** فعليًا (العقد اتلغى بس القسط المرتبط بيه فضل قابل للتحصيل).
     2. مفيش أي حد أقصى على المبلغ — إدخال 50,000 على قسط قيمته 10,000 كان
@@ -194,9 +260,9 @@ def pay_installment(db: Session, inst_id: int, req: PayInstallmentRequest) -> Ti
        غير أي تنبيه أو تسجيل فرق) — باج مالي حقيقي، مش نظري.
     3. **الأهم**: تحصيل قسط عمره ما كان بيرحّل أي قيد يومية خالص — بعكس الدفعة
        الأولى (_post_deferred_revenue_journal بتترحّل عند إنشاء العقد فقط).
-       يعني كل تحصيلات الأقساط (اللي هي معظم إيراد التايم شير على مدار سنين
+       يعني كل تحصيلات الأقساط (اللي هي معظم إيراد الملكية الجزئية على مدار سنين
        العقد) كانت غايبة تمامًا عن الدفاتر المحاسبية — مخالفة مباشرة لـ
-       "Finance First" (§5.2 في CLAUDE.md بيذكر أقساط التايم شير بالاسم صراحةً).
+       "Finance First" (§5.2 في CLAUDE.md بيذكر أقساط الملكية الجزئية بالاسم صراحةً).
     """
     inst = _lock_installment_or_raise(db, inst_id)
     try:
@@ -218,14 +284,34 @@ def pay_installment(db: Session, inst_id: int, req: PayInstallmentRequest) -> Ti
                 f"القسط ({remaining:,.2f} ج) — تحقّق من المبلغ قبل التسجيل"
             )
 
+        from app.modules.finance.services import record_external_payment  # noqa: PLC0415
+        collection = record_external_payment(
+            db,
+            branch_id=contract.branch_id,
+            amount=req.paid_amount,
+            payment_method=req.payment_method,
+            collector_id=collected_by,
+            reference=f"TS-INST-{contract.contract_number}-{inst.installment_no}",
+            source="timeshare_installment",
+            source_id=inst.id,
+            require_cash_shift=enforce_cash_shift,
+        )
         obj = crud.pay_installment(db, inst, req)
         # strict=True (2026-08-11): تحصيل قسط من غير قيد محاسبي مقابل يفشل
         # كامل، مش يتسجّل بصمت من غير أثر محاسبي — راجع _post_installment_
         # payment_journal.
-        _post_installment_payment_journal(db, contract, req.paid_amount, inst, req.payment_method)
+        _post_installment_payment_journal(
+            db,
+            contract,
+            req.paid_amount,
+            inst,
+            req.payment_method,
+            collection_payment_id=collection.id,
+            collected_by=collected_by,
+        )
 
         # سجل تدقيق — تاريخ التحصيل قابل للمراجعة والتصحيح لاحقاً
-        _audit_installment_payment(db, contract, inst, req)
+        _audit_installment_payment(db, contract, inst, req, collected_by)
 
         # إلغاء تجميد الحجز إن كان مفيش أي رصيد متأخر تاني (أقساط أو صيانة)
         if contract.booking_frozen and not _has_any_overdue_balance(contract):
@@ -273,11 +359,17 @@ _PAYMENT_METHOD_DEBIT_ACCOUNT = {
 
 
 def _post_installment_payment_journal(
-    db: "Session", contract: "TimeshareContract", paid_amount, inst: "TimeshareInstallment",
-    payment_method: str | None = None,
+    db: "Session",
+    contract: "TimeshareContract",
+    paid_amount,
+    inst: "TimeshareInstallment",
+    payment_method: str,
+    *,
+    collection_payment_id: int,
+    collected_by: int,
 ) -> None:
     """Dr. Cash/Bank/Card (حسب طريقة الدفع الفعلية) / Cr. إيرادات عقود
-    التايم شير (4600) عند تحصيل أي قسط — نفس منطق _post_deferred_revenue_
+    الملكية الجزئية (4600) عند تحصيل أي قسط — نفس منطق _post_deferred_revenue_
     journal بالظبط بس لكل تحصيل قسط، مش الدفعة الأولى بس (راجع تعليق تلك
     الدالة لتفاصيل باج حساب 2300)."""
     from app.core.config import settings  # noqa: PLC0415
@@ -291,8 +383,8 @@ def _post_installment_payment_journal(
         amount=paid_amount,
         reference=f"TS-INST-{contract.contract_number}-{inst.installment_no}",
         description=f"تحصيل قسط رقم {inst.installment_no} — {contract.contract_number}",
-        source="timeshare", source_id=contract.id,
-        created_by=0,
+        source="timeshare", source_id=collection_payment_id,
+        created_by=collected_by,
         cost_center_code="TS",
         strict=True, commit_cost_centers=False,
     )
@@ -303,6 +395,7 @@ def _audit_installment_payment(
     contract: "TimeshareContract",
     inst: "TimeshareInstallment",
     req: "PayInstallmentRequest",
+    collected_by: int,
 ) -> None:
     """يسجّل AuditLog لكل تحصيل قسط — يتيح مراجعة تاريخ التحصيل الكامل
     وتصحيح أي خطأ لاحقاً (تاريخ، طريقة دفع، مبلغ). `transfer_unit` عنده
@@ -323,21 +416,25 @@ def _audit_installment_payment(
         "amount_paid_now": float(req.paid_amount),
     }, ensure_ascii=False)
 
-    try:
-        create_audit_log(db, AuditLogCreate(
-            branch_id=contract.branch_id,
-            action="pay_installment",
-            entity_type="timeshare_installment",
-            entity_id=inst.id,
-            old_data=old_data,
-            new_data=new_data,
-        ))
-    except ValueError:
-        # لو AuditLog فشل (branch مش موجود مثلاً في test env) — لا يوقف العملية
-        pass
+    create_audit_log(db, AuditLogCreate(
+        user_id=collected_by,
+        branch_id=contract.branch_id,
+        action="pay_installment",
+        entity_type="timeshare_installment",
+        entity_id=inst.id,
+        old_data=old_data,
+        new_data=new_data,
+    ))
 
 
-def pay_maintenance_due(db: Session, due_id: int, req: PayMaintenanceDueRequest) -> TimeshareMaintenanceDue:
+def pay_maintenance_due(
+    db: Session,
+    due_id: int,
+    req: PayMaintenanceDueRequest,
+    *,
+    collected_by: int,
+    enforce_cash_shift: bool = True,
+) -> TimeshareMaintenanceDue:
     """تحصيل مستحق صيانة سنوي — مرآة كاملة لـ pay_installment (نفس تسلسل
     التحقق بالضبط: موجود؟ مدفوع بالفعل؟ العقد ملغي/منتهي؟ المبلغ زيادة عن
     المتبقي؟) بس على TimeshareMaintenanceDue بدل TimeshareInstallment."""
@@ -361,10 +458,30 @@ def pay_maintenance_due(db: Session, due_id: int, req: PayMaintenanceDueRequest)
                 f"مستحق صيانة سنة {due.fee_year} ({remaining:,.2f} ج) — تحقّق من المبلغ قبل التسجيل"
             )
 
+        from app.modules.finance.services import record_external_payment  # noqa: PLC0415
+        collection = record_external_payment(
+            db,
+            branch_id=contract.branch_id,
+            amount=req.paid_amount,
+            payment_method=req.payment_method,
+            collector_id=collected_by,
+            reference=f"TS-MAINT-{contract.contract_number}-{due.fee_year}",
+            source="timeshare_maintenance",
+            source_id=due.id,
+            require_cash_shift=enforce_cash_shift,
+        )
         obj = crud.pay_maintenance_due(db, due, req)
         # strict=True (2026-08-11) — راجع pay_installment لنفس السبب.
-        _post_maintenance_payment_journal(db, contract, req.paid_amount, due, req.payment_method)
-        _audit_maintenance_payment(db, contract, due, req)
+        _post_maintenance_payment_journal(
+            db,
+            contract,
+            req.paid_amount,
+            due,
+            req.payment_method,
+            collection_payment_id=collection.id,
+            collected_by=collected_by,
+        )
+        _audit_maintenance_payment(db, contract, due, req, collected_by)
 
         if contract.booking_frozen and not _has_any_overdue_balance(contract):
             contract.booking_frozen = False
@@ -378,11 +495,17 @@ def pay_maintenance_due(db: Session, due_id: int, req: PayMaintenanceDueRequest)
 
 
 def _post_maintenance_payment_journal(
-    db: "Session", contract: "TimeshareContract", paid_amount, due: "TimeshareMaintenanceDue",
-    payment_method: str | None = None,
+    db: "Session",
+    contract: "TimeshareContract",
+    paid_amount,
+    due: "TimeshareMaintenanceDue",
+    payment_method: str,
+    *,
+    collection_payment_id: int,
+    collected_by: int,
 ) -> None:
     """Dr. Cash/Bank/Card (حسب طريقة الدفع الفعلية) / Cr. إيرادات صيانة
-    عقود التايم شير (4650) — حساب منفصل عمدًا عن 4600 (إيراد سعر الشراء):
+    عقود الملكية الجزئية (4650) — حساب منفصل عمدًا عن 4600 (إيراد سعر الشراء):
     إيراد الصيانة رسم خدمة سنوي مرتبط بسنة محدَّدة (fee_year)، مختلف في
     طبيعته المحاسبية عن إيراد بيع العقد لمرة واحدة."""
     from app.core.config import settings  # noqa: PLC0415
@@ -396,8 +519,8 @@ def _post_maintenance_payment_journal(
         amount=paid_amount,
         reference=f"TS-MAINT-{contract.contract_number}-{due.fee_year}",
         description=f"تحصيل صيانة سنة {due.fee_year} — {contract.contract_number}",
-        source="timeshare", source_id=contract.id,
-        created_by=0,
+        source="timeshare", source_id=collection_payment_id,
+        created_by=collected_by,
         cost_center_code="TS",
         strict=True, commit_cost_centers=False,
     )
@@ -408,6 +531,7 @@ def _audit_maintenance_payment(
     contract: "TimeshareContract",
     due: "TimeshareMaintenanceDue",
     req: "PayMaintenanceDueRequest",
+    collected_by: int,
 ) -> None:
     """يسجّل AuditLog لكل تحصيل صيانة — مرآة _audit_installment_payment."""
     import json as _json  # noqa: PLC0415
@@ -426,17 +550,15 @@ def _audit_maintenance_payment(
         "amount_paid_now": float(req.paid_amount),
     }, ensure_ascii=False)
 
-    try:
-        create_audit_log(db, AuditLogCreate(
-            branch_id=contract.branch_id,
-            action="pay_maintenance_due",
-            entity_type="timeshare_maintenance_due",
-            entity_id=due.id,
-            old_data=old_data,
-            new_data=new_data,
-        ))
-    except ValueError:
-        pass
+    create_audit_log(db, AuditLogCreate(
+        user_id=collected_by,
+        branch_id=contract.branch_id,
+        action="pay_maintenance_due",
+        entity_type="timeshare_maintenance_due",
+        entity_id=due.id,
+        old_data=old_data,
+        new_data=new_data,
+    ))
 
 
 def list_maintenance_dues_for_branch(
@@ -657,7 +779,7 @@ def generate_monthly_collection_report(
 
 
 def generate_contract_pdf(db: Session, contract_id: int) -> bytes:
-    """PDF ملخص عقد التايم شير."""
+    """PDF ملخص عقد الملكية الجزئية."""
     from app.resort_os.report_builder import builder  # noqa: PLC0415
 
     contract = get_contract_or_404(db, contract_id)
@@ -676,7 +798,7 @@ def generate_contract_pdf(db: Session, contract_id: int) -> bytes:
     ]
     return builder.receipt_pdf(
         reference=contract.contract_number,
-        title="عقد تايم شير",
+        title="عقد ملكية جزئية",
         fields=fields,
         total=float(contract.total_value),
         currency="EGP",
@@ -687,7 +809,7 @@ def generate_contract_pdf(db: Session, contract_id: int) -> bytes:
 # ── CS Dashboard ─────────────────────────────────────────────────────
 
 def get_cs_summary(db: Session, branch_id: int) -> dict:
-    """ملخص شامل لخدمة عملاء التايم شير — زيارات قادمة + متأخرات + نسبة تحصيل.
+    """ملخص شامل لخدمة عملاء الملكية الجزئية — زيارات قادمة + متأخرات + نسبة تحصيل.
 
     ⚠️ "اليوم" هنا بيتحسب بتوقيت المنتجع (business_today) مش توقيت السيرفر
     المحلي — نفس فئة باج تذاكر المطبخ (KDS)، هنا بيأثّر على "الأيام المتبقية
@@ -779,7 +901,7 @@ def get_sales_dashboard(db: Session, branch_id: int) -> dict:
 
 
 def generate_sales_dashboard_excel(db: Session, branch_id: int) -> bytes:
-    """تصدير Excel للوحة مبيعات التايم شير — قائمة اتصال يومية (متأخرات السداد)
+    """تصدير Excel للوحة مبيعات الملكية الجزئية — قائمة اتصال يومية (متأخرات السداد)
     وزيارات قادمة، لمدير المبيعات (طباعة/مشاركة، راجع wagdy.md #12).
     نفس بيانات SalesDashboardView.vue بالظبط، بدون أي منطق عمل إضافي هنا —
     الشيت مجرد عرض مختلف لنفس get_sales_dashboard."""
@@ -819,7 +941,7 @@ def generate_sales_dashboard_excel(db: Session, branch_id: int) -> bytes:
                 "summary": {"عدد الزيارات": len(visit_rows)},
             },
         ],
-        title=f"لوحة مبيعات التايم شير — فرع {branch_id}",
+        title=f"لوحة مبيعات الملكية الجزئية — فرع {branch_id}",
     )
 
 
@@ -1023,14 +1145,78 @@ def get_stats(db: Session, branch_id: int) -> dict:
     }
 
 
+_REFUND_METHOD_CREDIT_ACCOUNT = {
+    "cash": "1100",
+    "bank_transfer": "1110",
+    "card": "1120",
+}
+
+
+def _contract_refundable_amount(contract: TimeshareContract) -> Decimal:
+    """Contract principal collected, net of any refund already recorded."""
+    collected = Decimal(contract.down_payment or 0) + sum(
+        (Decimal(inst.paid_amount or 0) for inst in contract.installments_list),
+        Decimal("0"),
+    )
+    already_refunded = Decimal(contract.cancel_amount or 0)
+    return max(Decimal("0"), collected - already_refunded)
+
+
 def cancel_contract(
-    db: Session, contract_id: int, cancel_amount, cancelled_by: Optional[int] = None,
+    db: Session,
+    contract_id: int,
+    cancel_amount,
+    *,
+    refund_method: str = "cash",
+    cancelled_by: int,
+    enforce_cash_shift: bool = True,
 ) -> TimeshareContract:
-    contract = get_contract_or_404(db, contract_id)
-    if contract.status == "cancelled":
-        raise ValueError("العقد ملغي بالفعل")
+    refund_amount = Decimal(str(cancel_amount))
+    if refund_amount < 0:
+        raise ValueError("مبلغ الرد لا يمكن أن يكون سالبًا")
+    if refund_method not in _REFUND_METHOD_CREDIT_ACCOUNT:
+        raise ValueError("طريقة الرد يجب أن تكون cash أو card أو bank_transfer")
+    if cancelled_by <= 0:
+        raise ValueError("المستخدم المنفذ لإلغاء العقد مطلوب")
+
     try:
-        obj = crud.cancel_contract(db, contract, cancel_amount)
+        contract = crud.lock_contract_for_update(db, contract_id)
+        if not contract:
+            raise ValueError(f"العقد {contract_id} غير موجود")
+        if contract.status == "cancelled":
+            raise ValueError("العقد ملغي بالفعل")
+
+        refundable = _contract_refundable_amount(contract)
+        if refund_amount > refundable:
+            raise ValueError(
+                f"مبلغ الرد ({refund_amount:,.2f} ج) أكبر من صافي المحصل القابل "
+                f"للرد ({refundable:,.2f} ج)"
+            )
+
+        effective_method = refund_method if refund_amount > 0 else None
+        refund_payment_id = None
+        if refund_amount > 0:
+            from app.modules.finance.services import record_external_payment  # noqa: PLC0415
+
+            refund_payment = record_external_payment(
+                db,
+                branch_id=contract.branch_id,
+                amount=-refund_amount,
+                payment_method=refund_method,
+                collector_id=cancelled_by,
+                reference=f"TS-CANCEL-{contract.contract_number}",
+                source="timeshare_refund",
+                source_id=contract.id,
+                require_cash_shift=enforce_cash_shift,
+            )
+            refund_payment_id = refund_payment.id
+        obj = crud.cancel_contract(
+            db,
+            contract,
+            refund_amount,
+            effective_method,
+            cancelled_by,
+        )
         # ⚠️ باج محاسبي حقيقي كان هنا: إلغاء العقد بمبلغ استرداد (cancel_amount)
         # كان بيسجّل الرقم على العقد نفسه بس من غير أي قيد يومية — يعني كاش
         # حقيقي بيتدفع للعميل (استرداد) كان بيخرج من الخزينة من غير ما يترحّل
@@ -1039,8 +1225,18 @@ def cancel_contract(
         # يفضل مبالغ فيه للأبد رغم إن جزء منه اترد فعليًا للعميل. strict=True
         # (2026-08-11): فشل ترحيل قيد الاسترداد لازم يوقف الإلغاء كله، مش
         # يسجّل العقد "ملغي" من غير أي أثر محاسبي للاسترداد.
-        if cancel_amount and cancel_amount > 0:
-            _post_contract_cancellation_refund_journal(db, obj, cancel_amount, cancelled_by or 0)
+        if refund_amount > 0:
+            _post_contract_cancellation_refund_journal(
+                db,
+                obj,
+                refund_amount,
+                refund_method,
+                cancelled_by,
+                collection_payment_id=refund_payment_id,
+            )
+        _audit_contract_cancellation(
+            db, obj, refund_amount, effective_method, cancelled_by,
+        )
         db.commit()
         db.refresh(obj)
         return obj
@@ -1050,27 +1246,57 @@ def cancel_contract(
 
 
 def _post_contract_cancellation_refund_journal(
-    db: "Session", contract: "TimeshareContract", refund_amount, cancelled_by: int,
+    db: "Session",
+    contract: "TimeshareContract",
+    refund_amount,
+    refund_method: str,
+    cancelled_by: int,
+    *,
+    collection_payment_id: int,
 ) -> None:
-    """Dr. إيرادات عقود التايم شير (4600) / Cr. نقدية (1100) — عكس الإيراد
-    المسجَّل سابقًا بمقدار المبلغ المسترد فعليًا للعميل عند إلغاء العقد
-    (نفس فلسفة عكس القيد وقت إلغاء عملية شاطئ، راجع
-    beach.services._post_beach_revenue_reversal_journal)."""
+    """Reverse revenue against the actual cash/bank/card refund account."""
     from app.core.config import settings  # noqa: PLC0415
     from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
     from app.resort_os.timezone_utils import business_today  # noqa: PLC0415
 
     post_simple_revenue_journal(
         db, contract.branch_id, business_today(settings.TIMEZONE),
-        debit_account_code="4600", credit_account_code="1100",
+        debit_account_code="4600",
+        credit_account_code=_REFUND_METHOD_CREDIT_ACCOUNT[refund_method],
         amount=refund_amount,
         reference=f"TS-CANCEL-{contract.contract_number}",
-        description=f"استرداد إلغاء عقد تايم شير — {contract.contract_number}",
-        source="timeshare", source_id=contract.id,
+        description=f"استرداد إلغاء عقد ملكية جزئية — {contract.contract_number}",
+        source="timeshare", source_id=collection_payment_id,
         created_by=cancelled_by,
         cost_center_code="TS",
         strict=True, commit_cost_centers=False,
     )
+
+
+def _audit_contract_cancellation(
+    db: Session,
+    contract: TimeshareContract,
+    refund_amount: Decimal,
+    refund_method: Optional[str],
+    cancelled_by: int,
+) -> None:
+    import json as _json  # noqa: PLC0415
+    from app.modules.core.crud import create_audit_log  # noqa: PLC0415
+    from app.modules.core.schemas import AuditLogCreate  # noqa: PLC0415
+
+    create_audit_log(db, AuditLogCreate(
+        user_id=cancelled_by,
+        branch_id=contract.branch_id,
+        action="cancel_contract",
+        entity_type="timeshare_contract",
+        entity_id=contract.id,
+        old_data=_json.dumps({"status": "active"}, ensure_ascii=False),
+        new_data=_json.dumps({
+            "status": "cancelled",
+            "refund_amount": float(refund_amount),
+            "refund_method": refund_method,
+        }, ensure_ascii=False),
+    ))
 
 
 def transfer_unit(
@@ -1200,7 +1426,7 @@ def deactivate_unit_pair(db: Session, pair_id: int) -> TimeshareUnitPair:
 # ── Visits ───────────────────────────────────────────────────────────
 
 def create_visit(db: Session, data: TimeshareVisitCreate) -> TimeshareVisit:
-    """يخصّص وحدة تايم شير فعلية للزيارة (real allocation، مش مجرد سطر تاريخ
+    """يخصّص وحدة ملكية جزئية فعلية للزيارة (real allocation، مش مجرد سطر تاريخ
     بلا أي حجز حقيقي) — مع منع تعارض حجز حقيقي (double-booking) على نفس
     الوحدة، بنفس منطق date-overlap المستخدم في pms.crud.get_available_rooms.
 
@@ -1214,7 +1440,7 @@ def create_visit(db: Session, data: TimeshareVisitCreate) -> TimeshareVisit:
     بنفس نمط lock_room_for_booking بالظبط.
 
     ⚠️ باجان حقيقيان تانيان اتكشفوا واتصلحوا هنا (اختبار حي كمدير خدمة عملاء
-    تايم شير): كان ممكن تخصيص وحدة فعلية لزيارة على عقد **ملغي بالفعل** (صفر
+    ملكية جزئية): كان ممكن تخصيص وحدة فعلية لزيارة على عقد **ملغي بالفعل** (صفر
     تحقق من contract.status)، وكان ممكن كمان تحجز زيارة بتاريخ بعد
     contract.end_date (انتهاء مدة العقد) بدون أي رفض — يعني عميل عقده انتهى
     كان لسه يقدر ياخد وحدة فعلية من مخزون المنتجع."""
@@ -1296,7 +1522,7 @@ def _create_entitlement_pair_visit(
         if not pair:
             raise ValueError(
                 f"الوحدة الثابتة للعقد {contract.contract_number} مالهاش زوج "
-                "معتمد (شاليه+استوديو) — سجّل الزوج أولاً عبر إدارة وحدات التايم شير"
+                "معتمد (شاليه+استوديو) — سجّل الزوج أولاً عبر إدارة وحدات الملكية الجزئية"
             )
     else:
         pair = crud.find_available_unit_pair(db, contract.branch_id, data.check_in, data.check_out)
@@ -1457,7 +1683,7 @@ def import_contracts_excel(
 # ═══════════════════════════════════════════════════════════════════════════
 # Owner Portal — بوابة صاحب العقد العامة (طلب Mohamed 2026-08-03)
 #
-# صفحة على الموقع العام يتحقق فيها صاحب عقد تايم شير من هويته (رقم العقد +
+# صفحة على الموقع العام يتحقق فيها صاحب عقد ملكية جزئية من هويته (رقم العقد +
 # رقم موبايله المسجّل على العقد + كود OTP يوصله واتساب — مفيش باسورد
 # ولا حساب دائم، وده عمدًا: "ما يكونش معقد" + "السرية"). بعد التحقق بيشوف
 # عقده وحالة دفعاته، ويقدر يقدّم طلب حجز زيارة (المدير هو اللي يوافق
@@ -1849,8 +2075,8 @@ def update_ticket_status(db: Session, ticket_id: int, new_status: str) -> Timesh
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Timeshare Staff — مدير التايم شير بيدير موظفي وحدته (طلب Mohamed 2026-08-03:
-# "يتحكم بالموظفين التيم شير وحساباتهم"). نسخة مبسّطة ومعزولة من
+# Timeshare Staff — مدير الملكية الجزئية بيدير موظفي وحدته (طلب Mohamed 2026-08-03:
+# "يتحكم بالموظفين الملكية الجزئية وحساباتهم"). نسخة مبسّطة ومعزولة من
 # core.kernel.auth.service.AuthService.provision_staff_account — مقفولة على
 # super_admin+step-up عمدًا (Gate 2B3A، مناسبة لإنشاء أي دور بما فيه أدوار
 # حساسة)، مش مناسبة لمدير وحدة معزولة زي ده بيعمل حاجة واحدة بس (إنشاء
@@ -1949,7 +2175,7 @@ def list_timeshare_staff(db: Session, branch_id: int) -> list:
 
 
 def set_timeshare_staff_active(db: Session, staff_user_id: int, is_active: bool):
-    """تفعيل/تعطيل حساب موظف تايم شير — لازم revoke_user_tokens() (قاعدة
+    """تفعيل/تعطيل حساب موظف ملكية جزئية — لازم revoke_user_tokens() (قاعدة
     ❻ في CLAUDE.md: أي تغيير is_active لازم يُبطل التوكنات القديمة فورًا،
     وإلا موظف اتعطّل حسابه يقدر يفضل شغال بتوكن قديم لحد ما ينتهي وحده)."""
     from app.core.deps import revoke_user_tokens  # noqa: PLC0415
@@ -1957,7 +2183,7 @@ def set_timeshare_staff_active(db: Session, staff_user_id: int, is_active: bool)
 
     user = db.query(User).filter(User.id == staff_user_id, User.role == "timeshare_agent").first()
     if not user:
-        raise ValueError(f"موظف التايم شير {staff_user_id} غير موجود")
+        raise ValueError(f"موظف الملكية الجزئية {staff_user_id} غير موجود")
     user.is_active = is_active
     db.commit()
     revoke_user_tokens(user.id)

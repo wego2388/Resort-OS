@@ -94,7 +94,7 @@ def update_contract(contract_id: int, data: LeaseContractUpdate, db: DbDep,
     c = _get_contract_or_404(db, contract_id)
     _assert_leasing_branch(db, user, c.branch_id, "تعديل عقد إيجار")
     try:
-        contract = services.update_contract(db, contract_id, data)
+        contract = services.update_contract(db, contract_id, data, updated_by=user.id)
         return _to_read(contract, local_today(settings.TIMEZONE))
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
@@ -113,7 +113,7 @@ def pay_payment(payment_id: int, req: PayLeaseRequest, db: DbDep,
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"الدفعة {payment_id} غير موجودة")
     _assert_leasing_branch(db, user, payment.contract.branch_id, "تحصيل دفعة إيجار")
     try:
-        return services.pay_payment(db, payment_id, req)
+        return services.pay_payment(db, payment_id, req, collected_by=user.id)
     except services.PaymentConflictError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
     except FinancialConfigurationError as exc:

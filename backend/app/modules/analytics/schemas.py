@@ -81,7 +81,7 @@ class SurveySendResponse(BaseModel):
 # ── Revenue Dashboard ─────────────────────────────────────────────────────────
 
 class RevenueBucket(BaseModel):
-    """إيراد موديول واحد (مطعم/كافيه/فندق/شاطئ/إيجار/تايم شير)."""
+    """إيراد موديول واحد (مطعم/كافيه/فندق/شاطئ/إيجار/ملكية جزئية)."""
     orders: Optional[int] = None        # dining buckets
     bookings: Optional[int] = None      # pms
     visits: Optional[int] = None        # beach

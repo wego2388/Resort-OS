@@ -415,7 +415,7 @@ class TestPMSPermissions:
         level الكاشير) كان يشوف زرار "تسجيل دخول" في شاشته ويضغط عليه
         فيرجّعله 403 كل مرة، من غير أي طريقة حقيقية يسجّل بيها نزيل. الحد
         الأدنى الصحيح فعليًا هو get_cashier_user (level 40+) — نفس التصحيح
-        اللي اتعمل قبل كده لتحصيل قسط التايم شير (راجع §18/CLAUDE.md)."""
+        اللي اتعمل قبل كده لتحصيل قسط الملكية الجزئية (راجع §18/CLAUDE.md)."""
         branch = make_branch_committed(db)
         room_type = make_room_type_committed(db, branch)
         room = make_room_committed(db, branch, room_type)

@@ -823,7 +823,7 @@ def cost_center_report(
     branch_id: int = Query(...),
     date_from: date = Query(...), date_to: date = Query(...),
 ):
-    """إيراد كل مركز تكلفة (فندق/مطعم/كافيه/شاطئ/تايم شير) كسطر منفصل."""
+    """إيراد كل مركز تكلفة (فندق/مطعم/كافيه/شاطئ/ملكية جزئية) كسطر منفصل."""
     return services.get_cost_center_report(db, branch_id, date_from, date_to)
 
 

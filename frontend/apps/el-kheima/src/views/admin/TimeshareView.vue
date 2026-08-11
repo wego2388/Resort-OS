@@ -295,7 +295,7 @@ async function openProfile(c: Contract) {
     profileModal.visits = visitLists.flat().sort((a, b) => b.check_in.localeCompare(a.check_in))
 
     // التقييمات محتاجة صلاحية manager على الباك إند (GET /analytics/reviews) —
-    // لو المستخدم أقل من كده (مثلاً supervisor بيشوف شاشة التايم شير) بنتخطى
+    // لو المستخدم أقل من كده (مثلاً supervisor بيشوف شاشة الملكية الجزئية) بنتخطى
     // القسم ده بهدوء بدل ما نطلب endpoint هيرجع 403.
     if (auth.hasRole('timeshare_admin') && profileModal.visits.length) {
       const reviewLists = await Promise.all(
@@ -527,7 +527,7 @@ async function confirmReject() {
   } finally { rejectModal.saving = false }
 }
 
-// ── Support Tickets (خدمة عملاء التايم شير المستقلة، 2026-08-03) ───────────
+// ── Support Tickets (خدمة عملاء الملكية الجزئية المستقلة، 2026-08-03) ───────────
 interface TicketReply { id: number; author_type: string; message: string; created_at: string }
 interface SupportTicket {
   id: number; contract_id: number; subject: string; status: string
@@ -572,7 +572,7 @@ async function updateTicketStatus(tk: SupportTicket, status: string) {
   } catch (e) { toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.timeshare.msg.ticketStatusError')) }
 }
 
-// ── Timeshare Staff (طلب Mohamed 2026-08-03: مدير التايم شير بيدير
+// ── Timeshare Staff (طلب Mohamed 2026-08-03: مدير الملكية الجزئية بيدير
 // موظفينه بنفسه، منعزل تمامًا عن شاشة الموظفين العامة) ─────────────────────
 interface StaffMember { id: number; email: string; full_name: string; phone: string | null; is_active: boolean; must_change_password: boolean }
 const timeshareStaff = ref<StaffMember[]>([])
@@ -1526,7 +1526,7 @@ onMounted(refreshAll)
       </AppCard>
     </div>
 
-    <!-- ══ SUPPORT TICKETS (خدمة عملاء التايم شير المستقلة، 2026-08-03) ══ -->
+    <!-- ══ SUPPORT TICKETS (خدمة عملاء الملكية الجزئية المستقلة، 2026-08-03) ══ -->
     <div v-if="activeTab === 'support'" class="space-y-4">
       <select v-model="ticketsStatus" @change="loadSupportTickets" class="min-h-[44px] bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-700 dark:text-gray-300 text-sm rounded-xl px-3 py-2">
         <option value="open">🟡 {{ t('backoffice.timeshare.ticketStatus.open') }}</option>
@@ -1552,7 +1552,7 @@ onMounted(refreshAll)
       </AppCard>
     </div>
 
-    <!-- ══ TIMESHARE STAFF (طلب Mohamed: مدير التايم شير بيدير موظفينه بنفسه، 2026-08-03) ══ -->
+    <!-- ══ TIMESHARE STAFF (طلب Mohamed: مدير الملكية الجزئية بيدير موظفينه بنفسه، 2026-08-03) ══ -->
     <div v-if="activeTab === 'staff' && auth.hasRole('timeshare_admin')" class="space-y-4">
       <AppButton @click="openNewStaffModal">➕ {{ t('backoffice.timeshare.newStaff') }}</AppButton>
 

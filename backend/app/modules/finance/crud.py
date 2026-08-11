@@ -264,12 +264,16 @@ def get_direct_payment_by_reference(db: Session, branch_id: int, reference: str)
 
 
 def list_direct_payments_for_order(db: Session, order_id: int) -> list[Payment]:
-    """كل صفوف Payment المباشرة (folio_id=None) المرتبطة بطلب دايننج عبر
-    ref_order_id — بما فيها العكوس السالبة (Gate 4C). مرتّبة بالـ id عشان
-    التوزيع المتناسب حتمي."""
+    """دفعات طلب الدايننج المباشرة وعكوسها، مرتبة حتميًا بالـid.
+    المصدر مقيد لأن ref_order_id متعدد المصادر وقد يساوي معرّف إيجار أو
+    معاملة من موديول آخر."""
     return (
         db.query(Payment)
-        .filter(Payment.folio_id.is_(None), Payment.ref_order_id == order_id)
+        .filter(
+            Payment.folio_id.is_(None),
+            Payment.ref_order_id == order_id,
+            Payment.source.in_(("dining", "dining_refund")),
+        )
         .order_by(Payment.id)
         .all()
     )

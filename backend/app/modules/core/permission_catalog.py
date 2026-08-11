@@ -167,13 +167,13 @@ PERMISSION_CATALOG: list[PermissionCatalogEntry] = [
     {
         "resource": "timeshare.cancel_contract",
         "action": "execute",
-        "label_ar": "إلغاء عقد تايم شير",
-        "label_en": "Cancel a timeshare contract",
+        "label_ar": "إلغاء عقد ملكية جزئية",
+        "label_en": "Cancel a fractional ownership contract",
         "module": "timeshare",
         # min_role_level=55 عمدًا (مش 60) — طلب Mohamed 2026-08-03: عمليات
-        # التايم شير الإدارية بقت gated بـget_timeshare_admin_user
+        # الملكية الجزئية الإدارية بقت gated بـget_timeshare_admin_user
         # (role='timeshare_admin'، level=55 عمدًا) مش get_manager_user
-        # العام؛ لازم الرقم هنا يطابق عشان مدير التايم شير الفعلي (55) يعدي
+        # العام؛ لازم الرقم هنا يطابق عشان مدير الملكية الجزئية الفعلي (55) يعدي
         # من الـrequire_permission fallback زي ما يعدي من بوابة الـrole.
         "min_role_level": 55,
         "endpoint": "POST /timeshare/contracts/{contract_id}/cancel",
@@ -345,14 +345,14 @@ PERMISSION_CATALOG: list[PermissionCatalogEntry] = [
         "min_role_level": 60,
         "endpoint": "POST /finance/payments/{payment_id}/void",
     },
-    # ── Timeshare ────────────────────────────────────────────────────────────
-    # الصلاحيات دي بتسمح بمنح timeshare_agent (level=25) وصول محدود للتايم شير
+    # ── Fractional Ownership ────────────────────────────────────────────────────────────
+    # الصلاحيات دي بتسمح بمنح timeshare_agent (level=25) وصول محدود للملكية جزئية
     # بشكل صريح، بدون أي وصول لباقي الموديولات.
     {
         "resource": "timeshare.access",
         "action": "view",
-        "label_ar": "عرض وحدة التايم شير (الوصول الأساسي)",
-        "label_en": "View the timeshare module (base access)",
+        "label_ar": "عرض وحدة الملكية الجزئية (الوصول الأساسي)",
+        "label_en": "View the fractional ownership module (base access)",
         "module": "timeshare",
         "min_role_level": 40,
         "endpoint": "GET /timeshare/* (الوصول العام للوحدة)",
@@ -360,8 +360,8 @@ PERMISSION_CATALOG: list[PermissionCatalogEntry] = [
     {
         "resource": "timeshare.contracts",
         "action": "view",
-        "label_ar": "عرض عقود التايم شير",
-        "label_en": "View timeshare contracts",
+        "label_ar": "عرض عقود الملكية الجزئية",
+        "label_en": "View fractional ownership contracts",
         "module": "timeshare",
         "min_role_level": 25,
         "endpoint": "GET /timeshare/contracts",
@@ -369,8 +369,8 @@ PERMISSION_CATALOG: list[PermissionCatalogEntry] = [
     {
         "resource": "timeshare.contracts",
         "action": "create",
-        "label_ar": "إنشاء عقد تايم شير",
-        "label_en": "Create a timeshare contract",
+        "label_ar": "إنشاء عقد ملكية جزئية",
+        "label_en": "Create a fractional ownership contract",
         "module": "timeshare",
         "min_role_level": 55,  # يطابق get_timeshare_admin_user — راجع تعليق timeshare.cancel_contract فوق
         "endpoint": "POST /timeshare/contracts",
@@ -378,8 +378,8 @@ PERMISSION_CATALOG: list[PermissionCatalogEntry] = [
     {
         "resource": "timeshare.contracts",
         "action": "edit",
-        "label_ar": "تعديل بيانات عقد تايم شير",
-        "label_en": "Edit a timeshare contract",
+        "label_ar": "تعديل بيانات عقد ملكية جزئية",
+        "label_en": "Edit a fractional ownership contract",
         "module": "timeshare",
         "min_role_level": 55,
         "endpoint": "PATCH /timeshare/contracts/{contract_id}",
@@ -396,8 +396,8 @@ PERMISSION_CATALOG: list[PermissionCatalogEntry] = [
     {
         "resource": "timeshare.installments",
         "action": "collect",
-        "label_ar": "تحصيل قسط تايم شير",
-        "label_en": "Collect a timeshare installment",
+        "label_ar": "تحصيل قسط ملكية جزئية",
+        "label_en": "Collect a fractional ownership installment",
         "module": "timeshare",
         "min_role_level": 40,
         "endpoint": "POST /timeshare/installments/{inst_id}/pay",
@@ -414,8 +414,8 @@ PERMISSION_CATALOG: list[PermissionCatalogEntry] = [
     {
         "resource": "timeshare.maintenance_dues",
         "action": "collect",
-        "label_ar": "تحصيل رسم صيانة تايم شير",
-        "label_en": "Collect a timeshare maintenance due",
+        "label_ar": "تحصيل رسم صيانة ملكية جزئية",
+        "label_en": "Collect a fractional ownership maintenance due",
         "module": "timeshare",
         "min_role_level": 40,
         "endpoint": "POST /timeshare/maintenance-dues/{due_id}/pay",
@@ -432,8 +432,8 @@ PERMISSION_CATALOG: list[PermissionCatalogEntry] = [
     {
         "resource": "timeshare.visits",
         "action": "view",
-        "label_ar": "عرض زيارات التايم شير",
-        "label_en": "View timeshare visits",
+        "label_ar": "عرض زيارات الملكية الجزئية",
+        "label_en": "View fractional ownership visits",
         "module": "timeshare",
         "min_role_level": 25,
         "endpoint": "GET /timeshare/visits",
@@ -441,8 +441,8 @@ PERMISSION_CATALOG: list[PermissionCatalogEntry] = [
     {
         "resource": "timeshare.visits",
         "action": "create",
-        "label_ar": "جدولة زيارة تايم شير",
-        "label_en": "Schedule a timeshare visit",
+        "label_ar": "جدولة زيارة ملكية جزئية",
+        "label_en": "Schedule a fractional ownership visit",
         "module": "timeshare",
         "min_role_level": 40,
         "endpoint": "POST /timeshare/visits",
@@ -450,8 +450,8 @@ PERMISSION_CATALOG: list[PermissionCatalogEntry] = [
     {
         "resource": "timeshare.visits",
         "action": "edit",
-        "label_ar": "تحديث حالة زيارة تايم شير",
-        "label_en": "Update a timeshare visit's status",
+        "label_ar": "تحديث حالة زيارة ملكية جزئية",
+        "label_en": "Update a fractional ownership visit's status",
         "module": "timeshare",
         "min_role_level": 25,
         "endpoint": "PATCH /timeshare/visits/{visit_id}",
@@ -459,8 +459,8 @@ PERMISSION_CATALOG: list[PermissionCatalogEntry] = [
     {
         "resource": "timeshare.calendar",
         "action": "view",
-        "label_ar": "عرض كالندر التايم شير",
-        "label_en": "View the timeshare calendar",
+        "label_ar": "عرض كالندر الملكية الجزئية",
+        "label_en": "View the fractional ownership calendar",
         "module": "timeshare",
         "min_role_level": 25,
         "endpoint": "GET /timeshare/calendar",
@@ -483,7 +483,7 @@ PERMISSION_CATALOG: list[PermissionCatalogEntry] = [
         "min_role_level": 25,
         "endpoint": "POST /timeshare/waitlist",
     },
-    # ── Timeshare — بوابة العميل (طلبات الزيارة + خدمة العملاء، 2026-08-03) ──
+    # ── Fractional Ownership — بوابة العميل (طلبات الزيارة + خدمة العملاء، 2026-08-03) ──
     {
         "resource": "timeshare.visit_requests",
         "action": "view",
@@ -505,8 +505,8 @@ PERMISSION_CATALOG: list[PermissionCatalogEntry] = [
     {
         "resource": "timeshare.support_tickets",
         "action": "view",
-        "label_ar": "عرض تذاكر دعم عملاء التايم شير",
-        "label_en": "View timeshare customer-service tickets",
+        "label_ar": "عرض تذاكر دعم عملاء الملكية الجزئية",
+        "label_en": "View fractional ownership customer-service tickets",
         "module": "timeshare",
         "min_role_level": 25,
         "endpoint": "GET /timeshare/support-tickets",

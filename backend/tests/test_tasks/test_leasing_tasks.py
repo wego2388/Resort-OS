@@ -103,6 +103,55 @@ class TestLeasingAccrueDueRentsTask:
             from app.tasks.leasing_tasks import accrue_due_rents
             accrue_due_rents()
 
+    @staticmethod
+    def _actor(db):
+        from app.core.kernel.models.user import User
+        user = User(
+            email=f"backfill-{uuid.uuid4().hex[:8]}@test.local",
+            password_hash="not-used", full_name="Backfill Operator",
+            role="super_admin", is_active=True,
+        )
+        db.add(user)
+        db.commit()
+        return user
+
+    def test_backfill_posts_strict_journal_once_with_real_actor(self, db):
+        from app.modules.finance.models import JournalEntry
+        from scripts.backfill_leasing_rent_accruals import apply_backfill, list_backfill_items
+
+        branch = _make_branch(db)
+        self._seed_accounts(db, branch)
+        contract = _make_contract(db, branch)
+        as_of = date(1900, 1, 2)
+        payment = _make_payment(db, contract, due_date=date(1900, 1, 1))
+        actor = self._actor(db)
+
+        proposed = list_backfill_items(db, as_of=as_of)
+        assert [item.payment_id for item in proposed] == [payment.id]
+        assert payment.accrued is False
+
+        assert apply_backfill(db, as_of=as_of, actor_id=actor.id) == [payment.id]
+        db.refresh(payment)
+        entry = db.query(JournalEntry).filter(JournalEntry.id == payment.accrual_journal_entry_id).one()
+        assert payment.accrued is True
+        assert entry.created_by == actor.id
+        assert apply_backfill(db, as_of=as_of, actor_id=actor.id) == []
+
+    def test_backfill_stops_on_accrued_row_without_linked_journal(self, db):
+        from scripts.backfill_leasing_rent_accruals import apply_backfill
+
+        branch = _make_branch(db)
+        contract = _make_contract(db, branch)
+        as_of = date(1899, 1, 2)
+        payment = _make_payment(db, contract, due_date=date(1899, 1, 1))
+        actor = self._actor(db)
+        payment.accrued = True
+        payment.accrual_journal_entry_id = None
+        db.commit()
+
+        with pytest.raises(RuntimeError, match="manual review required"):
+            apply_backfill(db, as_of=as_of, actor_id=actor.id)
+
 
 # ─── mark_overdue logic ──────────────────────────────────────────────────────
 

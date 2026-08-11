@@ -379,7 +379,7 @@ class TestAccounting:
 
     def test_post_simple_revenue_journal_creates_balanced_entry(self, db: Session, branch):
         """الدالة المشتركة اللي بتحل محل النسخ المكررة في 6 موديولات (مطعم/كافيه/
-        شاطئ/PMS/تايم شير/إيجارات)."""
+        شاطئ/PMS/ملكية جزئية/إيجارات)."""
         from app.modules.finance.schemas import AccountCreate as AC
         cash = crud.create_account(db, AC(branch_id=branch.id, code="1100", name="Cash", account_type="asset"))
         rev = crud.create_account(db, AC(branch_id=branch.id, code="4200", name="Restaurant Revenue", account_type="revenue"))
@@ -397,6 +397,43 @@ class TestAccounting:
         lines = {l.account_id: (l.debit, l.credit) for l in entry.lines}
         assert lines[cash.id] == (Decimal("350.50"), Decimal("0"))
         assert lines[rev.id] == (Decimal("0"), Decimal("350.50"))
+
+    def test_post_simple_revenue_journal_is_idempotent_for_stable_source(self, db: Session, branch):
+        from app.modules.finance.models import JournalEntry
+        from app.modules.finance.schemas import AccountCreate as AC
+
+        crud.create_account(
+            db,
+            AC(branch_id=branch.id, code="1100", name="Cash", account_type="asset"),
+        )
+        crud.create_account(
+            db,
+            AC(branch_id=branch.id, code="4100", name="Room Revenue", account_type="revenue"),
+        )
+        db.commit()
+        kwargs = dict(
+            branch_id=branch.id,
+            entry_date=date(2026, 8, 11),
+            debit_account_code="1100",
+            credit_account_code="4100",
+            amount=Decimal("75.00"),
+            reference="IDEMPOTENT-75",
+            description="اختبار عدم تكرار القيد",
+            source="test_idempotency",
+            source_id=750,
+        )
+
+        first = services.post_simple_revenue_journal(db, **kwargs)
+        second = services.post_simple_revenue_journal(db, **kwargs)
+
+        assert first is not None
+        assert second is first
+        assert db.query(JournalEntry).filter_by(
+            branch_id=branch.id,
+            source="test_idempotency",
+            source_id=750,
+            reference="IDEMPOTENT-75",
+        ).count() == 1
 
     def test_post_simple_revenue_journal_noop_when_account_missing(self, db: Session, branch):
         result = services.post_simple_revenue_journal(
