@@ -81,3 +81,20 @@ def get_scenario_now() -> Optional[datetime]:
     """الوقت المحقون حاليًا لو موجود جوه scenario_clock، وإلا None (يعني
     استخدم الوقت الحقيقي — هو الافتراضي دايمًا برّه أداة الاستيراد)."""
     return _scenario_now.get()
+
+
+def scenario_utcnow() -> datetime:
+    """بديل مباشر لـ`datetime.utcnow()` (naive UTC، نفس الـcontract بالظبط)
+    بس بيحترم scenario_clock لو نشط. باج حقيقي حي اتكشف (2026-08-10):
+    `leasing.crud`/`timeshare.crud`'s `payment.paid_at = datetime.utcnow()`
+    كان بيسجّل وقت تشغيل أداة الاستيراد الحقيقي (النهاردة) مش تاريخ يوليو
+    التاريخي اللي جوه scenario_clock — `_stamp_scenario_timestamps`'s
+    before_flush hook بيدمغ بس created_at/updated_at أوتوماتيكيًا، مش أي
+    عمود business-meaning تاني زي paid_at بيتحط يدويًا في كود التطبيق.
+    النتيجة: `/analytics/revenue`'s فلترة `paid_at` بمدى يوليو كانت بترجع
+    صفر رغم إن الدفعات موجودة فعليًا — كل عمود مماثل (paid_at، confirmed_at،
+    إلخ) لازم يستخدم الدالة دي بدل `datetime.utcnow()` المباشرة."""
+    now = get_scenario_now()
+    if now is not None:
+        return now.astimezone(timezone.utc).replace(tzinfo=None)
+    return datetime.now(timezone.utc).replace(tzinfo=None)

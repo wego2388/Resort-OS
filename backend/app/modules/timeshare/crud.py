@@ -24,6 +24,7 @@ from app.modules.timeshare.schemas import (
     TimeshareVisitUpdate, WaitlistCreate,
 )
 from app.core.config import settings
+from app.resort_os.clock import scenario_utcnow
 from app.resort_os.timezone_utils import business_today
 
 
@@ -168,7 +169,10 @@ def pay_installment(db: Session, inst: TimeshareInstallment, req: PayInstallment
     inst.notes = req.notes
     if inst.paid_amount >= inst.amount:
         inst.status = "paid"
-        inst.paid_at = datetime.utcnow()
+        # scenario_utcnow() — نفس باج leasing.crud.pay_payment (راجع
+        # resort_os/clock.py's توثيق)، /analytics/revenue's فلترة timeshare
+        # كانت بترجع صفر لنفس السبب بالظبط.
+        inst.paid_at = scenario_utcnow()
     else:
         inst.status = "partial"
     db.flush()
@@ -324,7 +328,7 @@ def pay_maintenance_due(
     due.notes = req.notes
     if due.paid_amount >= due.amount:
         due.status = "paid"
-        due.paid_at = datetime.utcnow()
+        due.paid_at = scenario_utcnow()  # نفس باج pay_installment فوق
     else:
         due.status = "partial"
     db.flush()

@@ -1,7 +1,7 @@
 """app/modules/leasing/crud.py"""
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from decimal import Decimal
 from typing import Optional
 
@@ -12,6 +12,7 @@ from app.modules.leasing.models import LeaseContract, LeasePayment, TenantCashLo
 from app.modules.leasing.schemas import (
     LeaseContractCreate, LeaseContractUpdate, PayLeaseRequest, TenantCashLogCreate,
 )
+from app.resort_os.clock import scenario_utcnow
 from app.resort_os.timezone_utils import local_today
 
 
@@ -207,7 +208,11 @@ def pay_payment(db: Session, payment: LeasePayment, req: PayLeaseRequest) -> Lea
     payment.notes = req.notes
     if payment.paid_amount >= payment.amount + payment.penalty:
         payment.status = "paid"
-        payment.paid_at = datetime.utcnow()
+        # scenario_utcnow() (بديل datetime.utcnow()) — راجع resort_os/clock.py's
+        # توثيق: باج حقيقي حي اتكشف (2026-08-10)، /analytics/revenue's فلترة
+        # leasing بمدى يوليو كانت بترجع صفر رغم دفعات حقيقية، لأن paid_at كان
+        # بيتسجّل بوقت تشغيل أداة HIST-01 الحقيقي مش تاريخ يوليو المحاكى.
+        payment.paid_at = scenario_utcnow()
     else:
         payment.status = "partial"
     db.flush()
