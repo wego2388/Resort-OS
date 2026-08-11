@@ -497,13 +497,13 @@ onUnmounted(() => {
               <button
                 @click="adjust('adult', -1)"
                 :disabled="adultQty === 0"
-                class="h-9 w-9 rounded-lg bg-gray-100 text-lg font-bold leading-none transition-colors hover:bg-gray-200 disabled:opacity-40 dark:bg-gray-800 dark:hover:bg-gray-700"
+                class="h-12 w-12 rounded-lg bg-gray-100 text-lg font-bold leading-none transition-colors hover:bg-gray-200 disabled:opacity-40 dark:bg-gray-800 dark:hover:bg-gray-700"
               >−</button>
               <span class="text-xl font-black w-8 text-center text-gray-900 dark:text-gray-100">{{ adultQty }}</span>
               <button
                 ref="firstButtonRef"
                 @click="adjust('adult', 1)"
-                class="w-9 h-9 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-lg transition-colors leading-none"
+                class="w-12 h-12 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-bold text-lg transition-colors leading-none"
               >+</button>
             </div>
           </div>
@@ -524,12 +524,12 @@ onUnmounted(() => {
               <button
                 @click="adjust('child', -1)"
                 :disabled="childQty === 0"
-                class="h-9 w-9 rounded-lg bg-gray-100 text-lg font-bold leading-none transition-colors hover:bg-gray-200 disabled:opacity-40 dark:bg-gray-800 dark:hover:bg-gray-700"
+                class="h-12 w-12 rounded-lg bg-gray-100 text-lg font-bold leading-none transition-colors hover:bg-gray-200 disabled:opacity-40 dark:bg-gray-800 dark:hover:bg-gray-700"
               >−</button>
               <span class="text-xl font-black w-8 text-center text-gray-900 dark:text-gray-100">{{ childQty }}</span>
               <button
                 @click="adjust('child', 1)"
-                class="w-9 h-9 rounded-lg bg-green-600 hover:bg-green-700 text-white font-bold text-lg transition-colors leading-none"
+                class="w-12 h-12 rounded-lg bg-green-600 hover:bg-green-700 text-white font-bold text-lg transition-colors leading-none"
               >+</button>
             </div>
           </div>
@@ -550,12 +550,12 @@ onUnmounted(() => {
               <button
                 @click="adjust('resident', -1)"
                 :disabled="residentQty === 0"
-                class="h-9 w-9 rounded-lg bg-gray-100 text-lg font-bold leading-none transition-colors hover:bg-gray-200 disabled:opacity-40 dark:bg-gray-800 dark:hover:bg-gray-700"
+                class="h-12 w-12 rounded-lg bg-gray-100 text-lg font-bold leading-none transition-colors hover:bg-gray-200 disabled:opacity-40 dark:bg-gray-800 dark:hover:bg-gray-700"
               >−</button>
               <span class="text-xl font-black w-8 text-center text-gray-900 dark:text-gray-100">{{ residentQty }}</span>
               <button
                 @click="adjust('resident', 1)"
-                class="w-9 h-9 rounded-lg bg-purple-600 hover:bg-purple-700 text-white font-bold text-lg transition-colors leading-none"
+                class="w-12 h-12 rounded-lg bg-purple-600 hover:bg-purple-700 text-white font-bold text-lg transition-colors leading-none"
               >+</button>
             </div>
           </div>
@@ -574,12 +574,12 @@ onUnmounted(() => {
               <button
                 @click="adjust('towel', -1)"
                 :disabled="towelQty === 0"
-                class="h-9 w-9 rounded-lg bg-gray-100 text-lg font-bold leading-none transition-colors hover:bg-gray-200 disabled:opacity-40 dark:bg-gray-800 dark:hover:bg-gray-700"
+                class="h-12 w-12 rounded-lg bg-gray-100 text-lg font-bold leading-none transition-colors hover:bg-gray-200 disabled:opacity-40 dark:bg-gray-800 dark:hover:bg-gray-700"
               >−</button>
               <span class="text-xl font-black w-8 text-center text-gray-900 dark:text-gray-100">{{ towelQty }}</span>
               <button
                 @click="adjust('towel', 1)"
-                class="w-9 h-9 rounded-lg bg-amber-500 hover:bg-amber-600 text-white font-bold text-lg transition-colors leading-none"
+                class="w-12 h-12 rounded-lg bg-amber-500 hover:bg-amber-600 text-white font-bold text-lg transition-colors leading-none"
               >+</button>
             </div>
           </div>
@@ -818,25 +818,34 @@ onUnmounted(() => {
       </div>
 
     </div>
+
+    <!-- 2026-08-11: المودالات دي لازم تفضل داخل الـroot div ده — الصفحة
+    كانت بتترسم بأكتر من root node (fragment)، وده باج حقيقي رفعه Mohamed
+    (تجميد فعلي عند التنقل بين تابات /pos): FieldLayout.vue بيلف كل الراوت
+    بـ<Transition mode="out-in">، واللي محتاج بالضبط root element واحد
+    عشان يقدر يحدّد نهاية الـleave transition ويكمل mount الصفحة الجاية —
+    fragment بيسيب Vue من غير مرجع واضح، فالتحوّل بين الصفحات كان بيعلّق
+    فعليًا (مش مجرد تحذير كوسمتيك في الكونسول). راجع نفس النمط في
+    UnifiedPOSView.vue اللي أصلاً بيحط كل مودالاته جوه الـroot div. -->
+    <POSCustomerModal
+      :open="showCustomerModal"
+      :branch-id="branchId"
+      :selected-customer-id="selectedCustomer?.id ?? null"
+      @close="showCustomerModal = false"
+      @select="selectCustomer"
+      @clear="clearCustomer(); showCustomerModal = false"
+    />
+    <PinGuardModal
+      v-if="showCreditPinGuard"
+      :min-level="60"
+      :title="t('backoffice.beachPos.creditApprovalTitle')"
+      :message="t('backoffice.beachPos.creditApprovalMessage')"
+      :loading="submitting"
+      :error-message="creditApprovalError"
+      @approved="onCreditApproval"
+      @cancel="showCreditPinGuard = false; creditApprovalError = ''"
+    />
   </div>
-  <POSCustomerModal
-    :open="showCustomerModal"
-    :branch-id="branchId"
-    :selected-customer-id="selectedCustomer?.id ?? null"
-    @close="showCustomerModal = false"
-    @select="selectCustomer"
-    @clear="clearCustomer(); showCustomerModal = false"
-  />
-  <PinGuardModal
-    v-if="showCreditPinGuard"
-    :min-level="60"
-    :title="t('backoffice.beachPos.creditApprovalTitle')"
-    :message="t('backoffice.beachPos.creditApprovalMessage')"
-    :loading="submitting"
-    :error-message="creditApprovalError"
-    @approved="onCreditApproval"
-    @cancel="showCreditPinGuard = false; creditApprovalError = ''"
-  />
 </template>
 
 <style scoped>
