@@ -4328,7 +4328,33 @@
         "selectTableRequired": "اختر طاولة للطلب الداخلي",
         "submitOrder": "فشل في إرسال الطلب"
       },
-      "itemInCartQty": "{qty} في السلة"
+      "itemInCartQty": "{qty} في السلة",
+      "itemUnavailable": "غير متاح حاليًا",
+      "frequentItems": "الأكثر طلبًا",
+      "beachMap": {
+        "title": "خريطة الشمسيات",
+        "hint": "اضغط على شمسية فاضية لبدء طلب دايننج عليها",
+        "refresh": "تحديث",
+        "available": "فاضية",
+        "occupiedByBeach": "مشغولة (تشيك-إن شاطئ)",
+        "hasDiningOrder": "عليها طلب دايننج",
+        "outOfService": "خارج الخدمة",
+        "loading": "جاري تحميل الخريطة...",
+        "loadError": "تعذّر تحميل خريطة الشمسيات",
+        "empty": "مفيش مواقع شاطئ مضافة لهذا الفرع",
+        "emptyHint": "اطلب من المدير إضافة مواقع الشاطئ من شاشة الإدارة الأول",
+        "tap": "اضغط لبدء الطلب",
+        "oos": "معطّلة"
+      },
+      "hotel": {
+        "add": "ربط فندق",
+        "addHint": "اربط الطلب بعقد فندق شريك (B2B) لو الضيف جاي منه",
+        "attached": "مربوط بفندق",
+        "change": "تغيير",
+        "clear": "إلغاء الربط",
+        "empty": "مفيش عقود فنادق نشطة",
+        "loading": "جاري تحميل الفنادق..."
+      }
     },
     "kds": {
       "title": "شاشة المطبخ الموحّدة — Dining KDS",
@@ -6714,6 +6740,7 @@
       "occupancyRate": "نسبة الإشغال",
       "beachVisitors": "زوار الشاطئ",
       "diningCovers": "عدد كفوفر المطعم",
+      "avgCheckPerCover": "متوسط الفاتورة للفرد",
       "roomRevenue": "إيراد الغرف",
       "beachRevenue": "إيراد الشاطئ",
       "diningRevenue": "إيراد المطعم",

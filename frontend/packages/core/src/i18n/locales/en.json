@@ -4328,7 +4328,33 @@
         "selectTableRequired": "Select a table for a dine-in order",
         "submitOrder": "Failed to send the order"
       },
-      "itemInCartQty": "{qty} in cart"
+      "itemInCartQty": "{qty} in cart",
+      "itemUnavailable": "Currently unavailable",
+      "frequentItems": "Frequently ordered",
+      "beachMap": {
+        "title": "Beach Umbrella Map",
+        "hint": "Tap an available spot to start a dining order for it",
+        "refresh": "Refresh",
+        "available": "Available",
+        "occupiedByBeach": "Occupied (beach check-in)",
+        "hasDiningOrder": "Has dining order",
+        "outOfService": "Out of service",
+        "loading": "Loading map...",
+        "loadError": "Failed to load the beach map",
+        "empty": "No beach locations added for this branch",
+        "emptyHint": "Ask a manager to add beach locations from the admin screen first",
+        "tap": "Tap to start order",
+        "oos": "Disabled"
+      },
+      "hotel": {
+        "add": "Link hotel",
+        "addHint": "Link this order to a partner hotel (B2B) contract if the guest is from one",
+        "attached": "Linked to hotel",
+        "change": "Change",
+        "clear": "Unlink",
+        "empty": "No active hotel contracts",
+        "loading": "Loading hotels..."
+      }
     },
     "kds": {
       "title": "Unified Kitchen Display — Dining KDS",
@@ -6714,6 +6740,7 @@
       "occupancyRate": "Occupancy rate",
       "beachVisitors": "Beach visitors",
       "diningCovers": "Dining covers",
+      "avgCheckPerCover": "Avg. check per cover",
       "roomRevenue": "Room revenue",
       "beachRevenue": "Beach revenue",
       "diningRevenue": "Dining revenue",
