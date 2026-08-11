@@ -14,21 +14,38 @@ import pytest
 from jose import jwt
 
 
-def _tok(email: str) -> str:
-    """JWT token مطابق لـ _make_token في conftest."""
+def _tok(email: str, branch_id: int = 1) -> str:
+    """JWT token مطابق لـ _make_token في conftest.
+
+    ``bid`` إجباري هنا فعليًا — owner endpoints بترفض بـ400 من غير فرع
+    نشط في الجلسة (راجع router.py's _get_branch: watchlist GET/POST كانت
+    قبل كده بتاخد branch_id كـquery param مباشر من العميل، باج أمني حقيقي
+    اتصلح — كل endpoint تاني في الموديول ده أصلاً بيشتق branch_id من هنا)."""
     secret = os.environ["SECRET_KEY"]
     now = datetime.utcnow()
     return jwt.encode(
-        {"sub": email, "iat": now, "exp": now + timedelta(hours=1)},
+        {"sub": email, "iat": now, "exp": now + timedelta(hours=1), "bid": branch_id},
         secret,
         algorithm="HS256",
     )
 
 
-def _owner(db, email: str = "owner_ph2@test.local"):
-    """ينشئ owner user ويعيده."""
+def _owner(db, email: str = "owner_ph2@test.local", branch_id: int = 1):
+    """ينشئ owner user ويعيده — مع عضوية فرع نشطة (نفس نمط test_owner_
+    phase10.py's _owner). لازم فعليًا: get_current_user's branch resolution
+    بيرفض أي bid في التوكن مالوش UserBranchMembership حقيقية مطابقة —
+    مجرد claim في التوكن مش كافي (باج حقيقي اتصلح هنا: التست القديم كان
+    شغال بالصدفة بس لأن /owner/watchlist كان قبل كده بياخد branch_id من
+    query param مباشر، مش من الجلسة زي كل endpoint owner تاني)."""
     from app.core.kernel.models.user import User
     from app.core.kernel.security import get_password_hash
+    from app.modules.core.models import Branch, UserBranchMembership
+    if not db.get(Branch, branch_id):
+        db.add(Branch(
+            id=branch_id, name="Owner Test Branch", name_ar="فرع اختباري",
+            code=f"OWN-PH2-{branch_id}", gm_phone="+201000000000",
+        ))
+        db.flush()
     u = User(
         email=email,
         password_hash=get_password_hash("pw"),
@@ -38,6 +55,8 @@ def _owner(db, email: str = "owner_ph2@test.local"):
         two_factor_enabled=True,
     )
     db.add(u)
+    db.flush()
+    db.add(UserBranchMembership(user_id=u.id, branch_id=branch_id, is_active=True))
     db.commit()
     db.refresh(u)
     return u
