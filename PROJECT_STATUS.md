@@ -1,16 +1,29 @@
 # حالة المشروع الحالية — El Kheima Beach Resort OS
 
-**آخر تحديث:** 2026-08-08 — مخزون غرف الخيمة الحقيقي منشور بلا أسعار.
-- **Production:** الإصدار الفعال `/opt/resort-os-releases/eda6617`؛ Alembic
-  `d0e1f2a3b4c5 (head)`؛ PostgreSQL وRedis والخدمات المتغيرة سليمة.
-- **Real PMS inventory:** 14 غرفة، نوعان، صفر خطط أسعار؛ 8 Chalet و6 Studio؛
-  7 بدون رؤية بحر، 2 رؤية جانبية، 5 رؤية بحر؛ كلها floor `0` وavailable.
-- **Migration:** PostgreSQL 16 fresh upgrade/downgrade/re-upgrade نجحت، ثم
-  production upgrade من `c9d4e5f6a7b8` إلى `d0e1f2a3b4c5` نجح.
-- **Full repository gates:** backend 2569 collected وصل 100% بـexit 0 وصفر
-  failure؛ PMS focused 86/86؛ Staff 95/95؛ type-check/build/agent-check ناجحة.
-  health/ready والنطاقات الأربعة وsystemd healthcheck نجحت بعد النشر، وصفر
-  ERROR/CRITICAL/Traceback في الخدمات المتغيرة.
+**آخر تحديث:** 2026-08-11 — REL-13 + Owner PWA hotfix منشوران ومتحققان.
+- **Production:** الإصدار الفعال `/opt/resort-os-releases/8fbda3c` من commit
+  `8fbda3c752d5f877fc17f4d7dbd5558b0461d57a`؛ Alembic
+  `c9d0e1f2a3b4 (head)`؛ PostgreSQL وRedis والخدمات سليمة.
+- **الملكية الجزئية:** الاسم الظاهر للمستخدم استُبدل في Staff/Owner/i18n
+  والأدلة؛ أسماء API والجداول والأدوار التقنية `timeshare*` بقيت ثابتة للتوافق.
+- **سلامة مالية:** تحصيلات الإيجارات والملكية الجزئية دخلت دفتر Payment
+  والورديات، إلغاء السلف والعقود له عكس محاسبي وتدقيق، والاستلام الجزئي
+  للمخزون ذري، مع idempotency إلزامي للقيود.
+- **مصالحة الإنتاج:** قيدان PMS بإجمالي `250.00 EGP` وخمسة استحقاقات إيجار
+  بإجمالي `138,000.00 EGP` طُبقت ذريًا؛ dry-run الثاني أعاد صفر مقترحات.
+- **Full gates:** backend `2806` اختبارًا وصل 100% بـexit 0 وصفر failure؛
+  Staff frontend `103/103`؛ type-check/build/agent-check وPostgreSQL 16
+  upgrade/downgrade/re-upgrade وGitleaks كلها ناجحة.
+- **Live acceptance:** النطاقات الأربعة HTTP 200، health/ready وsystemd
+  healthcheck ناجحة، protected probes رجعت 401، وكل الخدمات `RestartCount=0`
+  وصفر alerts بعد الاستقرار.
+- **Console/PWA:** أضيف وسم `mobile-web-app-capable` العام وأصبح ظاهرًا في
+  HTML الحي. رسائل 401 المصورة طابقت فتح نافذة Incognito بلا cookie ومحاولة
+  دخول فاشلة تلتها محاولة ناجحة وbootstrap 200؛ لا يوجد refresh replay.
+- **Rollback:** النسخة الطازجة
+  `/var/backups/resort-os/database/resort_os_20260811_123803.dump` (1547 TOC،
+  SHA-256 `53d269039128ba78848bbf74e0176f4999a14444bda72b013696c075dfa8a37d`)،
+  وأرشيف المصدر `8fbda3c.tar.gz` مطابق محليًا وعلى الخادم.
 
 **السابق:** 2026-08-08 — REL-11: Owner Intelligence Cockpit Phase 1-5 نشر على `owner.elkheima.com` (commit `719a432` + `74959e4` — منشور ✅)
 **البيئة:** Production — `elkheima.com` / VPS `191.218.161.133`

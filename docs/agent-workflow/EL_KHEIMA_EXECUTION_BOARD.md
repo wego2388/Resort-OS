@@ -1,6 +1,6 @@
 # لوحة التنفيذ الحية — El Kheima
 
-**آخر تحديث:** 2026-08-09 — REL-12 منشور ومتحقق (إغلاق فجوة checkout/folio)
+**آخر تحديث:** 2026-08-11 — REL-13 + Owner PWA hotfix منشوران ومتحققان
 **المالك:** Mohamed
 **قائد التنفيذ والمراجع النهائي:** Codex
 **المرحلة الحالية:** ACC-01 roster + UAT-01 + production burn-in
@@ -52,6 +52,7 @@
 | PMS-ROOMS-01 — approved real room inventory | COMPLETE / DEPLOYED | `eda6617` فعال؛ 14 وحدة حقيقية، نوعان، صفر خطط/أسعار؛ الإطلالة ظاهرة في Staff؛ health/log/idempotency gates ناجحة | — |
 | REL-11 — /ops role-gate + N+1 fixes + journal-entry logging + real journal entries admin view (تفويض مباشر من Mohamed خارج دورة Codex) | COMPLETE / DEPLOYED | `92aa769` فعال؛ راجع `docs/agent-workflow/handoffs/2026-08-09_REL-11_claude_handoff.md` — لا migration | — |
 | REL-12 — PMS checkout/folio settlement fix — بتأكيد صريح من Mohamed (تفويض مباشر خارج دورة Codex) | COMPLETE / DEPLOYED | `403bbd7` فعال؛ راجع `docs/agent-workflow/handoffs/2026-08-09_REL-12_claude_handoff.md` — لا migration؛ تسوية الـcheckout بقت تشمل شحنات beach/dining على الغرفة مش سعر الغرفة بس | — |
+| REL-13 — financial integrity + fractional ownership naming + Owner PWA hotfix | COMPLETE / DEPLOYED | `8fbda3c` فعال؛ Alembic `c9d0e1f2a3b4`؛ 2806 backend + 103 frontend؛ مصالحة PMS/Leasing صفر نواقص؛ PWA meta حي؛ راجع handoff 2026-08-11 | — |
 | ACC-01 — employee/account workflow | DEPLOYED؛ ACCOUNTS PENDING | HR record ثم حساب شخصي من مركز السوبر أدمن + super-admin احتياطي | قائمة أسماء/بريد/أدوار معتمدة |
 | OPS-01 — burn-in and alerting | BASELINE COMPLETE | مراقبة مستمرة + إرسال خارجي | اختيار قناة التنبيه |
 | UAT-01 — operational acceptance | PENDING | جهاز/دور/لغة/شبكة/مال | ممثلو التشغيل والمالية |
@@ -60,7 +61,8 @@
 ## ما اكتمل
 
 - [x] مراجعة auth والصلاحيات وعزل الفرع وOffline Queue.
-- [x] full backend: 2181 passed و40 skipped من 2221 collected، بصفر failure.
+- [x] full backend: 2806 collected وصل 100% بـexit 0 وصفر failure؛
+  frontend 103/103.
 - [x] onboarding/HR/auth focused backend: 228 passed و1 skipped؛
   frontend 95/95.
 - [x] type-check/build/agent-check/Alembic single-head/diff-check.
