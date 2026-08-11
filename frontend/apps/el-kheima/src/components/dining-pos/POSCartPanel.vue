@@ -74,6 +74,7 @@ const cartGroups = computed(() => {
           icon="delete"
           :label="t('backoffice.pos.clear')"
           variant="danger"
+          size="lg"
           :disabled="cart.length === 0"
           @click="emit('clear')"
         />
@@ -87,6 +88,7 @@ const cartGroups = computed(() => {
           <IconButton
             icon="remove"
             :label="t('backoffice.pos.decreaseCovers')"
+            size="lg"
             :disabled="cartLocked || covers <= 1"
             @click="emit('update:covers', Math.max(1, covers - 1))"
           />
@@ -94,6 +96,7 @@ const cartGroups = computed(() => {
           <IconButton
             icon="add"
             :label="t('backoffice.pos.increaseCovers')"
+            size="lg"
             :disabled="cartLocked"
             @click="emit('update:covers', covers + 1)"
           />
@@ -172,7 +175,7 @@ const cartGroups = computed(() => {
                 icon="close"
                 :label="t('backoffice.pos.removeItem')"
                 variant="danger"
-                size="sm"
+                size="md"
                 :disabled="cartLocked"
                 @click="emit('remove', line.key)"
               />
@@ -182,7 +185,7 @@ const cartGroups = computed(() => {
                 <IconButton
                   icon="remove"
                   :label="t('backoffice.pos.decreaseQty')"
-                  size="sm"
+                  size="lg"
                   :disabled="cartLocked"
                   @click="emit('quantity', line.key, -1)"
                 />
@@ -190,7 +193,7 @@ const cartGroups = computed(() => {
                 <IconButton
                   icon="add"
                   :label="t('backoffice.pos.increaseQty')"
-                  size="sm"
+                  size="lg"
                   :disabled="cartLocked"
                   @click="emit('quantity', line.key, 1)"
                 />
