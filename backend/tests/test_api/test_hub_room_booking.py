@@ -296,7 +296,10 @@ class TestConfirmPublicRoomBooking:
         assert pms_booking.rooms[0].daily_rate == Decimal("2500.00")  # مش 9999 الجديد
         assert pms_booking.total_rate == Decimal("5000.00")  # 2500 * 2 ليلة، مطابق للـquote الأصلي
 
-    def test_double_confirmation_rejected(self, client: TestClient, db, monkeypatch, manager_headers):
+    def test_double_confirmation_is_idempotent(self, client: TestClient, db, monkeypatch, manager_headers):
+        """⚠️ 2026-08-11: كان بيترفض بـ400 — لكن إعادة نفس طلب التأكيد بعد
+        نجاح فعلي (retry بعد شبكة قطعت الرد، مثلاً) لازم ترجع نفس الحجز
+        بدل ما تترفض. راجع hub.services.confirm_booking's docstring."""
         branch, host = _site(monkeypatch, db)
         rt = _priced_room_type(db, branch)
         _room(db, branch, rt, "101")
@@ -308,7 +311,9 @@ class TestConfirmPublicRoomBooking:
         first = client.post(f"/api/v1/hub/online-bookings/{booking.id}/confirm", headers=manager_headers)
         second = client.post(f"/api/v1/hub/online-bookings/{booking.id}/confirm", headers=manager_headers)
         assert first.status_code == 200
-        assert second.status_code == 400
+        assert second.status_code == 200
+        assert second.json()["id"] == first.json()["id"]
+        assert second.json()["pms_booking_id"] == first.json()["pms_booking_id"]
 
     def test_concurrent_double_booking_confirm_conflicts_stays_pending(
         self, client: TestClient, db, monkeypatch, manager_headers,

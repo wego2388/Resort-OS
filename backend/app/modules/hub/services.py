@@ -3,12 +3,18 @@ from __future__ import annotations
 
 import logging
 
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.db_errors import is_lock_not_available
 from app.resort_os.timezone_utils import local_today
 
 from app.modules.hub import crud
+
+
+class HubConfirmationConcurrencyError(Exception):
+    """طلب تأكيد آخر لنفس الحجز شغال دلوقتي فعليًا — راجع confirm_booking."""
 
 logger = logging.getLogger(__name__)
 from app.modules.hub.models import HubOffer, HubOnlineBooking, HubPage
@@ -152,7 +158,7 @@ def _confirm_room_type_leg(db: Session, booking: HubOnlineBooking, *, strict: bo
             adults=booking.adults or 1, children=booking.children or 0,
             room_ids=[chosen.id], source="online",
             notes=f"حجز من الموقع — Hub #{booking.id}\n{booking.notes or ''}".strip(),
-        ), rate_overrides=rate_overrides)
+        ), rate_overrides=rate_overrides, commit=False)
     except BookingConflictError:
         if strict:
             raise
@@ -247,18 +253,56 @@ def confirm_booking(db: Session, booking_id: int, confirmed_by: int) -> HubOnlin
     اللي اتنفذ فعليًا. لما مفيش غرف متاحة، السطرين المكررين كانوا بيحاولوا
     يستخدموا `pms_b` غير معرَّفة أصلًا في الفرع ده — UnboundLocalError
     حقيقي كان بيتبلع بصمت. اتصلح بفصل منطق كل مسار (room_type/bundle) في
-    دالة مستقلة بترجّع pms_booking_id أو None بوضوح."""
-    booking = get_booking_or_404(db, booking_id)
+    دالة مستقلة بترجّع pms_booking_id أو None بوضوح.
+
+    ⚠️ باج أمني/محاسبي حقيقي أوسع اتصلح (2026-08-11، مراجعة أمنية/مالية):
+    إنشاء حجز PMS (pms.services.create_booking) كان بيعمل commit خاص بيه
+    (السطر اللي بيقفل الـSELECT FOR UPDATE على الغرف)، وبعدين confirm_
+    booking كان بيعمل commit تاني منفصل لتحديث حالة HubOnlineBooking —
+    يعني لو العملية وقعت (crash/exception) بين الاتنين، حجز PMS حقيقي
+    كان بيفضل موجود ومحجوز فعليًا من غير أي رابط رجوع لـHubOnlineBooking
+    اللي أنشأه (orphan)، ولو حصل تعارض/timeout في نفس اللحظة كان ممكن
+    يتنفّذ الدالة دي مرتين لنفس الحجز (طلبين متزامنين، الاتنين شايفين
+    status='pending' قبل ما أي واحد يكتب). اتصلح بـ3 حاجات معًا:
+      1. pms.services.create_booking/create_bundle_booking بقى عندهم
+         commit=False — الـcommit الوحيد بقى هنا في الآخر، بعد ما تحديث
+         الحجز وربط pms_booking_id يتعملوا في نفس الـsession/transaction.
+      2. قفل HubOnlineBooking نفسه (SELECT FOR UPDATE NOWAIT) قبل أي
+         تحقق/تعديل — يمنع طلبين متزامنين من الاتنين يعدّوا فحص pending.
+      3. Idempotency: لو الحجز اتأكد بالفعل، ترجع نفس النتيجة بدل رفض —
+         retry بعد نجاح فعلي (شبكة قطعت الرد بس العملية نجحت) يرجع نفس
+         الحجز، مش يحاول ينشئ حجز PMS تاني."""
+    try:
+        booking = crud.lock_online_booking_for_update(db, booking_id)
+    except OperationalError as exc:
+        db.rollback()
+        if not is_lock_not_available(exc):
+            raise
+        raise HubConfirmationConcurrencyError(
+            f"الحجز {booking_id} قيد التأكيد بالفعل من طلب آخر — حاول تاني خلال لحظات"
+        ) from exc
+    if not booking:
+        raise ValueError(f"الحجز {booking_id} غير موجود")
+
+    # Idempotency — راجع الشرح فوق. status='confirmed' فعليًا يعني نجاح
+    # سابق حقيقي (pms_booking_id اتربط في نفس الـcommit اللي غيّر الحالة،
+    # مفيش حالة وسطى ممكنة بعد الإصلاح ده).
+    if booking.status == "confirmed":
+        return booking
     if booking.status != "pending":
         raise ValueError(f"الحجز في حالة '{booking.status}' ولا يمكن تأكيده")
 
     strict = booking.public_reference is not None and booking.quoted_total is not None
     pms_booking_id: "int | None" = None
 
-    if booking.bundle_id:
-        pms_booking_id = _confirm_bundle_leg(db, booking, strict=strict)
-    elif booking.check_in and booking.check_out and booking.room_type_id:
-        pms_booking_id = _confirm_room_type_leg(db, booking, strict=strict)
+    try:
+        if booking.bundle_id:
+            pms_booking_id = _confirm_bundle_leg(db, booking, strict=strict)
+        elif booking.check_in and booking.check_out and booking.room_type_id:
+            pms_booking_id = _confirm_room_type_leg(db, booking, strict=strict)
+    except Exception:
+        db.rollback()
+        raise
 
     update = OnlineBookingUpdate(status="confirmed")
     obj = crud.update_online_booking(db, booking, update, confirmed_by=confirmed_by)

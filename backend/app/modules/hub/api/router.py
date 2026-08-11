@@ -213,11 +213,14 @@ def get_online_booking(booking_id: int, db: DbDep, user=Depends(get_current_acti
              response_model=OnlineBookingRead)
 def confirm_booking(booking_id: int, db: DbDep, user=Depends(get_manager_user)):
     from app.modules.pms.services import BookingConflictError  # noqa: PLC0415
+    from app.modules.hub.services import HubConfirmationConcurrencyError  # noqa: PLC0415
 
     b = _get_online_booking_or_404(db, booking_id)
     _assert_hub_branch(db, user, b.branch_id, "تأكيد حجز إلكتروني")
     try:
         return services.confirm_booking(db, booking_id, confirmed_by=user.id)
+    except HubConfirmationConcurrencyError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
     except BookingConflictError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
     except ValueError as exc:

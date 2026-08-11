@@ -206,11 +206,20 @@ def _lock_and_price_rooms(
 
 def create_booking(
     db: Session, data: BookingCreate, *, rate_overrides: Optional[dict[int, Decimal]] = None,
+    commit: bool = True,
 ) -> Booking:
     """rate_overrides: لو موجود، يفرض سعر صريح لغرفة بعينها بدل قراءة
     RoomType.base_rate/RatePlan — بيستخدمها hub.services.confirm_booking
     عشان يحصّل بالظبط السعر المتفق عليه في quote عام سابق (راجع OPS-DATA-02
-    §7.3 "quote drift")، مش سعر حي وقت التأكيد ممكن يكون اتغيّر."""
+    §7.3 "quote drift")، مش سعر حي وقت التأكيد ممكن يكون اتغيّر.
+
+    commit=False (2026-08-11): يسيب الـcommit لصاحب الـtransaction الأكبر
+    — hub.services.confirm_booking بيحتاج إنشاء الحجز ده + تحديث حالة
+    HubOnlineBooking يحصلوا في commit واحد ذرّي، مش commit منفصل هنا يقدر
+    ينجح لوحده ويسيب HubOnlineBooking معلّق لو الخطوة اللي بعده فشلت
+    (orphan PMS booking بلا رابط رجوع). كل الـcallers التانية (endpoint
+    PMS العادي، seed.py، hist_pms_bookings.py، crm lead-to-booking) بتفضل
+    على السلوك الافتراضي (commit=True) بدون أي تغيير."""
     # التحقق من التواريخ
     if data.check_out <= data.check_in:
         raise ValueError("check_out يجب أن يكون بعد check_in")
@@ -240,13 +249,17 @@ def create_booking(
     for room_id, _, _, _ in room_rates:
         crud.update_room_status(db, locked_rooms[room_id], "reserved")
 
-    db.commit()
-    db.refresh(booking)
+    if commit:
+        db.commit()
+        db.refresh(booking)
+    else:
+        db.flush()
     return booking
 
 
 def create_bundle_booking(
     db: Session, data: "BundleBookingCreate", *, price_override: Optional[Decimal] = None,
+    commit: bool = True,
 ) -> Booking:
     """حجز باقة Family Compound 6P: يحجز شاليه+استوديو الزوج المعتمد
     (RoomBundle) سوا في نفس الـtransaction، بنفس منطق القفل/التحقق
@@ -262,7 +275,9 @@ def create_bundle_booking(
 
     price_override: بيستخدمها hub.services.confirm_booking عشان يحصّل
     بالظبط سعر الباقة المتفق عليه في quote عام سابق (راجع
-    create_booking's rate_overrides لنفس السبب/الحماية من "quote drift")."""
+    create_booking's rate_overrides لنفس السبب/الحماية من "quote drift").
+
+    commit=False: راجع create_booking's docstring لنفس السبب بالظبط."""
     from app.modules.pms.models import RoomBundle  # noqa: PLC0415
 
     if data.check_out <= data.check_in:
@@ -337,8 +352,11 @@ def create_bundle_booking(
     for room_id, _, _, _ in room_rates:
         crud.update_room_status(db, locked_rooms[room_id], "reserved")
 
-    db.commit()
-    db.refresh(booking)
+    if commit:
+        db.commit()
+        db.refresh(booking)
+    else:
+        db.flush()
     return booking
 
 

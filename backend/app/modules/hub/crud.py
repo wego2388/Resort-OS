@@ -134,6 +134,22 @@ def get_online_booking(db: Session, booking_id: int) -> Optional[HubOnlineBookin
     return db.query(HubOnlineBooking).filter(HubOnlineBooking.id == booking_id).first()
 
 
+def lock_online_booking_for_update(db: Session, booking_id: int) -> Optional[HubOnlineBooking]:
+    """SELECT ... FOR UPDATE NOWAIT — يقفل صف HubOnlineBooking طوال معاملة
+    التأكيد كلها (نفس نمط beach.crud.lock_inventory_for_update بالظبط).
+    بيمنع طلبي تأكيد متزامنين لنفس الحجز من الاتنين يعدّوا فحص
+    ``status == 'pending'`` وينشئوا حجزي PMS منفصلين لنفس طلب Hub واحد
+    (Postgres فقط — SQLite بيتجاهل with_for_update من غير error، زي كل
+    مكان تاني في المشروع فيه القفل ده)."""
+    return (
+        db.query(HubOnlineBooking)
+        .filter(HubOnlineBooking.id == booking_id)
+        .populate_existing()
+        .with_for_update(nowait=True)
+        .first()
+    )
+
+
 def list_online_bookings(
     db: Session,
     branch_id: int,

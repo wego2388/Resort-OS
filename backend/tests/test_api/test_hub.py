@@ -260,7 +260,11 @@ class TestOnlineBooking:
             f"الموجود: {[(r.levelname, r.message) for r in caplog.records if r.levelno >= logging.ERROR]}"
         )
 
-    def test_cannot_confirm_already_confirmed(self, db, branch):
+    def test_reconfirm_already_confirmed_is_idempotent(self, db, branch):
+        """⚠️ 2026-08-11: كان بيرمي ValueError على أي إعادة تأكيد — لكن
+        إعادة نفس طلب التأكيد بعد نجاح فعلي (مثلاً retry بعد شبكة قطعت
+        الرد) لازم ترجع نفس الحجز بدل ما تترفض أو (الأخطر) تنشئ حجز PMS
+        تاني مكرر. راجع confirm_booking's docstring — الجزء المُصلَح."""
         data = OnlineBookingCreate(
             branch_id=branch.id,
             guest_name="عميل",
@@ -269,8 +273,68 @@ class TestOnlineBooking:
             requested_date=date.today() + timedelta(days=2),
         )
         booking = services.create_online_booking(db, data)
-        services.confirm_booking(db, booking.id, confirmed_by=1)
-        with pytest.raises(ValueError, match="confirmed"):
+        first = services.confirm_booking(db, booking.id, confirmed_by=1)
+        second = services.confirm_booking(db, booking.id, confirmed_by=1)
+        assert second.id == first.id
+        assert second.status == "confirmed"
+        assert second.pms_booking_id == first.pms_booking_id
+
+    def test_forced_failure_after_pms_insert_leaves_no_orphan_booking(self, db, branch, monkeypatch):
+        """⚠️ 2026-08-11: قبل الإصلاح، pms.services.create_booking كان
+        بيعمل commit خاص بيه — لو فشلت الخطوة اللي بعده (تحديث حالة
+        HubOnlineBooking)، حجز PMS حقيقي كان بيفضل موجود ومحجوز فعليًا
+        من غير أي رابط رجوع (orphan). التست ده بيفرض فشل بالظبط في
+        النقطة دي (بعد إنشاء حجز PMS، قبل تحديث حالة Hub) ويتأكد إن
+        العملية كلها اترجعت بالكامل — صفر حجز PMS يتيم، الحجز الأصلي
+        فضل 'pending' زي ما كان."""
+        from app.modules.pms.models import Booking as PMSBooking, RoomType, Room
+
+        rt = RoomType(branch_id=branch.id, name="Standard", base_rate=Decimal("500.00"), max_occupancy=2)
+        db.add(rt); db.flush()
+        room = Room(branch_id=branch.id, room_type_id=rt.id, name=f"R-{uuid.uuid4().hex[:6].upper()}",
+                    floor=1, status="available")
+        db.add(room); db.flush()
+
+        data = OnlineBookingCreate(
+            branch_id=branch.id,
+            guest_name="ضيف اختبار فشل",
+            guest_phone="01009000000",
+            guests_count=2,
+            requested_date=date.today() + timedelta(days=20),
+            check_in=date.today() + timedelta(days=20),
+            check_out=date.today() + timedelta(days=22),
+            room_type_id=rt.id,
+        )
+        booking = services.create_online_booking(db, data)
+
+        def _boom(*a, **kw):
+            raise RuntimeError("محاكاة فشل بعد إنشاء حجز PMS")
+
+        monkeypatch.setattr(crud, "update_online_booking", _boom)
+
+        with pytest.raises(RuntimeError):
+            services.confirm_booking(db, booking.id, confirmed_by=1)
+        db.rollback()
+
+        refreshed = crud.get_online_booking(db, booking.id)
+        assert refreshed.status == "pending"
+        assert refreshed.pms_booking_id is None
+        orphans = db.query(PMSBooking).filter(PMSBooking.branch_id == branch.id).all()
+        assert orphans == [], f"لازم صفر حجز PMS يتيم بعد الفشل، الموجود: {[b.id for b in orphans]}"
+
+    def test_cannot_confirm_cancelled_booking(self, db, branch):
+        """حالة تانية غير pending/confirmed (زي cancelled) لازم تفضل مرفوضة —
+        الـidempotency بتاعة التست فوق مقصورة على status='confirmed' بس."""
+        data = OnlineBookingCreate(
+            branch_id=branch.id,
+            guest_name="عميل",
+            guest_phone="01000000000",
+            guests_count=1,
+            requested_date=date.today() + timedelta(days=2),
+        )
+        booking = services.create_online_booking(db, data)
+        services.cancel_booking(db, booking.id)
+        with pytest.raises(ValueError, match="cancelled"):
             services.confirm_booking(db, booking.id, confirmed_by=1)
 
     def test_cancel_pending_booking(self, db, branch):
