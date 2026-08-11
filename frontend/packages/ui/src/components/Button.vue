@@ -31,7 +31,13 @@ const SIZE_CLASSES: Record<string, string> = {
 }
 const VARIANT_CLASSES: Record<string, string> = {
   primary:   'bg-primary-700 text-white hover:bg-primary-800 focus:ring-primary-500',
-  secondary: 'bg-secondary text-white hover:bg-gold-dark focus:ring-secondary',
+  // النص لازم غامق مش أبيض — gold.light (اللي secondary بيتحول ليه تلقائيًا في
+  // الوضع الداكن، tokens.css) فاتح جدًا فأبيض-على-فاتح كان بيدي تباين ~1.4:1
+  // (باج حقيقي رفعه Mohamed بسكرين شوت 2026-08-11: زرار "تطبيق خصم" غير مقروء
+  // في الوضع الداكن). حتى الـDEFAULT الفاتح نسبيًا في الوضع العادي كان بيدي
+  // ~2.6:1 بس — الاتنين تحت حد WCAG AA (4.5:1 نص عادي/3:1 نص كبير). نص غامق
+  // بيدي ~6.5:1 (فاتح) و~12:1 (غامق) على نفس الخلفيات.
+  secondary: 'bg-secondary text-gray-900 hover:bg-gold-dark focus:ring-secondary',
   danger:    'bg-danger text-white hover:bg-red-700 focus:ring-danger',
   ghost:     'bg-transparent text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 focus:ring-gray-300',
   outline:   'border-2 border-primary-700 text-primary-700 dark:border-primary-400 dark:text-primary-400 hover:bg-primary-50 dark:hover:bg-primary-900/20 focus:ring-primary-500',
