@@ -25,8 +25,16 @@ def make_branch(db: Session):
     import uuid
 
     from app.modules.core.models import Branch
+    from app.modules.finance.models import Account
     b = Branch(name="TS Task Branch", name_ar="فرع مهام", code=f"TST-{uuid.uuid4().hex[:6].upper()}")
     db.add(b)
+    db.flush()
+    # ⚠️ 2026-08-11 (strict=True — راجع §4): create_contract بيفشل بدون
+    # 1100/4600 (قيد الدفعة الأولى).
+    db.add_all([
+        Account(branch_id=b.id, code="1100", name="Cash", account_type="asset"),
+        Account(branch_id=b.id, code="4600", name="Timeshare Revenue", account_type="revenue"),
+    ])
     db.flush()
     return b
 

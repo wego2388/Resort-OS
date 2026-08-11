@@ -102,38 +102,57 @@ def confirm_deposit_received(
 ) -> LeaseContract:
     """يرحّل قيد التأمين فقط عند التأكيد الفعلي لاستلامه — Dr Cash/Bank/Card
     (حسب طريقة الدفع الفعلية) / Cr تأمينات مستأجرين (2150). idempotent
-    (contract.deposit_received يمنع الترحيل مرتين)."""
-    contract = get_contract_or_404(db, contract_id)
-    if contract.deposit_received:
-        raise ValueError(f"تأمين العقد {contract.contract_number} مُسجَّل استلامه بالفعل")
-    if (contract.security_deposit or Decimal("0")) <= 0:
-        raise ValueError(f"العقد {contract.contract_number} بلا تأمين مطلوب")
+    (contract.deposit_received يمنع الترحيل مرتين).
 
-    from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
+    ⚠️ 2026-08-11: strict=True + rollback على أي استثناء — قبل كده
+    post_simple_revenue_journal كانت بتترحّل بـstrict=False الافتراضي
+    (تبتلع فشل الحساب/العملة وترجع None بصمت)، وdeposit_received=True
+    كان بيتسجّل بغض النظر — يعني ممكن يتسجّل "التأمين استُلم" فعليًا
+    من غير أي قيد محاسبي حقيقي يثبته."""
+    try:
+        contract = get_contract_or_404(db, contract_id)
+        if contract.deposit_received:
+            raise ValueError(f"تأمين العقد {contract.contract_number} مُسجَّل استلامه بالفعل")
+        if (contract.security_deposit or Decimal("0")) <= 0:
+            raise ValueError(f"العقد {contract.contract_number} بلا تأمين مطلوب")
 
-    debit_code = _PAYMENT_METHOD_DEBIT_ACCOUNT.get(payment_method, "1100")
-    post_simple_revenue_journal(
-        db, contract.branch_id, local_today(settings.TIMEZONE),
-        debit_account_code=debit_code, credit_account_code="2150",
-        amount=contract.security_deposit,
-        reference=f"LC-DEP-{contract.contract_number}",
-        description=f"استلام تأمين عقد إيجار — {contract.contract_number} ({contract.tenant_name})",
-        source="leasing", source_id=contract.id,
-        created_by=received_by, cost_center_code="LEASE",
-    )
-    contract.deposit_received = True
-    contract.deposit_received_at = datetime.now(timezone.utc)
-    contract.deposit_payment_method = payment_method
-    contract.deposit_received_by = received_by
-    db.commit()
-    db.refresh(contract)
-    return contract
+        from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
+
+        debit_code = _PAYMENT_METHOD_DEBIT_ACCOUNT.get(payment_method, "1100")
+        post_simple_revenue_journal(
+            db, contract.branch_id, local_today(settings.TIMEZONE),
+            debit_account_code=debit_code, credit_account_code="2150",
+            amount=contract.security_deposit,
+            reference=f"LC-DEP-{contract.contract_number}",
+            description=f"استلام تأمين عقد إيجار — {contract.contract_number} ({contract.tenant_name})",
+            source="leasing", source_id=contract.id,
+            created_by=received_by, cost_center_code="LEASE",
+            strict=True, commit_cost_centers=False,
+        )
+        contract.deposit_received = True
+        contract.deposit_received_at = datetime.now(timezone.utc)
+        contract.deposit_payment_method = payment_method
+        contract.deposit_received_by = received_by
+        db.commit()
+        db.refresh(contract)
+        return contract
+    except Exception:
+        db.rollback()
+        raise
 
 
 def _accrue_single_payment(db: "Session", payment: "LeasePayment", contract: "LeaseContract") -> None:
     """Dr ذمم مستأجرين (1260) / Cr إيرادات إيجارات تجارية (4500) — يثبت
     الإيراد عند الاستحقاق بغض النظر عن التحصيل الفعلي (OPS-DATA-02 §10.5).
-    idempotent عبر payment.accrued — استدعاء تاني على نفس الدفعة no-op."""
+    idempotent عبر payment.accrued — استدعاء تاني على نفس الدفعة no-op.
+
+    ⚠️ 2026-08-11: strict=True — قبل كده entry كان ممكن يرجع None (فشل
+    ترحيل صامت) وpayment.accrued يتسجّل True بردو، يعني استحقاق إيراد
+    حقيقي بيتسجّل من غير أي قيد يثبته، وبما إن accrued=True كان بيمنع
+    أي إعادة محاولة لاحقة (idempotency guard فوق)، الفجوة كانت دايمة —
+    مفيش فرصة تانية تترحّل. دلوقتي: فشل الترحيل بيرفع استثناء يوقف
+    accrued=True نفسه، والمحاولة القادمة (يوم تاني، أو retry يدوي) لسه
+    شايفة الدفعة كـunaccrued وهتحاول تاني."""
     if payment.accrued:
         return
     from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
@@ -146,10 +165,10 @@ def _accrue_single_payment(db: "Session", payment: "LeasePayment", contract: "Le
         description=f"استحقاق إيجار — {contract.contract_number} ({contract.tenant_name})",
         source="leasing", source_id=payment.id,
         created_by=contract.signed_by or 0, cost_center_code="LEASE",
+        strict=True, commit_cost_centers=False,
     )
     payment.accrued = True
-    if entry:
-        payment.accrual_journal_entry_id = entry.id
+    payment.accrual_journal_entry_id = entry.id
     db.flush()
 
 
@@ -157,16 +176,33 @@ def accrue_due_rents(db: Session, branch_id: int, as_of: date | None = None) -> 
     """يرحّل استحقاق كل دفعات الإيجار اللي وصل تاريخ استحقاقها ولسه ما
     اتحقّقتش محاسبيًا (accrued=False) — بتُستدعى يوميًا من
     app.tasks.leasing_tasks.accrue_due_rents، ومن pay_payment/record_cash_log
-    inline لو التحصيل حصل قبل ما المهمة اليومية تشتغل."""
+    inline لو التحصيل حصل قبل ما المهمة اليومية تشتغل.
+
+    ⚠️ 2026-08-11: كل دفعة بتترحّل جوه SAVEPOINT مستقل (db.begin_nested)
+    — لو دفعة واحدة فشلت (حساب مش معرّف، مثلاً)، الدفعات التانية الناجحة
+    في نفس الدفعة اليومية (batch) لازم تفضل متسجّلة، مش كل الـbatch يترفض
+    بسبب عقد واحد بمشكلة إعداد. الفشل بيتسجّل بوضوح ويكمل للدفعة الجاية،
+    مش يبتلع بصمت (نفس مبدأ الـstrict فوق، بس على مستوى العنصر الواحد
+    داخل معالجة دفعية مش طلب HTTP فردي)."""
     today = as_of or local_today(settings.TIMEZONE)
     due = crud.list_unaccrued_due_payments(db, branch_id, today)
+    accrued_payments: list[LeasePayment] = []
     for payment in due:
         contract = crud.get_contract(db, payment.contract_id)
-        if contract:
-            _accrue_single_payment(db, payment, contract)
-    if due:
+        if not contract:
+            continue
+        try:
+            with db.begin_nested():
+                _accrue_single_payment(db, payment, contract)
+            accrued_payments.append(payment)
+        except Exception:
+            logger.error(
+                "accrue_due_rents: فشل استحقاق دفعة %s (عقد %s) — تحتاج مراجعة يدوية",
+                payment.id, contract.contract_number, exc_info=True,
+            )
+    if accrued_payments:
         db.commit()
-    return due
+    return accrued_payments
 
 
 def _post_rent_receipt_journal(
@@ -175,27 +211,29 @@ def _post_rent_receipt_journal(
 ) -> None:
     """Dr Cash/Bank/Card (حسب طريقة الدفع الفعلية) / Cr ذمم مستأجرين (1260)
     — تحصيل فعلي بس، بعد ما الإيراد يكون اتحقّق (accrued) بالفعل. `source_obj`
-    أي صف عنده `.id` (LeasePayment أو TenantCashLog) — بيُستخدم كمرجع بس."""
-    try:
-        if collected_amount <= 0:
-            return
-        from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
+    أي صف عنده `.id` (LeasePayment أو TenantCashLog) — بيُستخدم كمرجع بس.
 
-        debit_code = _PAYMENT_METHOD_DEBIT_ACCOUNT.get(payment_method or "cash", "1100")
-        post_simple_revenue_journal(
-            db, contract.branch_id, local_today(settings.TIMEZONE),
-            debit_account_code=debit_code, credit_account_code="1260",
-            amount=collected_amount,
-            reference=f"LSE-RCV-{source_obj.id:06d}",
-            description=f"تحصيل إيجار — {contract.contract_number} ({contract.tenant_name})",
-            source="leasing", source_id=source_obj.id,
-            created_by=contract.signed_by or 0, cost_center_code="LEASE",
-        )
-    except Exception:
-        logger.error(
-            "_post_rent_receipt_journal فشل — عقد %s مبلغ %.2f — القيد المحاسبي يحتاج تسجيل يدوي",
-            getattr(contract, 'contract_number', contract.id), float(collected_amount), exc_info=True,
-        )
+    ⚠️ 2026-08-11: كان فيه try/except محلي هنا بيبتلع أي استثناء (حتى لو
+    strict=True كان هيتضاف بعدين) ويسجّله بس كـlog.error — يعني تحصيل
+    نقدي حقيقي (paid_amount اتسجّل بالفعل في pay_payment قبل النداء ده)
+    كان بيفضل مسجّل حتى لو القيد المحاسبي المقابل فشل تمامًا، من غير أي
+    أثر على استجابة الطلب. اتشال الـtry/except — الاستثناء دلوقتي بيطلع
+    لصاحب المعاملة الأكبر (pay_payment) اللي بيعمل rollback للعملية كلها."""
+    if collected_amount <= 0:
+        return
+    from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
+
+    debit_code = _PAYMENT_METHOD_DEBIT_ACCOUNT.get(payment_method or "cash", "1100")
+    post_simple_revenue_journal(
+        db, contract.branch_id, local_today(settings.TIMEZONE),
+        debit_account_code=debit_code, credit_account_code="1260",
+        amount=collected_amount,
+        reference=f"LSE-RCV-{source_obj.id:06d}",
+        description=f"تحصيل إيجار — {contract.contract_number} ({contract.tenant_name})",
+        source="leasing", source_id=source_obj.id,
+        created_by=contract.signed_by or 0, cost_center_code="LEASE",
+        strict=True, commit_cost_centers=False,
+    )
 
 
 def _post_direct_rent_journal(
@@ -205,27 +243,25 @@ def _post_direct_rent_journal(
     """قيد واحد مباشر Dr Cash/Bank/Card / Cr إيراد — لتسويات كاش فورية
     (TenantCashLog) بدون جدول استحقاق مسبق (مركز غوص/واتر سبورت بيدفعوا
     حصة إيراد متغيّرة، مش قسط شهري ثابت له تاريخ استحقاق مسبق) — عمدًا
-    من غير أي عبور على 1260 لأن مفيش ذمة سبق إثباتها هنا أصلًا."""
-    try:
-        if amount <= 0:
-            return
-        from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
+    من غير أي عبور على 1260 لأن مفيش ذمة سبق إثباتها هنا أصلًا.
 
-        debit_code = _PAYMENT_METHOD_DEBIT_ACCOUNT.get(payment_method or "cash", "1100")
-        post_simple_revenue_journal(
-            db, contract.branch_id, local_today(settings.TIMEZONE),
-            debit_account_code=debit_code, credit_account_code="4500",
-            amount=amount,
-            reference=f"LSE-CL-{source_obj.id:06d}",
-            description=f"تسوية كاش مستأجر — {contract.contract_number} ({contract.tenant_name})",
-            source="leasing", source_id=source_obj.id,
-            created_by=contract.signed_by or 0, cost_center_code="LEASE",
-        )
-    except Exception:
-        logger.error(
-            "_post_direct_rent_journal فشل — عقد %s مبلغ %.2f — القيد المحاسبي يحتاج تسجيل يدوي",
-            getattr(contract, 'contract_number', contract.id), float(amount), exc_info=True,
-        )
+    ⚠️ 2026-08-11: نفس إصلاح _post_rent_receipt_journal — شال try/except
+    المحلي اللي كان بيبتلع الفشل، strict=True دلوقتي."""
+    if amount <= 0:
+        return
+    from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
+
+    debit_code = _PAYMENT_METHOD_DEBIT_ACCOUNT.get(payment_method or "cash", "1100")
+    post_simple_revenue_journal(
+        db, contract.branch_id, local_today(settings.TIMEZONE),
+        debit_account_code=debit_code, credit_account_code="4500",
+        amount=amount,
+        reference=f"LSE-CL-{source_obj.id:06d}",
+        description=f"تسوية كاش مستأجر — {contract.contract_number} ({contract.tenant_name})",
+        source="leasing", source_id=source_obj.id,
+        created_by=contract.signed_by or 0, cost_center_code="LEASE",
+        strict=True, commit_cost_centers=False,
+    )
 
 
 def update_contract(db: Session, contract_id: int, data: LeaseContractUpdate) -> LeaseContract:
@@ -310,30 +346,34 @@ def pay_payment(db: Session, payment_id: int, req: PayLeaseRequest) -> LeasePaym
        "paid" من غير أي تنبيه أو تسجيل فرق) — باج مالي حقيقي، مش نظري.
     """
     payment = _lock_payment_or_raise(db, payment_id)
-    if payment.status == "paid":
-        raise ValueError("الدفعة مسددة بالكامل مسبقاً")
-    contract = get_contract_or_404(db, payment.contract_id)
-    if contract.status == "terminated":
-        raise ValueError(f"العقد {contract.contract_number} مفسوخ — لا يمكن تحصيل دفعات عليه")
-    if contract.status == "expired":
-        raise ValueError(f"العقد {contract.contract_number} منتهي — لا يمكن تحصيل دفعات عليه")
+    try:
+        if payment.status == "paid":
+            raise ValueError("الدفعة مسددة بالكامل مسبقاً")
+        contract = get_contract_or_404(db, payment.contract_id)
+        if contract.status == "terminated":
+            raise ValueError(f"العقد {contract.contract_number} مفسوخ — لا يمكن تحصيل دفعات عليه")
+        if contract.status == "expired":
+            raise ValueError(f"العقد {contract.contract_number} منتهي — لا يمكن تحصيل دفعات عليه")
 
-    remaining = payment.amount + payment.penalty - payment.paid_amount
-    if req.paid_amount > remaining:
-        raise ValueError(
-            f"المبلغ المُدخَل ({req.paid_amount:,.2f} ج) أكبر من المتبقي على هذه "
-            f"الدفعة ({remaining:,.2f} ج) — تحقّق من المبلغ قبل التسجيل"
-        )
+        remaining = payment.amount + payment.penalty - payment.paid_amount
+        if req.paid_amount > remaining:
+            raise ValueError(
+                f"المبلغ المُدخَل ({req.paid_amount:,.2f} ج) أكبر من المتبقي على هذه "
+                f"الدفعة ({remaining:,.2f} ج) — تحقّق من المبلغ قبل التسجيل"
+            )
 
-    # الإيراد لازم يكون اتحقّق (accrued) قبل أي تحصيل — لو التحصيل حصل في نفس
-    # يوم/قبل ما مهمة accrue_due_rents اليومية تشتغل، بنحقّقه هنا inline
-    # (idempotent، مفيش خطر ترحيل مزدوج).
-    _accrue_single_payment(db, payment, contract)
-    obj = crud.pay_payment(db, payment, req)
-    _post_rent_receipt_journal(db, obj, contract, req.paid_amount, req.payment_method)
-    db.commit()
-    db.refresh(obj)
-    return obj
+        # الإيراد لازم يكون اتحقّق (accrued) قبل أي تحصيل — لو التحصيل حصل في
+        # نفس يوم/قبل ما مهمة accrue_due_rents اليومية تشتغل، بنحقّقه هنا
+        # inline (idempotent، مفيش خطر ترحيل مزدوج).
+        _accrue_single_payment(db, payment, contract)
+        obj = crud.pay_payment(db, payment, req)
+        _post_rent_receipt_journal(db, obj, contract, req.paid_amount, req.payment_method)
+        db.commit()
+        db.refresh(obj)
+        return obj
+    except Exception:
+        db.rollback()
+        raise
 
 
 def record_cash_log(db: Session, data: TenantCashLogCreate, recorded_by: int) -> TenantCashLog:
@@ -351,16 +391,20 @@ def record_cash_log(db: Session, data: TenantCashLogCreate, recorded_by: int) ->
     (deposit/refund/penalty/maintenance/other) مسموحة عمدًا حتى بعد
     الفسخ/الانتهاء — رد تأمين أو غرامة تسوية نهائية سيناريو تشغيلي طبيعي
     بعد إقفال العقد، عكس تحصيل إيراد إيجار جديد."""
-    contract = get_contract_or_404(db, data.contract_id)
-    if data.activity_type in ("rent_payment", "revenue_share"):
-        if contract.status == "terminated":
-            raise ValueError(f"العقد {contract.contract_number} مفسوخ — لا يمكن تحصيل إيجار عليه")
-        if contract.status == "expired":
-            raise ValueError(f"العقد {contract.contract_number} منتهي — لا يمكن تحصيل إيجار عليه")
-    log = crud.create_cash_log(db, data, recorded_by)
+    try:
+        contract = get_contract_or_404(db, data.contract_id)
+        if data.activity_type in ("rent_payment", "revenue_share"):
+            if contract.status == "terminated":
+                raise ValueError(f"العقد {contract.contract_number} مفسوخ — لا يمكن تحصيل إيجار عليه")
+            if contract.status == "expired":
+                raise ValueError(f"العقد {contract.contract_number} منتهي — لا يمكن تحصيل إيجار عليه")
+        log = crud.create_cash_log(db, data, recorded_by)
 
-    if data.activity_type in ("rent_payment", "revenue_share"):
-        _post_direct_rent_journal(db, log, contract, data.amount, data.payment_method)
+        if data.activity_type in ("rent_payment", "revenue_share"):
+            _post_direct_rent_journal(db, log, contract, data.amount, data.payment_method)
+    except Exception:
+        db.rollback()
+        raise
 
     db.commit()
     db.refresh(log)

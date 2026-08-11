@@ -79,6 +79,7 @@ class TestLeasingContractFlow:
 
     def test_pay_payment_updates_status(self, client: TestClient, db, fake_redis, manager_headers):
         branch = make_branch_committed(db)
+        seed_leasing_accounts(db, branch)
         contract = client.post(
             "/api/v1/leasing/contracts", json=contract_payload(branch.id), headers=manager_headers,
         ).json()
@@ -92,6 +93,37 @@ class TestLeasingContractFlow:
         )
         assert pay_resp.status_code == 200, pay_resp.text
         assert pay_resp.json()["status"] == "paid"
+
+    def test_pay_payment_fails_atomically_when_account_missing(
+        self, client: TestClient, db, fake_redis, manager_headers,
+    ):
+        """⚠️ 2026-08-11: قبل الإصلاح، post_simple_revenue_journal كانت
+        بترحّل بـstrict=False الافتراضي — لو حساب 1260 (ذمم مستأجرين)
+        مش معرَّف للفرع، الترحيل كان يفشل بصمت (يرجع None) والدفعة
+        تتسجّل مسددة بالكامل من غير أي قيد محاسبي حقيقي. عمدًا من غير
+        seed_leasing_accounts هنا — الطلب لازم يفشل بالكامل (503)، مش
+        ينجح بحالة نصف مكتملة."""
+        branch = make_branch_committed(db)  # ⚠️ عمدًا بدون seed_leasing_accounts
+        contract = client.post(
+            "/api/v1/leasing/contracts", json=contract_payload(branch.id), headers=manager_headers,
+        ).json()
+        payment_id = contract["payments"][0]["id"]
+        amount = contract["payments"][0]["amount"]
+
+        pay_resp = client.post(
+            f"/api/v1/leasing/payments/{payment_id}/pay",
+            json={"paid_amount": amount, "payment_method": "bank_transfer"},
+            headers=manager_headers,
+        )
+        assert pay_resp.status_code == 503, pay_resp.text
+        assert pay_resp.json()["detail"]["code"] == "FINANCIAL_CONFIGURATION_ERROR"
+
+        # الدفعة لازم تفضل زي ما هي بالظبط — صفر أثر جزئي من المحاولة الفاشلة.
+        from app.modules.leasing.models import LeasePayment
+        unchanged = db.query(LeasePayment).filter(LeasePayment.id == payment_id).one()
+        assert unchanged.status == "pending"
+        assert unchanged.paid_amount == Decimal("0.00")
+        assert unchanged.accrued is False
 
     def test_apply_penalties_via_http(self, client: TestClient, db, fake_redis, manager_headers):
         branch = make_branch_committed(db)
@@ -301,6 +333,7 @@ class TestLeasingPaymentSafety:
     def test_partial_then_exact_remaining_still_succeeds(self, client: TestClient, db, fake_redis, manager_headers):
         """The overpayment cap must not break the normal partial-payment flow."""
         branch = make_branch_committed(db)
+        seed_leasing_accounts(db, branch)
         contract = client.post(
             "/api/v1/leasing/contracts", json=contract_payload(branch.id), headers=manager_headers,
         ).json()

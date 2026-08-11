@@ -23,9 +23,17 @@ from fastapi.testclient import TestClient
 
 def make_branch_committed(db):
     from app.modules.core.models import Branch
+    from app.modules.finance.models import Account
     b = Branch(name="HR HTTP Branch", name_ar="فرع موارد بشرية",
                code=f"HR-{uuid.uuid4().hex[:8].upper()}")
     db.add(b)
+    db.commit()
+    # ⚠️ 2026-08-11 (strict=True — راجع §4): create_salary_advance/
+    # create_advance_payment بيفشلوا بدون 1100/1180 (قيد صرف السلفة).
+    db.add_all([
+        Account(branch_id=b.id, code="1100", name="Cash", account_type="asset"),
+        Account(branch_id=b.id, code="1180", name="سلف موظفين مستحقة", account_type="asset"),
+    ])
     db.commit()
     return b
 

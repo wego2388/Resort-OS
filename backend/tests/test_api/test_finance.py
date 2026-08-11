@@ -20,6 +20,20 @@ from app.modules.finance.schemas import (
 from app.modules.finance import services, crud
 
 
+def make_finance_accounts(db, branch):
+    """1100 (نقدية) + 1150 (ذمم الفوليو) — الحسابين اللي add_payment/
+    void_payment بيدوّروا عليهم. ⚠️ 2026-08-11 (strict=True — راجع §4):
+    من غيرهم add_payment نفسه بيفشل بـ FinancialConfigurationError."""
+    from app.modules.finance.models import Account
+    if db.query(Account).filter_by(branch_id=branch.id, code="1100").first():
+        return
+    cash = Account(branch_id=branch.id, code="1100", name="Cash", account_type="asset")
+    guest_ledger = Account(branch_id=branch.id, code="1150", name="ذمم الفوليو", account_type="asset")
+    db.add_all([cash, guest_ledger])
+    db.commit()
+    return cash, guest_ledger
+
+
 @pytest.fixture
 def branch(db: Session):
     from app.modules.core.models import Branch
@@ -109,6 +123,7 @@ class TestFolio:
 class TestPayment:
 
     def test_add_payment(self, db, branch, folio):
+        make_finance_accounts(db, branch)
         data = PaymentCreate(
             folio_id=folio.id,
             branch_id=branch.id,
@@ -121,6 +136,7 @@ class TestPayment:
         assert payment.voided_at is None
 
     def test_void_payment(self, db, branch, folio):
+        make_finance_accounts(db, branch)
         data = PaymentCreate(
             folio_id=folio.id,
             branch_id=branch.id,
@@ -134,6 +150,7 @@ class TestPayment:
         assert voided.voided_by == 1
 
     def test_cannot_void_payment_of_closed_folio(self, db, branch, folio):
+        make_finance_accounts(db, branch)
         data = PaymentCreate(
             folio_id=folio.id,
             branch_id=branch.id,
@@ -218,17 +235,24 @@ class TestPaymentSettlementJournalPosting:
         assert cash_line.credit == Decimal("150.00")   # عكس التحصيل: دائن مش مدين
         assert guest_ledger_line.debit == Decimal("150.00")  # عكس التحصيل: مدين مش دائن
 
-    def test_missing_accounts_does_not_block_payment(self, db, branch, folio):
-        """لو 1100/1150 مش موجودين، تسجيل الدفعة لازم ينجح عادي — نفس فلسفة
-        باقي القيود في المشروع (فشل الترحيل المحاسبي ميوقفش العملية الأساسية)."""
+    def test_missing_accounts_fails_payment_atomically(self, db, branch, folio):
+        """⚠️ 2026-08-11: عكس السلوك القديم تمامًا — كان فيه باج محاسبي حقيقي
+        هنا (لو 1100/1150 مش موجودين، الدفعة كانت تتسجّل عادي بصفر أثر
+        محاسبي بصمت). دلوقتي strict=True: حساب مش معرَّف للفرع لازم يفشّل
+        تسجيل الدفعة كله — مفيش Payment، مفيش قيد، من غير أي حالة نصف-
+        مكتملة (راجع services.add_payment's try/except db.rollback())."""
+        from app.modules.finance.services import FinancialConfigurationError
+
         data = PaymentCreate(
             folio_id=folio.id, branch_id=branch.id,
             amount=Decimal("100.00"), method="cash", posted_at=datetime.utcnow(),
         )
-        payment = services.add_payment(db, folio.id, data)
-        assert payment.id is not None
+        with pytest.raises(FinancialConfigurationError):
+            services.add_payment(db, folio.id, data)
+
         _, total = crud.list_journal_entries(db, branch.id, source="folio_payment")
         assert total == 0
+        assert crud.list_payments(db, folio.id) == []
 
 
 class TestDiscount:
@@ -797,6 +821,7 @@ class TestCrudFilters:
         assert out_of_range.id not in ids_in_range
 
     def test_list_payments_excludes_voided(self, db: Session, branch, folio):
+        make_finance_accounts(db, branch)
         data1 = PaymentCreate(
             folio_id=folio.id, branch_id=branch.id, amount=Decimal("100"),
             method="cash", posted_at=datetime.utcnow(),
@@ -943,6 +968,7 @@ class TestCashierShift:
             services.open_shift(db, cashier_id=11, opened_by=11, data=data)
 
     def test_shift_end_report_aggregates_cash_card_credit(self, db: Session, branch, folio):
+        make_finance_accounts(db, branch)
         shift = services.open_shift(
             db, cashier_id=20, opened_by=20,
             data=CashierShiftOpen(branch_id=branch.id, opening_float=Decimal("500")),
@@ -1035,6 +1061,7 @@ class TestCashierShift:
         assert report.total_room == Decimal("60")
 
     def test_payments_auto_attach_open_shift(self, db: Session, branch, folio):
+        make_finance_accounts(db, branch)
         shift = services.open_shift(
             db, cashier_id=21, opened_by=21,
             data=CashierShiftOpen(branch_id=branch.id, opening_float=Decimal("0")),
@@ -1047,6 +1074,7 @@ class TestCashierShift:
         assert payment.shift_id == shift.id
 
     def test_close_shift_computes_variance(self, db: Session, branch, folio):
+        make_finance_accounts(db, branch)
         shift = services.open_shift(
             db, cashier_id=22, opened_by=22,
             data=CashierShiftOpen(branch_id=branch.id, opening_float=Decimal("500")),
@@ -1067,6 +1095,7 @@ class TestCashierShift:
     def test_close_shift_with_cash_count_computes_counted_cash_from_breakdown(self, db: Session, branch, folio):
         """لو الكاشير عدّ الكاش بالفئة، الإجمالي المعدود لازم يتحسب من العدّ نفسه —
         مش من رقم منفصل يكتبه — وتفاصيل العدّ تتحفظ للتدقيق."""
+        make_finance_accounts(db, branch)
         shift = services.open_shift(
             db, cashier_id=25, opened_by=25,
             data=CashierShiftOpen(branch_id=branch.id, opening_float=Decimal("500")),
@@ -1109,6 +1138,7 @@ class TestCashierShift:
             services.close_shift(db, shift.id, closed_by=23, data=CashierShiftClose(counted_cash=Decimal("0")))
 
     def test_report_compares_to_previous_closed_shift(self, db: Session, branch, folio):
+        make_finance_accounts(db, branch)
         shift1 = services.open_shift(
             db, cashier_id=24, opened_by=24,
             data=CashierShiftOpen(branch_id=branch.id, opening_float=Decimal("0")),
@@ -1137,6 +1167,7 @@ class TestCashierShift:
             services.build_shift_end_report(db, 9999)
 
     def test_shift_end_report_pdf(self, db: Session, branch, folio):
+        make_finance_accounts(db, branch)
         shift = services.open_shift(
             db, cashier_id=25, opened_by=25,
             data=CashierShiftOpen(branch_id=branch.id, opening_float=Decimal("500")),
@@ -1167,6 +1198,7 @@ class TestCashierShift:
         from datetime import date as _date  # noqa: PLC0415
         from app.modules.finance.schemas import ExchangeRateCreate as ERC  # noqa: PLC0415
 
+        make_finance_accounts(db, branch)
         # سجّل أسعار الصرف بتاريخ فريد لتجنب تعارض مع tests أخرى
         fx_date = _date(2026, 7, 9)
         # لو موجود من run سابق في نفس الـ session، نتجاهل الـ duplicate error
@@ -1364,6 +1396,7 @@ class TestCashMovement:
 class TestFolioReports:
 
     def test_folio_statement_pdf_running_balance(self, db: Session, branch, folio):
+        make_finance_accounts(db, branch)
         services.post_charge(db, folio.id, FolioChargeCreate(
             charge_type="room", description="غرفة 101", amount=Decimal("400"),
             posted_at=datetime.utcnow(),
@@ -1376,6 +1409,7 @@ class TestFolioReports:
         assert pdf.startswith(b"%PDF")
 
     def test_folio_statement_excludes_voided_payments(self, db: Session, branch, folio):
+        make_finance_accounts(db, branch)
         services.post_charge(db, folio.id, FolioChargeCreate(
             charge_type="room", description="غرفة 101", amount=Decimal("400"),
             posted_at=datetime.utcnow(),
@@ -1786,6 +1820,7 @@ class TestExchangeRates:
 class TestShiftEndReportEdgeCases:
 
     def test_delta_vs_previous_negative_shows_down_arrow_in_pdf(self, db: Session, branch, folio):
+        make_finance_accounts(db, branch)
         shift1 = services.open_shift(
             db, cashier_id=40, opened_by=40,
             data=CashierShiftOpen(branch_id=branch.id, opening_float=Decimal("0")),

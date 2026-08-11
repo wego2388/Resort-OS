@@ -16,6 +16,7 @@ from app.modules.leasing.schemas import (
 )
 from app.modules.core import services as core_services
 from app.modules.core.schemas import PaginatedResponse
+from app.modules.finance.services import FinancialConfigurationError
 from app.resort_os.timezone_utils import local_today
 
 router = APIRouter(tags=["leasing"])
@@ -115,6 +116,10 @@ def pay_payment(payment_id: int, req: PayLeaseRequest, db: DbDep,
         return services.pay_payment(db, payment_id, req)
     except services.PaymentConflictError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
+    except FinancialConfigurationError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {
+            "code": "FINANCIAL_CONFIGURATION_ERROR", "message": str(exc),
+        })
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
@@ -137,6 +142,10 @@ def confirm_deposit_received(contract_id: int, data: ConfirmDepositRequest, db: 
     try:
         contract = services.confirm_deposit_received(db, contract_id, data.payment_method, received_by=user.id)
         return _to_read(contract, local_today(settings.TIMEZONE))
+    except FinancialConfigurationError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {
+            "code": "FINANCIAL_CONFIGURATION_ERROR", "message": str(exc),
+        })
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
@@ -163,6 +172,10 @@ def create_cash_log(contract_id: int, data: TenantCashLogCreate, db: DbDep,
     _assert_leasing_branch(db, user, c.branch_id, "تسجيل حركة كاش مستأجر")
     try:
         return services.record_cash_log(db, data, recorded_by=user.id)
+    except FinancialConfigurationError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {
+            "code": "FINANCIAL_CONFIGURATION_ERROR", "message": str(exc),
+        })
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 

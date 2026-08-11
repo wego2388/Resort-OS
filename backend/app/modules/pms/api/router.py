@@ -14,6 +14,7 @@ from app.core.deps import (
 )
 from app.modules.pms import crud, services
 from app.modules.core import services as core_services
+from app.modules.finance.services import FinancialConfigurationError
 from app.modules.pms.schemas import (
     BookingCreate, BookingRead, BundleBookingCreate, CheckinRequest, EarlyLateRequest,
     HousekeepingTaskRead, HousekeepingTaskStatusUpdate,
@@ -397,6 +398,10 @@ async def checkout(
     _booking_for_access(db, user, booking_id, "تسجيل مغادرة حجز")
     try:
         booking = services.checkout_booking(db, booking_id)
+    except FinancialConfigurationError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {
+            "code": "FINANCIAL_CONFIGURATION_ERROR", "message": str(exc),
+        })
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
     await pms_rooms_manager.broadcast(str(booking.branch_id), {"type": "rooms_changed"})

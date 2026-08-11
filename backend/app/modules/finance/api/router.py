@@ -204,6 +204,10 @@ async def add_payment(folio_id: int, data: PaymentCreate, db: DbDep, user=Depend
         payment = services.add_payment(db, folio_id, data, cashier_id=user.id)
     except services.ShiftCloseInProgressError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, {"error_code": "SHIFT_CLOSE_IN_PROGRESS", "message": str(exc)})
+    except services.FinancialConfigurationError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {
+            "code": "FINANCIAL_CONFIGURATION_ERROR", "message": str(exc),
+        })
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
     if payment.shift_id:
@@ -243,6 +247,10 @@ def void_payment(
     )
     try:
         return services.void_payment(db, payment_id, voided_by=user.id, reason=data.reason)
+    except services.FinancialConfigurationError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {
+            "code": "FINANCIAL_CONFIGURATION_ERROR", "message": str(exc),
+        })
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 

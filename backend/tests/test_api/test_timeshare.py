@@ -37,6 +37,7 @@ def unit(db: Session, branch):
 
 @pytest.fixture
 def contract(db: Session, branch):
+    make_finance_accounts(db, branch)
     data = TimeshareContractCreate(
         branch_id=branch.id,
         customer_name="أحمد محمد",
@@ -132,6 +133,7 @@ class TestTimeshareContract:
             start_date=date(2026, 7, 1),
             end_date=date(2026, 7, 2),
         )
+        make_finance_accounts(db, branch)
         c = services.create_contract(db, data, signed_by=1)
         assert c.end_date == date(2026, 7, 2)
 
@@ -163,15 +165,12 @@ class TestPayInstallment:
         bank_transfer/card كان بيترحّل Dr.1100 (كاش) دايمًا زي أي تحصيل —
         نفس فئة الباج اللي اتصلح في leasing.services في نفس الجلسة. هنا
         نتأكد إن bank_transfer فعليًا بيقيّد 1110، مش 1100."""
-        from app.modules.finance.models import Account, JournalLine
+        from app.modules.finance.models import Account, JournalEntry, JournalLine
 
-        db.add_all([
-            Account(branch_id=branch.id, code="1100", name="Cash", account_type="asset"),
-            Account(branch_id=branch.id, code="1110", name="Bank", account_type="asset"),
-            Account(branch_id=branch.id, code="4600", name="Timeshare Revenue", account_type="revenue"),
-        ])
-        db.commit()
-
+        # contract fixture بالفعل بتزرع 1100/1110/1120/4600/4650 (راجع
+        # make_finance_accounts) وبترحّل قيد الدفعة الأولى كاش (1100) —
+        # فبنفلتر هنا على قيد القسط تحديدًا (TS-INST-) بدل كل حركة 1100
+        # التاريخية على الفرع، وإلا الدفعة الأولى كانت هتلوّث cash_debit.
         inst = contract.installments_list[0]
         services.pay_installment(db, inst.id, PayInstallmentRequest(
             paid_amount=inst.amount, payment_method="bank_transfer",
@@ -179,12 +178,13 @@ class TestPayInstallment:
 
         bank_account = db.query(Account).filter_by(branch_id=branch.id, code="1110").first()
         cash_account = db.query(Account).filter_by(branch_id=branch.id, code="1100").first()
-        bank_debit = sum(
-            l.debit for l in db.query(JournalLine).filter(JournalLine.account_id == bank_account.id).all()
+        inst_entry = (
+            db.query(JournalEntry)
+            .filter(JournalEntry.reference == f"TS-INST-{contract.contract_number}-{inst.installment_no}")
+            .one()
         )
-        cash_debit = sum(
-            l.debit for l in db.query(JournalLine).filter(JournalLine.account_id == cash_account.id).all()
-        )
+        bank_debit = sum(l.debit for l in inst_entry.lines if l.account_id == bank_account.id)
+        cash_debit = sum(l.debit for l in inst_entry.lines if l.account_id == cash_account.id)
         assert bank_debit == inst.amount
         assert cash_debit == Decimal("0")
 
@@ -255,8 +255,8 @@ class TestPayInstallment:
         يعني معظم إيراد عقد التايم شير (كل الأقساط بعد الأولى) كان غايبًا
         تمامًا عن الدفاتر المحاسبية."""
         from app.modules.finance import crud as finance_crud
-        make_finance_accounts(db, branch)  # اتضافوا بعد توقيع العقد فعليًا —
-        # فمفيش قيد للدفعة الأولى (كان اتبلع بصمت وقتها لعدم وجود الحسابات)
+        # contract fixture بالفعل بتزرع الحسابات + بترحّل قيد الدفعة الأولى
+        # (strict=True) — فبنفلتر على مرجع القسط تحديدًا بدل عدّ كل القيود.
 
         inst = contract.installments_list[0]
         services.pay_installment(
@@ -264,9 +264,9 @@ class TestPayInstallment:
         )
 
         entries, total = finance_crud.list_journal_entries(db, branch.id, source="timeshare")
-        assert total == 1
-        entry = entries[0]
-        assert entry.reference.startswith("TS-INST-")
+        inst_entries = [e for e in entries if e.reference.startswith("TS-INST-")]
+        assert len(inst_entries) == 1
+        entry = inst_entries[0]
         assert sum(l.debit for l in entry.lines) == sum(l.credit for l in entry.lines) == inst.amount
 
 
@@ -345,17 +345,28 @@ class TestSalesDashboard:
 
 
 def make_finance_accounts(db, branch):
-    """يزرع 1100 (نقدية) و4600 (إيرادات عقود التايم شير) — الحسابين اللي
-    timeshare.services._post_deferred_revenue_journal/_post_installment_payment_journal
-    بيدوّروا عليهم بالكود. ⚠️ 2026-07-07: بقى 4600 (revenue) بدل 2300 (كان
+    """يزرع دليل الحسابات اللي _post_deferred_revenue_journal/
+    _post_installment_payment_journal/_post_maintenance_payment_journal/
+    _post_contract_cancellation_refund_journal بيدوّروا عليه: 1100/1110/1120
+    (نقدية/بنك/كارت — حسب _PAYMENT_METHOD_DEBIT_ACCOUNT) و4600/4650 (إيراد
+    عقود/إيراد صيانة). ⚠️ 2026-07-07: بقى 4600 (revenue) بدل 2300 (كان
     liability — إيراد تايم شير عمره ما كان بيتحرّر لإيراد فعلي، راجع تعليق
-    _post_deferred_revenue_journal)."""
+    _post_deferred_revenue_journal). ⚠️ 2026-08-11 (strict=True — راجع §4):
+    من غير الحسابات دي، أي عملية مالية في الموديول بترفع
+    FinancialConfigurationError بدل ما تكمل بصمت من غير قيد — لازم تتزرع
+    قبل أي create_contract/pay_installment/pay_maintenance_due/cancel_contract
+    في التستات."""
     from app.modules.finance.models import Account
-    cash = Account(branch_id=branch.id, code="1100", name="Cash", account_type="asset")
-    revenue = Account(branch_id=branch.id, code="4600", name="Timeshare Revenue", account_type="revenue")
-    db.add_all([cash, revenue])
+    accounts = [
+        Account(branch_id=branch.id, code="1100", name="Cash", account_type="asset"),
+        Account(branch_id=branch.id, code="1110", name="Bank", account_type="asset"),
+        Account(branch_id=branch.id, code="1120", name="Card Clearing", account_type="asset"),
+        Account(branch_id=branch.id, code="4600", name="Timeshare Revenue", account_type="revenue"),
+        Account(branch_id=branch.id, code="4650", name="Timeshare Maintenance Revenue", account_type="revenue"),
+    ]
+    db.add_all(accounts)
     db.commit()
-    return cash, revenue
+    return accounts[0], accounts[3]
 
 
 class TestContractNotFound:
@@ -418,10 +429,13 @@ class TestDeferredRevenueJournalPosting:
         _, total = finance_crud.list_journal_entries(db, branch.id, source="timeshare")
         assert total == 0
 
-    def test_missing_accounts_does_not_block_contract_creation(self, db: Session, branch):
-        """لو 1100/4600 مش موجودين، إنشاء العقد لازم ينجح عادي — نفس فلسفة
-        pms._post_checkout_journal (الفشل المحاسبي ميوقفش العملية الأساسية)."""
-        from app.modules.finance import crud as finance_crud
+    def test_missing_accounts_fails_contract_creation_atomically(self, db: Session, branch):
+        """⚠️ 2026-08-11: عكس السلوك القديم تمامًا — كان فيه باج محاسبي حقيقي
+        هنا (لو 1100/4600 مش موجودين، العقد كان بيتسجّل عادي بصفر أثر محاسبي
+        بصمت). دلوقتي strict=True: حساب مش معرَّف للفرع لازم يفشّل إنشاء
+        العقد كله — مفيش عقد، مفيش أقساط، مفيش مستحق صيانة، من غير أي حالة
+        نصف-مكتملة (راجع services.create_contract's try/except db.rollback())."""
+        from app.modules.finance.services import FinancialConfigurationError
 
         data = TimeshareContractCreate(
             branch_id=branch.id, customer_name="بدون حسابات", room_type="Studio", unit_capacity=2,
@@ -430,11 +444,10 @@ class TestDeferredRevenueJournalPosting:
             first_installment_date=date(2026, 8, 1),
             partner_share_pct=Decimal("0"), start_date=date(2026, 7, 1),
         )
-        contract = services.create_contract(db, data, signed_by=1)
-        assert contract.id is not None
+        with pytest.raises(FinancialConfigurationError):
+            services.create_contract(db, data, signed_by=1)
 
-        _, total = finance_crud.list_journal_entries(db, branch.id, source="timeshare")
-        assert total == 0
+        assert crud.list_contracts(db, branch.id, None, None)[1] == 0
 
 
 class TestCancelContract:
@@ -460,8 +473,11 @@ class TestCancelContract:
         بيتدفع للعميل من غير أي أثر محاسبي، والإيراد اللي اتسجّل وقت
         الدفعة الأولى كان يفضل مبالغ فيه للأبد."""
         from app.modules.finance import crud as finance_crud
+        from app.modules.finance.models import Account
 
-        cash, revenue = make_finance_accounts(db, branch)
+        # contract fixture بالفعل بتزرع 1100/4600 (راجع make_finance_accounts).
+        cash = db.query(Account).filter_by(branch_id=branch.id, code="1100").first()
+        revenue = db.query(Account).filter_by(branch_id=branch.id, code="4600").first()
         services.cancel_contract(db, contract.id, Decimal("5000"), cancelled_by=1)
 
         entries, total = finance_crud.list_journal_entries(db, branch.id, source="timeshare")
@@ -700,6 +716,7 @@ class TestExcelImport:
         rows = [["ياسمين علي", "Studio", 90000, 10000, 10, "2026-07-01", "2026-08-01"]]
         content = self._build_workbook(headers, rows)
 
+        make_finance_accounts(db, branch)
         result = services.import_contracts_excel(db, branch.id, content, signed_by=1)
         assert result["imported"] == 1
         assert result["skipped"] == 0
@@ -737,6 +754,7 @@ class TestExcelImport:
         ]
         content = self._build_workbook(headers, rows)
 
+        make_finance_accounts(db, branch)
         result = services.import_contracts_excel(db, branch.id, content, signed_by=1)
         assert result["imported"] == 1
         assert result["skipped"] == 1
@@ -752,6 +770,7 @@ class TestExcelImport:
         rows = [["ياسمين علي", "Studio", 90000, 10000, 10, "2026-07-01", "2026-08-01"]]
         content = self._build_workbook(headers, rows)
 
+        make_finance_accounts(db, branch)
         first = services.import_contracts_excel(db, branch.id, content, signed_by=1)
         assert first["imported"] == 1
         assert first["skipped"] == 0
@@ -779,6 +798,7 @@ class TestExcelImport:
         ]
         content = self._build_workbook(headers, rows)
 
+        make_finance_accounts(db, branch)
         result = services.import_contracts_excel(db, branch.id, content, signed_by=1)
         assert result["imported"] == 1
         assert len(result["errors"]) == 1
@@ -806,6 +826,7 @@ class TestTimeshareReports:
             installments=6, installment_period=1,
             first_installment_date=date(2026, 8, 1), start_date=date(2026, 7, 1),
         )
+        make_finance_accounts(db, branch)
         services.create_contract(db, data, signed_by=1)
         calendar = services.get_calendar(db, branch.id, year=2026)
         assert calendar["total_booked_weeks"] == 0
@@ -844,6 +865,7 @@ class TestTimeshareReports:
             first_installment_date=date(2026, 8, 1), start_date=date(2026, 7, 1),
             partner_share_pct=Decimal("30"), partner_company="شركة الشريك",
         )
+        make_finance_accounts(db, branch)
         services.create_contract(db, data, signed_by=1)
 
         stats = services.get_stats(db, branch.id)

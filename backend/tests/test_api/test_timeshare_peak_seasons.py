@@ -35,6 +35,14 @@ def unit(db: Session, branch):
 
 @pytest.fixture
 def contract(db: Session, branch, unit):
+    # ⚠️ 2026-08-11 (strict=True — راجع §4): من غير 1100/4600، create_contract
+    # بيفشل بـ FinancialConfigurationError (قيد الدفعة الأولى).
+    from app.modules.finance.models import Account
+    db.add_all([
+        Account(branch_id=branch.id, code="1100", name="Cash", account_type="asset"),
+        Account(branch_id=branch.id, code="4600", name="Timeshare Revenue", account_type="revenue"),
+    ])
+    db.commit()
     data = TimeshareContractCreate(
         branch_id=branch.id, customer_name="عميل ذروة", customer_phone="01000000010",
         room_type="Studio", unit_capacity=2,

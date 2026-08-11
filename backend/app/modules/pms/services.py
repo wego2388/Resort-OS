@@ -440,45 +440,52 @@ def checkout_booking(db: Session, booking_id: int) -> Booking:
     if booking.status != "checked_in":
         raise ValueError(f"لا يمكن تسجيل الخروج — الحجز يجب أن يكون checked_in (الحالة الحالية: '{booking.status}')")
 
-    booking = crud.update_booking_status(db, booking, "checked_out")
+    try:
+        booking = crud.update_booking_status(db, booking, "checked_out")
 
-    # تحديث حالة الغرف → checkout_pending ثم HousekeepingTask
-    for br in booking.rooms:
-        room = crud.get_room(db, br.room_id)
-        if room:
-            crud.update_room_status(db, room, "checkout_pending")
-            crud.create_housekeeping_task(db, {
-                "branch_id": booking.branch_id,
-                "room_id":   room.id,
-                "task_type": "checkout_clean",
-                "status":    "dirty",
-                "priority":  "high",
+        # تحديث حالة الغرف → checkout_pending ثم HousekeepingTask
+        for br in booking.rooms:
+            room = crud.get_room(db, br.room_id)
+            if room:
+                crud.update_room_status(db, room, "checkout_pending")
+                crud.create_housekeeping_task(db, {
+                    "branch_id": booking.branch_id,
+                    "room_id":   room.id,
+                    "task_type": "checkout_clean",
+                    "status":    "dirty",
+                    "priority":  "high",
+                })
+
+        # Revenue Journal Entry + تحديث إحصائيات العميل (لو مربوط بعميل CRM)
+        # strict=True (2026-08-11): تسوية checkout من غير قيد محاسبي مقابل
+        # (حساب مش معرَّف للفرع، مثلاً) لازم توقف الـcheckout كله — مش تسجّل
+        # الحجز "خرج" فعليًا من غير أي تسوية لذمة الفوليو (1150).
+        _post_checkout_journal(db, booking)
+        if booking.customer_id:
+            from app.modules.crm.services import record_customer_visit  # noqa: PLC0415
+            record_customer_visit(db, booking.customer_id, booking.total_rate, booking.check_out)
+
+        # ⚠️ باج "الموديل موجود، الـ API صفر" حقيقي كان هنا: GuestProfile
+        # (ملف ضيف مجمّع بالهاتف عبر كل الإقامات) كان عنده crud كامل موصوف بالتعليق
+        # "يُحدَّث عند كل checkout" — بس checkout_booking (هنا بالظبط) عمرها ما
+        # كانت بتنادي عليه، يعني الجدول كان فاضي 100% من أول ما اتعمل الموديل.
+        if booking.guest_phone:
+            from app.modules.crm.crud import (  # noqa: PLC0415
+                get_or_create_guest_profile, update_guest_profile_on_checkout,
+            )
+            get_or_create_guest_profile(db, booking.branch_id, booking.guest_phone, {
+                "full_name":   booking.guest_name,
+                "email":       booking.guest_email,
+                "national_id": booking.guest_national_id,
             })
+            update_guest_profile_on_checkout(db, booking.branch_id, booking.guest_phone, booking.total_rate or Decimal("0"))
 
-    # Revenue Journal Entry + تحديث إحصائيات العميل (لو مربوط بعميل CRM)
-    _post_checkout_journal(db, booking)
-    if booking.customer_id:
-        from app.modules.crm.services import record_customer_visit  # noqa: PLC0415
-        record_customer_visit(db, booking.customer_id, booking.total_rate, booking.check_out)
-
-    # ⚠️ باج "الموديل موجود، الـ API صفر" حقيقي كان هنا: GuestProfile
-    # (ملف ضيف مجمّع بالهاتف عبر كل الإقامات) كان عنده crud كامل موصوف بالتعليق
-    # "يُحدَّث عند كل checkout" — بس checkout_booking (هنا بالظبط) عمرها ما
-    # كانت بتنادي عليه، يعني الجدول كان فاضي 100% من أول ما اتعمل الموديل.
-    if booking.guest_phone:
-        from app.modules.crm.crud import (  # noqa: PLC0415
-            get_or_create_guest_profile, update_guest_profile_on_checkout,
-        )
-        get_or_create_guest_profile(db, booking.branch_id, booking.guest_phone, {
-            "full_name":   booking.guest_name,
-            "email":       booking.guest_email,
-            "national_id": booking.guest_national_id,
-        })
-        update_guest_profile_on_checkout(db, booking.branch_id, booking.guest_phone, booking.total_rate or Decimal("0"))
-
-    db.commit()
-    db.refresh(booking)
-    return booking
+        db.commit()
+        db.refresh(booking)
+        return booking
+    except Exception:
+        db.rollback()
+        raise
 
 
 def _post_checkout_journal(db: "Session", booking: "Booking") -> None:
@@ -563,16 +570,22 @@ def _post_checkout_journal(db: "Session", booking: "Booking") -> None:
     if extra_folio_charges_total > 0:
         description += f" (شامل {extra_folio_charges_total:.2f} ج شحن على الغرفة)"
 
-    post_simple_revenue_journal(
-        db, booking.branch_id, local_today(settings.TIMEZONE),
-        debit_account_code=debit_code,
-        credit_account_code="1150",   # Cr. ذمم الفوليو — تسوية ما سبق تسجيله
-        amount=total_amount,
-        reference=f"CHK-{booking.booking_number}",
-        description=description,
-        source="pms", source_id=booking.id,
-        cost_center_code="ROOM",
-    )
+    # إقامة مجانية بالكامل (comp، total_rate=0 ومفيش شحنات إضافية) مفيهاش
+    # مبلغ حقيقي يترحّل — no-op شرعي، مش فشل محاسبي (strict=True بيرفض
+    # مبلغ صفري كخطأ تجهيز، راجع timeshare._post_deferred_revenue_journal
+    # لنفس الحالة بالظبط).
+    if total_amount > 0:
+        post_simple_revenue_journal(
+            db, booking.branch_id, local_today(settings.TIMEZONE),
+            debit_account_code=debit_code,
+            credit_account_code="1150",   # Cr. ذمم الفوليو — تسوية ما سبق تسجيله
+            amount=total_amount,
+            reference=f"CHK-{booking.booking_number}",
+            description=description,
+            source="pms", source_id=booking.id,
+            cost_center_code="ROOM",
+            strict=True, commit_cost_centers=False,
+        )
 
 
 def request_early_late(db: Session, booking_id: int, data: "EarlyLateRequest") -> Booking:

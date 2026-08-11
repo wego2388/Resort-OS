@@ -27,6 +27,16 @@ def _make_branch(db):
     # Gate 4B: عمليات التايم شير بقت تفرض branch isolation server-side
     # (2026-07-28) — راجع test_timeshare_http.py's make_branch_committed لنفس النمط.
     _link_shared_users_to_branch(db, b.id)
+    # ⚠️ 2026-08-11 (strict=True — راجع §4): تحصيل قسط بدون 1100/1120/4600
+    # بيفشل بـ FinancialConfigurationError (_post_installment_payment_journal).
+    from app.modules.finance.models import Account
+    db.add_all([
+        Account(branch_id=b.id, code="1100", name="Cash", account_type="asset"),
+        Account(branch_id=b.id, code="1110", name="Bank", account_type="asset"),
+        Account(branch_id=b.id, code="1120", name="Card Clearing", account_type="asset"),
+        Account(branch_id=b.id, code="4600", name="Timeshare Revenue", account_type="revenue"),
+    ])
+    db.commit()
     return b
 
 

@@ -32,9 +32,17 @@ from app.modules.hr import services, crud
 @pytest.fixture
 def branch(db: Session):
     from app.modules.core.models import Branch
+    from app.modules.finance.models import Account
     b = Branch(name="Test HR", name_ar="موارد بشرية اختبارية",
                code=f"HR-{uuid.uuid4().hex[:6].upper()}")
     db.add(b)
+    db.flush()
+    # ⚠️ 2026-08-11 (strict=True — راجع §4): create_salary_advance/
+    # create_advance_payment بيفشلوا بدون 1100/1180 (قيد صرف السلفة).
+    db.add_all([
+        Account(branch_id=b.id, code="1100", name="Cash", account_type="asset"),
+        Account(branch_id=b.id, code="1180", name="سلف موظفين مستحقة", account_type="asset"),
+    ])
     db.flush()
     return b
 
@@ -547,8 +555,9 @@ class TestPayroll:
         مستحقة" (1180) بقيمة القسط المخصوم، يوازن القيد صح."""
         from app.modules.finance.models import Account, JournalEntry, JournalLine
 
+        # branch fixture بالفعل بتزرع 1100/1180 — بنضيف الباقي بس.
         for code, acc_type in [
-            ("5100", "expense"), ("1100", "asset"), ("1180", "asset"),
+            ("5100", "expense"),
             ("2100", "liability"), ("2110", "liability"), ("2120", "liability"),
         ]:
             db.add(Account(branch_id=branch.id, code=code, name=code, account_type=acc_type))
@@ -586,12 +595,9 @@ class TestPayroll:
     def test_create_salary_advance_posts_disbursement_journal(self, db, branch):
         """Dr سلف موظفين مستحقة (1180) / Cr الصندوق (1100) عند صرف السلفة
         فعليًا — الطرف المقابل لسطر السداد في القيد المجمّع للرواتب."""
-        from app.modules.finance.models import Account, JournalEntry, JournalLine
+        from app.modules.finance.models import JournalEntry, JournalLine
 
-        for code, acc_type in [("1100", "asset"), ("1180", "asset")]:
-            db.add(Account(branch_id=branch.id, code=code, name=code, account_type=acc_type))
-        db.commit()
-
+        # branch fixture بالفعل بتزرع 1100/1180.
         emp = services.create_employee(db, EmployeeCreate(
             branch_id=branch.id, employee_code=f"EMP-{uuid.uuid4().hex[:6].upper()}",
             full_name="موظف صرف سلفة", position="نادل", basic_salary=Decimal("6000.00"),
@@ -1156,6 +1162,24 @@ class TestLeaveBalance:
 
 class TestSalaryAdvance:
     """wagdy.md H-01 — سلفة راتب بأقساط شهرية ثابتة."""
+
+    def test_create_salary_advance_fails_atomically_when_account_missing(self, db, branch, employee):
+        """§4: من غير 1180 (سلف موظفين مستحقة)، صرف السلفة كله لازم يفشل —
+        مفيش SalaryAdvance متسجّل، من غير أي حالة نصف-مكتملة."""
+        from app.modules.finance.models import Account
+        from app.modules.finance.services import FinancialConfigurationError
+
+        db.query(Account).filter_by(branch_id=branch.id, code="1180").delete()
+        db.commit()
+
+        with pytest.raises(FinancialConfigurationError):
+            services.create_salary_advance(db, SalaryAdvanceCreate(
+                employee_id=employee.id, branch_id=branch.id,
+                amount=Decimal("3000"), disbursed_date=date(2026, 1, 5),
+                monthly_deduction_amount=Decimal("500"),
+            ), created_by=1)
+
+        assert crud.list_salary_advances(db, employee.id, branch.id, None) == []
 
     def test_create_salary_advance(self, db, branch, employee):
         advance = services.create_salary_advance(db, SalaryAdvanceCreate(

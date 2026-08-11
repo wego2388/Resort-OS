@@ -281,19 +281,27 @@ def add_payment(db: Session, folio_id: int, data: PaymentCreate, cashier_id: Opt
             shift_id = open_shift.id
     # عملة الدفعة موروثة من الفوليو دايماً — مش قابلة للتحديد من العميل، عشان
     # نضمن ما يحصلش mismatch بين عملة الفوليو وعملة دفعاته.
-    payment = crud.create_payment(db, data, shift_id=shift_id, currency=folio.currency)
-    post_simple_revenue_journal(
-        db, data.branch_id, utc_naive_to_local_date(data.posted_at, settings.TIMEZONE),
-        debit_account_code="1100", credit_account_code="1150",
-        amount=data.amount,
-        reference=f"PAY-{payment.id}",
-        description=f"تحصيل دفعة فوليو #{folio_id}",
-        source="folio_payment", source_id=payment.id,
-        currency=folio.currency,
-    )
-    db.commit()
-    db.refresh(payment)
-    return payment
+    try:
+        payment = crud.create_payment(db, data, shift_id=shift_id, currency=folio.currency)
+        # strict=True (2026-08-11): تحصيل دفعة فوليو من غير قيد محاسبي مقابل
+        # (حساب مش معرَّف للفرع، مثلاً) لازم يفشل كامل، مش يتسجّل بصمت من
+        # غير أثر محاسبي — راجع §4.
+        post_simple_revenue_journal(
+            db, data.branch_id, utc_naive_to_local_date(data.posted_at, settings.TIMEZONE),
+            debit_account_code="1100", credit_account_code="1150",
+            amount=data.amount,
+            reference=f"PAY-{payment.id}",
+            description=f"تحصيل دفعة فوليو #{folio_id}",
+            source="folio_payment", source_id=payment.id,
+            currency=folio.currency,
+            strict=True, commit_cost_centers=False,
+        )
+        db.commit()
+        db.refresh(payment)
+        return payment
+    except Exception:
+        db.rollback()
+        raise
 
 
 def void_payment(db: Session, payment_id: int, voided_by: int, reason: str = "voided via API") -> Payment:
@@ -326,28 +334,35 @@ def void_payment(db: Session, payment_id: int, voided_by: int, reason: str = "vo
     folio = crud.get_folio(db, payment.folio_id)
     if folio and folio.status == "closed":
         raise ValueError("لا يمكن إلغاء دفعة من فوليو مغلق")
-    original_amount = payment.amount
-    payment = crud.void_payment(db, payment, voided_by)
-    # سجل تدقيق إلزامي — أي تغيير فعلي في قيمة دفعة/فاتورة/حجز لازم يترك أثر
-    crud.create_revenue_audit_log(
-        db, branch_id=payment.branch_id, entity_type="payment", entity_id=payment.id,
-        old_value=original_amount, new_value=Decimal("0.00"), reason=reason, changed_by=voided_by,
-    )
-    # عكس قيد التحصيل اللي add_payment رحّله (Dr Cash/Cr ذمم الفوليو) — الدفعة
-    # اتلغت يبقى الكاش ده ما اتحصّلش فعليًا، والذمة ترجع زي ما كانت.
-    from app.resort_os.timezone_utils import business_today  # noqa: PLC0415
-    post_simple_revenue_journal(
-        db, payment.branch_id, business_today(settings.TIMEZONE),
-        debit_account_code="1150", credit_account_code="1100",
-        amount=original_amount,
-        reference=f"PAY-VOID-{payment.id}",
-        description=f"إلغاء دفعة فوليو #{payment.folio_id}",
-        source="folio_payment_void", source_id=payment.id,
-        currency=payment.currency,
-    )
-    db.commit()
-    db.refresh(payment)
-    return payment
+    try:
+        original_amount = payment.amount
+        payment = crud.void_payment(db, payment, voided_by)
+        # سجل تدقيق إلزامي — أي تغيير فعلي في قيمة دفعة/فاتورة/حجز لازم يترك أثر
+        crud.create_revenue_audit_log(
+            db, branch_id=payment.branch_id, entity_type="payment", entity_id=payment.id,
+            old_value=original_amount, new_value=Decimal("0.00"), reason=reason, changed_by=voided_by,
+        )
+        # عكس قيد التحصيل اللي add_payment رحّله (Dr Cash/Cr ذمم الفوليو) — الدفعة
+        # اتلغت يبقى الكاش ده ما اتحصّلش فعليًا، والذمة ترجع زي ما كانت.
+        # strict=True (2026-08-11): فشل قيد العكس لازم يوقف الإلغاء كله — مش
+        # يسجّل الدفعة "ملغاة" من غير أي عكس محاسبي حقيقي (راجع §4).
+        from app.resort_os.timezone_utils import business_today  # noqa: PLC0415
+        post_simple_revenue_journal(
+            db, payment.branch_id, business_today(settings.TIMEZONE),
+            debit_account_code="1150", credit_account_code="1100",
+            amount=original_amount,
+            reference=f"PAY-VOID-{payment.id}",
+            description=f"إلغاء دفعة فوليو #{payment.folio_id}",
+            source="folio_payment_void", source_id=payment.id,
+            currency=payment.currency,
+            strict=True, commit_cost_centers=False,
+        )
+        db.commit()
+        db.refresh(payment)
+        return payment
+    except Exception:
+        db.rollback()
+        raise
 
 
 # ── Checks ────────────────────────────────────────────────────────────

@@ -268,6 +268,7 @@ class TestCheckinCheckout:
 
     def test_checkout_booking(self, db):
         branch = make_branch(db)
+        make_finance_accounts(db, branch)
         rt = make_room_type(db, branch)
         room = make_room(db, branch, rt)
         booking = make_booking(db, branch, room)
@@ -277,6 +278,26 @@ class TestCheckinCheckout:
         db.refresh(room)
         # room moves to checkout_pending, awaiting housekeeping
         assert room.status == "checkout_pending"
+
+    def test_checkout_fails_atomically_when_account_missing(self, db):
+        """§4: من غير 1100 (تسوية checkout)، الـcheckout كله لازم يفشل —
+        الحجز يفضل checked_in، الغرفة تفضل زي ما كانت، من غير أي حالة
+        نصف-مكتملة (راجع services.checkout_booking's try/except db.rollback())."""
+        from app.modules.finance.services import FinancialConfigurationError
+
+        branch = make_branch(db)
+        rt = make_room_type(db, branch)
+        room = make_room(db, branch, rt)
+        booking = make_booking(db, branch, room)
+        services.checkin_booking(db, booking.id)
+
+        with pytest.raises(FinancialConfigurationError):
+            services.checkout_booking(db, booking.id)
+
+        db.refresh(booking)
+        db.refresh(room)
+        assert booking.status == "checked_in"
+        assert room.status == "occupied"
 
     def test_checkout_settles_room_charged_beach_and_dining_extras(self, db):
         """تأكيد صريح من محمد (2026-08-09): الاستقبال بيحصّل كل حاجة —
@@ -383,6 +404,7 @@ class TestCheckinCheckout:
         from app.modules.crm.schemas import CustomerCreate
 
         branch = make_branch(db)
+        make_finance_accounts(db, branch)
         customer = crm_services.create_customer(db, CustomerCreate(
             branch_id=branch.id, full_name="نزيل دائم",
         ))
@@ -422,6 +444,7 @@ class TestCheckinCheckout:
 
     def test_cannot_cancel_checked_out_booking(self, db):
         branch = make_branch(db)
+        make_finance_accounts(db, branch)
         rt = make_room_type(db, branch)
         room = make_room(db, branch, rt)
         booking = make_booking(db, branch, room)

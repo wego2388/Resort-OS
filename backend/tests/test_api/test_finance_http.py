@@ -44,6 +44,11 @@ def make_branch_committed(db):
     # فبنربط أي واحد منهم اتعمل بالفعل بالفرع الجديد ده (upsert) عشان تستات
     # الوردية HTTP تفضل تمثّل مشغّل حقيقي مربوط بفرعه.
     _link_shared_users_to_branch(db, b.id)
+    # ⚠️ 2026-08-11 (strict=True — راجع §4): add_payment/void_payment بيفشلوا
+    # بدون 1100/1150 (تحصيل/عكس دفعة فوليو). أي تست محتاج حسابات إضافية
+    # (4100/2160/...) بينادي make_account_committed تحت (idempotent).
+    make_account_committed(db, b, "1100", "Cash", "asset")
+    make_account_committed(db, b, "1150", "Folio AR", "asset")
     return b
 
 
@@ -80,6 +85,9 @@ def _link_shared_users_to_branch(db, branch_id: int) -> None:
 
 def make_account_committed(db, branch, code, name, account_type):
     from app.modules.finance.models import Account
+    existing = db.query(Account).filter_by(branch_id=branch.id, code=code).first()
+    if existing:
+        return existing
     acc = Account(branch_id=branch.id, code=code, name=name, account_type=account_type)
     db.add(acc)
     db.commit()
@@ -129,10 +137,13 @@ class TestTrialBalanceHTTP:
         branch = make_branch_committed(db)
         parent = Account(branch_id=branch.id, code="1000", name="الأصول", account_type="asset")
         db.add(parent); db.commit()
-        cash = Account(branch_id=branch.id, code="1100", name="Cash", account_type="asset", parent_id=parent.id)
+        # make_branch_committed بالفعل بتزرع 1100 (بدون parent_id) — نضبط
+        # الأب عليها بدل إنشاء حساب مكرر بنفس الكود.
+        cash = db.query(Account).filter_by(branch_id=branch.id, code="1100").one()
+        cash.parent_id = parent.id
         bank = Account(branch_id=branch.id, code="1110", name="Bank", account_type="asset", parent_id=parent.id)
         revenue = Account(branch_id=branch.id, code="4100", name="Room Revenue", account_type="revenue")
-        db.add_all([cash, bank, revenue]); db.commit()
+        db.add_all([bank, revenue]); db.commit()
 
         client.post(
             "/api/v1/finance/journal-entries",

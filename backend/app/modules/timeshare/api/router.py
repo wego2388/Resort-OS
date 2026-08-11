@@ -87,6 +87,7 @@ from app.modules.timeshare.schemas import (
 )
 from app.modules.core import services as core_services
 from app.modules.core.schemas import PaginatedResponse
+from app.modules.finance.services import FinancialConfigurationError
 
 router = APIRouter(tags=["timeshare"])
 
@@ -134,6 +135,10 @@ def create_contract(data: TimeshareContractCreate, db: DbDep, user=Depends(get_t
     _assert_timeshare_branch(db, user, data.branch_id, "إنشاء عقد تايم شير")
     try:
         return services.create_contract(db, data, signed_by=user.id)
+    except FinancialConfigurationError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {
+            "code": "FINANCIAL_CONFIGURATION_ERROR", "message": str(exc),
+        })
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
@@ -198,6 +203,10 @@ def pay_installment(inst_id: int, req: PayInstallmentRequest, db: DbDep,
         return services.pay_installment(db, inst_id, req)
     except services.PaymentConflictError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
+    except FinancialConfigurationError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {
+            "code": "FINANCIAL_CONFIGURATION_ERROR", "message": str(exc),
+        })
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
@@ -276,6 +285,10 @@ def pay_maintenance_due(due_id: int, req: PayMaintenanceDueRequest, db: DbDep,
         return services.pay_maintenance_due(db, due_id, req)
     except services.PaymentConflictError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
+    except FinancialConfigurationError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {
+            "code": "FINANCIAL_CONFIGURATION_ERROR", "message": str(exc),
+        })
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
@@ -521,6 +534,10 @@ def cancel_contract(
     _assert_timeshare_branch(db, user, c.branch_id, "إلغاء عقد تايم شير")
     try:
         return services.cancel_contract(db, contract_id, data.cancel_amount, cancelled_by=user.id)
+    except FinancialConfigurationError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {
+            "code": "FINANCIAL_CONFIGURATION_ERROR", "message": str(exc),
+        })
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 

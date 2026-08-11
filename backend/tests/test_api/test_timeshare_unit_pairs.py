@@ -46,7 +46,21 @@ def pair(db: Session, branch, chalet, studio):
     ))
 
 
+def _seed_finance_accounts(db, branch) -> None:
+    """⚠️ 2026-08-11 (strict=True — راجع §4): من غير 1100/4600، إنشاء أي عقد
+    بدفعة أولى غير صفرية بيفشل بـ FinancialConfigurationError."""
+    from app.modules.finance.models import Account
+    if db.query(Account).filter_by(branch_id=branch.id, code="1100").first():
+        return
+    db.add_all([
+        Account(branch_id=branch.id, code="1100", name="Cash", account_type="asset"),
+        Account(branch_id=branch.id, code="4600", name="Timeshare Revenue", account_type="revenue"),
+    ])
+    db.commit()
+
+
 def _contract(db, branch, unit_id=None, capacity=6):
+    _seed_finance_accounts(db, branch)
     data = TimeshareContractCreate(
         branch_id=branch.id, customer_name="عميل Family Compound", customer_phone="01000000020",
         room_type="Chalet", unit_capacity=capacity, unit_id=unit_id,

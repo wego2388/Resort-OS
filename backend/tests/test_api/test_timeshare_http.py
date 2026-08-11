@@ -27,7 +27,26 @@ def make_branch_committed(db):
     # مشغّل حقيقي مربوط بفرعه. waiter_headers عمدًا مش متربط — مستخدَم فقط
     # لتستات رفض المستوى (role level)، اللي بترفض قبل ما توصل لفحص الفرع خالص.
     _link_shared_users_to_branch(db, b.id)
+    _seed_finance_accounts(db, b)
     return b
+
+
+def _seed_finance_accounts(db, branch) -> None:
+    """1100/1110/1120 (نقدية/بنك/كارت) + 4600/4650 (إيراد عقود/صيانة) —
+    ⚠️ 2026-08-11 (strict=True — راجع §4): من غيرها create_contract نفسه
+    بيفشل بـ FinancialConfigurationError (قيد الدفعة الأولى)، فمعظم تستات
+    الملف ده (بتنشئ عقد حقيقي بدفعة أولى غير صفرية عبر contract_payload)
+    محتاجاها — مفيش test هنا بيتحقق عمدًا من غياب الحسابات (ده مغطّى في
+    test_timeshare.py::test_missing_accounts_fails_contract_creation_atomically)."""
+    from app.modules.finance.models import Account
+    db.add_all([
+        Account(branch_id=branch.id, code="1100", name="Cash", account_type="asset"),
+        Account(branch_id=branch.id, code="1110", name="Bank", account_type="asset"),
+        Account(branch_id=branch.id, code="1120", name="Card Clearing", account_type="asset"),
+        Account(branch_id=branch.id, code="4600", name="Timeshare Revenue", account_type="revenue"),
+        Account(branch_id=branch.id, code="4650", name="Timeshare Maintenance Revenue", account_type="revenue"),
+    ])
+    db.commit()
 
 
 def _link_shared_users_to_branch(db, branch_id: int) -> None:

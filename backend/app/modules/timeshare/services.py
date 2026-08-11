@@ -83,32 +83,42 @@ def create_contract(db: Session, data: TimeshareContractCreate, signed_by: int) 
     if data.end_date and data.end_date <= data.start_date:
         raise ValueError("تاريخ الانتهاء يجب أن يكون بعد تاريخ البداية")
 
-    contract = crud.create_contract(db, data, signed_by)
+    try:
+        contract = crud.create_contract(db, data, signed_by)
 
-    # توليد جدول الأقساط من الـ engine
-    schedule = generate_installment_schedule(
-        total_value=data.total_value,
-        down_payment=data.down_payment,
-        installments=data.installments,
-        installment_period=data.installment_period,
-        first_installment_date=data.first_installment_date,
-    )
-    crud.create_installments(db, contract.id, [
-        {"installment_no": s.installment_no, "due_date": s.due_date, "amount": s.amount}
-        for s in schedule
-    ])
+        # توليد جدول الأقساط من الـ engine
+        schedule = generate_installment_schedule(
+            total_value=data.total_value,
+            down_payment=data.down_payment,
+            installments=data.installments,
+            installment_period=data.installment_period,
+            first_installment_date=data.first_installment_date,
+        )
+        crud.create_installments(db, contract.id, [
+            {"installment_no": s.installment_no, "due_date": s.due_date, "amount": s.amount}
+            for s in schedule
+        ])
 
-    # قيد إيرادات مؤجَّلة (deferred revenue)
-    _post_deferred_revenue_journal(db, contract)
+        # قيد إيرادات مؤجَّلة (deferred revenue) — strict=True (2026-08-11):
+        # عقد جديد بدفعة أولى حقيقية كان ممكن يتسجّل بالكامل حتى لو فشل
+        # ترحيل قيد الإيراد المقابل (حساب مش معرَّف للفرع، مثلاً). دفعة أولى
+        # صفرية مش فشل محاسبي — مفيش مبلغ حقيقي يترحّل خالص، فمينفعش نستدعي
+        # الترحيل الصارم أصلاً (post_simple_revenue_journal(strict=True) بيرفض
+        # مبلغ صفري كخطأ تجهيز، مش no-op شرعي).
+        if contract.down_payment and contract.down_payment > 0:
+            _post_deferred_revenue_journal(db, contract)
 
-    # مستحق الصيانة الأول للعقد — لو التوليد الجماعي السنوي (1 يناير) كان
-    # اشتغل بالفعل قبل ما العقد ده يتوقّع، كان هيفضل من غير مستحق صيانة
-    # للسنة الحالية خالص. راجع _generate_maintenance_due_for_new_contract.
-    _generate_maintenance_due_for_new_contract(db, contract)
+        # مستحق الصيانة الأول للعقد — لو التوليد الجماعي السنوي (1 يناير) كان
+        # اشتغل بالفعل قبل ما العقد ده يتوقّع، كان هيفضل من غير مستحق صيانة
+        # للسنة الحالية خالص. راجع _generate_maintenance_due_for_new_contract.
+        _generate_maintenance_due_for_new_contract(db, contract)
 
-    db.commit()
-    db.refresh(contract)
-    return contract
+        db.commit()
+        db.refresh(contract)
+        return contract
+    except Exception:
+        db.rollback()
+        raise
 
 
 def _generate_maintenance_due_for_new_contract(db: "Session", contract: "TimeshareContract") -> None:
@@ -156,6 +166,7 @@ def _post_deferred_revenue_journal(db: "Session", contract: "TimeshareContract")
         source="timeshare", source_id=contract.id,
         created_by=contract.signed_by or 0,
         cost_center_code="TS",
+        strict=True, commit_cost_centers=False,
     )
 
 
@@ -188,37 +199,44 @@ def pay_installment(db: Session, inst_id: int, req: PayInstallmentRequest) -> Ti
        "Finance First" (§5.2 في CLAUDE.md بيذكر أقساط التايم شير بالاسم صراحةً).
     """
     inst = _lock_installment_or_raise(db, inst_id)
-    if inst.status == "paid":
-        raise ValueError("القسط مدفوع بالكامل مسبقاً")
+    try:
+        if inst.status == "paid":
+            raise ValueError("القسط مدفوع بالكامل مسبقاً")
 
-    contract = crud.get_contract(db, inst.contract_id)
-    if not contract:
-        raise ValueError(f"العقد المرتبط بالقسط {inst_id} غير موجود")
-    if contract.status == "cancelled":
-        raise ValueError(f"العقد {contract.contract_number} ملغي — لا يمكن تحصيل أقساط عليه")
-    if contract.status == "expired":
-        raise ValueError(f"العقد {contract.contract_number} منتهي — لا يمكن تحصيل أقساط عليه")
+        contract = crud.get_contract(db, inst.contract_id)
+        if not contract:
+            raise ValueError(f"العقد المرتبط بالقسط {inst_id} غير موجود")
+        if contract.status == "cancelled":
+            raise ValueError(f"العقد {contract.contract_number} ملغي — لا يمكن تحصيل أقساط عليه")
+        if contract.status == "expired":
+            raise ValueError(f"العقد {contract.contract_number} منتهي — لا يمكن تحصيل أقساط عليه")
 
-    remaining = inst.amount - inst.paid_amount
-    if req.paid_amount > remaining:
-        raise ValueError(
-            f"المبلغ المُدخَل ({req.paid_amount:,.2f} ج) أكبر من المتبقي على هذا "
-            f"القسط ({remaining:,.2f} ج) — تحقّق من المبلغ قبل التسجيل"
-        )
+        remaining = inst.amount - inst.paid_amount
+        if req.paid_amount > remaining:
+            raise ValueError(
+                f"المبلغ المُدخَل ({req.paid_amount:,.2f} ج) أكبر من المتبقي على هذا "
+                f"القسط ({remaining:,.2f} ج) — تحقّق من المبلغ قبل التسجيل"
+            )
 
-    obj = crud.pay_installment(db, inst, req)
-    _post_installment_payment_journal(db, contract, req.paid_amount, inst, req.payment_method)
+        obj = crud.pay_installment(db, inst, req)
+        # strict=True (2026-08-11): تحصيل قسط من غير قيد محاسبي مقابل يفشل
+        # كامل، مش يتسجّل بصمت من غير أثر محاسبي — راجع _post_installment_
+        # payment_journal.
+        _post_installment_payment_journal(db, contract, req.paid_amount, inst, req.payment_method)
 
-    # سجل تدقيق — تاريخ التحصيل قابل للمراجعة والتصحيح لاحقاً
-    _audit_installment_payment(db, contract, inst, req)
+        # سجل تدقيق — تاريخ التحصيل قابل للمراجعة والتصحيح لاحقاً
+        _audit_installment_payment(db, contract, inst, req)
 
-    # إلغاء تجميد الحجز إن كان مفيش أي رصيد متأخر تاني (أقساط أو صيانة)
-    if contract.booking_frozen and not _has_any_overdue_balance(contract):
-        contract.booking_frozen = False
+        # إلغاء تجميد الحجز إن كان مفيش أي رصيد متأخر تاني (أقساط أو صيانة)
+        if contract.booking_frozen and not _has_any_overdue_balance(contract):
+            contract.booking_frozen = False
 
-    db.commit()
-    db.refresh(obj)
-    return obj
+        db.commit()
+        db.refresh(obj)
+        return obj
+    except Exception:
+        db.rollback()
+        raise
 
 
 def _has_any_overdue_balance(contract: TimeshareContract) -> bool:
@@ -276,6 +294,7 @@ def _post_installment_payment_journal(
         source="timeshare", source_id=contract.id,
         created_by=0,
         cost_center_code="TS",
+        strict=True, commit_cost_centers=False,
     )
 
 
@@ -323,34 +342,39 @@ def pay_maintenance_due(db: Session, due_id: int, req: PayMaintenanceDueRequest)
     التحقق بالضبط: موجود؟ مدفوع بالفعل؟ العقد ملغي/منتهي؟ المبلغ زيادة عن
     المتبقي؟) بس على TimeshareMaintenanceDue بدل TimeshareInstallment."""
     due = _lock_maintenance_due_or_raise(db, due_id)
-    if due.status == "paid":
-        raise ValueError("مستحق الصيانة مدفوع بالكامل مسبقاً")
+    try:
+        if due.status == "paid":
+            raise ValueError("مستحق الصيانة مدفوع بالكامل مسبقاً")
 
-    contract = crud.get_contract(db, due.contract_id)
-    if not contract:
-        raise ValueError(f"العقد المرتبط بمستحق الصيانة {due_id} غير موجود")
-    if contract.status == "cancelled":
-        raise ValueError(f"العقد {contract.contract_number} ملغي — لا يمكن تحصيل صيانة عليه")
-    if contract.status == "expired":
-        raise ValueError(f"العقد {contract.contract_number} منتهي — لا يمكن تحصيل صيانة عليه")
+        contract = crud.get_contract(db, due.contract_id)
+        if not contract:
+            raise ValueError(f"العقد المرتبط بمستحق الصيانة {due_id} غير موجود")
+        if contract.status == "cancelled":
+            raise ValueError(f"العقد {contract.contract_number} ملغي — لا يمكن تحصيل صيانة عليه")
+        if contract.status == "expired":
+            raise ValueError(f"العقد {contract.contract_number} منتهي — لا يمكن تحصيل صيانة عليه")
 
-    remaining = due.amount - due.paid_amount
-    if req.paid_amount > remaining:
-        raise ValueError(
-            f"المبلغ المُدخَل ({req.paid_amount:,.2f} ج) أكبر من المتبقي على "
-            f"مستحق صيانة سنة {due.fee_year} ({remaining:,.2f} ج) — تحقّق من المبلغ قبل التسجيل"
-        )
+        remaining = due.amount - due.paid_amount
+        if req.paid_amount > remaining:
+            raise ValueError(
+                f"المبلغ المُدخَل ({req.paid_amount:,.2f} ج) أكبر من المتبقي على "
+                f"مستحق صيانة سنة {due.fee_year} ({remaining:,.2f} ج) — تحقّق من المبلغ قبل التسجيل"
+            )
 
-    obj = crud.pay_maintenance_due(db, due, req)
-    _post_maintenance_payment_journal(db, contract, req.paid_amount, due, req.payment_method)
-    _audit_maintenance_payment(db, contract, due, req)
+        obj = crud.pay_maintenance_due(db, due, req)
+        # strict=True (2026-08-11) — راجع pay_installment لنفس السبب.
+        _post_maintenance_payment_journal(db, contract, req.paid_amount, due, req.payment_method)
+        _audit_maintenance_payment(db, contract, due, req)
 
-    if contract.booking_frozen and not _has_any_overdue_balance(contract):
-        contract.booking_frozen = False
+        if contract.booking_frozen and not _has_any_overdue_balance(contract):
+            contract.booking_frozen = False
 
-    db.commit()
-    db.refresh(obj)
-    return obj
+        db.commit()
+        db.refresh(obj)
+        return obj
+    except Exception:
+        db.rollback()
+        raise
 
 
 def _post_maintenance_payment_journal(
@@ -375,6 +399,7 @@ def _post_maintenance_payment_journal(
         source="timeshare", source_id=contract.id,
         created_by=0,
         cost_center_code="TS",
+        strict=True, commit_cost_centers=False,
     )
 
 
@@ -1004,18 +1029,24 @@ def cancel_contract(
     contract = get_contract_or_404(db, contract_id)
     if contract.status == "cancelled":
         raise ValueError("العقد ملغي بالفعل")
-    obj = crud.cancel_contract(db, contract, cancel_amount)
-    # ⚠️ باج محاسبي حقيقي كان هنا: إلغاء العقد بمبلغ استرداد (cancel_amount)
-    # كان بيسجّل الرقم على العقد نفسه بس من غير أي قيد يومية — يعني كاش
-    # حقيقي بيتدفع للعميل (استرداد) كان بيخرج من الخزينة من غير ما يترحّل
-    # محاسبيًا خالص، والإيراد اللي اتسجّل وقت الدفعة الأولى/الأقساط
-    # (_post_deferred_revenue_journal/_post_installment_payment_journal) كان
-    # يفضل مبالغ فيه للأبد رغم إن جزء منه اترد فعليًا للعميل.
-    if cancel_amount and cancel_amount > 0:
-        _post_contract_cancellation_refund_journal(db, obj, cancel_amount, cancelled_by or 0)
-    db.commit()
-    db.refresh(obj)
-    return obj
+    try:
+        obj = crud.cancel_contract(db, contract, cancel_amount)
+        # ⚠️ باج محاسبي حقيقي كان هنا: إلغاء العقد بمبلغ استرداد (cancel_amount)
+        # كان بيسجّل الرقم على العقد نفسه بس من غير أي قيد يومية — يعني كاش
+        # حقيقي بيتدفع للعميل (استرداد) كان بيخرج من الخزينة من غير ما يترحّل
+        # محاسبيًا خالص، والإيراد اللي اتسجّل وقت الدفعة الأولى/الأقساط
+        # (_post_deferred_revenue_journal/_post_installment_payment_journal) كان
+        # يفضل مبالغ فيه للأبد رغم إن جزء منه اترد فعليًا للعميل. strict=True
+        # (2026-08-11): فشل ترحيل قيد الاسترداد لازم يوقف الإلغاء كله، مش
+        # يسجّل العقد "ملغي" من غير أي أثر محاسبي للاسترداد.
+        if cancel_amount and cancel_amount > 0:
+            _post_contract_cancellation_refund_journal(db, obj, cancel_amount, cancelled_by or 0)
+        db.commit()
+        db.refresh(obj)
+        return obj
+    except Exception:
+        db.rollback()
+        raise
 
 
 def _post_contract_cancellation_refund_journal(
@@ -1038,6 +1069,7 @@ def _post_contract_cancellation_refund_journal(
         source="timeshare", source_id=contract.id,
         created_by=cancelled_by,
         cost_center_code="TS",
+        strict=True, commit_cost_centers=False,
     )
 
 

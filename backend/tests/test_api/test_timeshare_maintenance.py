@@ -39,17 +39,24 @@ def unit(db: Session, branch):
 
 
 def make_finance_accounts(db, branch):
-    """1100 (نقدية) + 4650 (إيرادات صيانة عقود التايم شير) — الحسابين اللي
-    _post_maintenance_payment_journal بيدوّر عليهم."""
+    """1100 (نقدية) + 4600 (إيرادات دفعة أولى/قسط) + 4650 (إيرادات صيانة) —
+    الحسابات اللي _post_deferred_revenue_journal/_post_installment_payment_
+    journal/_post_maintenance_payment_journal بيدوّروا عليها. ⚠️ 2026-08-11
+    (strict=True — راجع §4): من غيرها create_contract نفسه بيفشل (قيد
+    الدفعة الأولى)، مش بس تحصيل الصيانة."""
     from app.modules.finance.models import Account
     cash = Account(branch_id=branch.id, code="1100", name="Cash", account_type="asset")
-    revenue = Account(branch_id=branch.id, code="4650", name="Maintenance Revenue", account_type="revenue")
-    db.add_all([cash, revenue])
+    revenue = Account(branch_id=branch.id, code="4600", name="Timeshare Revenue", account_type="revenue")
+    maintenance_revenue = Account(branch_id=branch.id, code="4650", name="Maintenance Revenue", account_type="revenue")
+    db.add_all([cash, revenue, maintenance_revenue])
     db.commit()
     return cash, revenue
 
 
 def make_contract_with_maintenance(db, branch, maintenance_fee=Decimal("2000"), contract_date=None, start_date=None):
+    from app.modules.finance.models import Account
+    if not db.query(Account).filter_by(branch_id=branch.id, code="1100").first():
+        make_finance_accounts(db, branch)
     data = TimeshareContractCreate(
         branch_id=branch.id,
         customer_name="سارة عبد الرحمن",
@@ -197,7 +204,6 @@ class TestPayMaintenanceDue:
         """4650 منفصل عمدًا عن 4600 (إيراد سعر الشراء) — رسم خدمة سنوي
         مرتبط بسنة محدَّدة، مختلف في طبيعته المحاسبية."""
         from app.modules.finance import crud as finance_crud
-        make_finance_accounts(db, branch)
         contract = make_contract_with_maintenance(db, branch, contract_date=date(2026, 1, 10))
         due = crud.list_maintenance_dues(db, contract.id)[0]
 

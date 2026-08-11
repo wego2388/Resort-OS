@@ -14,6 +14,7 @@ from app.core.deps import (
 )
 from app.modules.hr import crud, services
 from app.modules.core import services as core_services
+from app.modules.finance.services import FinancialConfigurationError
 from app.modules.hr.schemas import (
     AdvancePaymentCreate, AdvancePaymentRead,
     AllowanceRead,
@@ -301,6 +302,10 @@ def create_salary_advance(data: SalaryAdvanceCreate, db: DbDep, user=Depends(get
         return services.create_salary_advance(db, data, created_by=user.id)
     except PermissionError as exc:
         raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+    except FinancialConfigurationError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {
+            "code": "FINANCIAL_CONFIGURATION_ERROR", "message": str(exc),
+        })
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
@@ -350,6 +355,10 @@ def create_advance_payment(data: AdvancePaymentCreate, db: DbDep, user=Depends(g
         return services.create_advance_payment(db, data, recorded_by=user.id)
     except PermissionError as exc:
         raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+    except FinancialConfigurationError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {
+            "code": "FINANCIAL_CONFIGURATION_ERROR", "message": str(exc),
+        })
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 

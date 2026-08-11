@@ -863,11 +863,17 @@ def create_salary_advance(db: Session, data: SalaryAdvanceCreate, created_by: in
     get_employee_or_404(db, data.employee_id)
     if data.monthly_deduction_amount > data.amount:
         raise ValueError("القسط الشهري لا يمكن أن يكون أكبر من مبلغ السلفة نفسه")
-    advance = crud.create_salary_advance(db, data, created_by)
-    _post_advance_disbursement_journal(db, data.branch_id, advance.id, "salary_advance", data.amount, created_by)
-    db.commit()
-    db.refresh(advance)
-    return advance
+    try:
+        advance = crud.create_salary_advance(db, data, created_by)
+        # strict=True (2026-08-11): صرف سلفة من غير قيد محاسبي مقابل (حساب
+        # مش معرَّف للفرع، مثلاً) لازم يفشل كامل — راجع §4.
+        _post_advance_disbursement_journal(db, data.branch_id, advance.id, "salary_advance", data.amount, created_by)
+        db.commit()
+        db.refresh(advance)
+        return advance
+    except Exception:
+        db.rollback()
+        raise
 
 
 def _post_advance_disbursement_journal(
@@ -890,6 +896,7 @@ def _post_advance_disbursement_journal(
         description="صرف سلفة موظف",
         source="payroll_advance", source_id=source_id,
         created_by=created_by,
+        strict=True, commit_cost_centers=False,
     )
 
 
@@ -916,11 +923,15 @@ def cancel_salary_advance(db: Session, advance_id: int, reason: Optional[str] = 
 
 def create_advance_payment(db: Session, data: AdvancePaymentCreate, recorded_by: int):
     get_employee_or_404(db, data.employee_id)
-    payment = crud.create_advance_payment(db, data, recorded_by)
-    _post_advance_disbursement_journal(db, data.branch_id, payment.id, "advance_payment", data.amount, recorded_by)
-    db.commit()
-    db.refresh(payment)
-    return payment
+    try:
+        payment = crud.create_advance_payment(db, data, recorded_by)
+        _post_advance_disbursement_journal(db, data.branch_id, payment.id, "advance_payment", data.amount, recorded_by)
+        db.commit()
+        db.refresh(payment)
+        return payment
+    except Exception:
+        db.rollback()
+        raise
 
 
 # ── LeaveBalanceMonthly (wagdy.md H-03) ──────────────────────────────────
