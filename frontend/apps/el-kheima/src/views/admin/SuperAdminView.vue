@@ -700,7 +700,7 @@ onMounted(() => {
         <div v-if="usersLoading" class="flex justify-center p-10"><AppSpinner /></div>
         <div v-else-if="usersLoadError" class="p-6 text-center text-danger">{{ usersLoadError }}</div>
         <div v-else class="overflow-x-auto">
-          <table class="w-full text-sm">
+          <table class="w-full min-w-[860px] text-sm">
             <thead class="bg-stone-50 text-gray-500 dark:bg-surface-2 dark:text-gray-400">
               <tr>
                 <th class="px-4 py-3 text-start">{{ t('backoffice.accounts.nameAndEmail') }}</th>
@@ -708,7 +708,7 @@ onMounted(() => {
                 <th class="px-4 py-3 text-start">{{ t('backoffice.accounts.security') }}</th>
                 <th class="px-4 py-3 text-start">{{ t('backoffice.superAdmin.pin.columnHeader') }}</th>
                 <th class="px-4 py-3 text-start">{{ t('backoffice.accounts.status') }}</th>
-                <th class="px-4 py-3 text-start">{{ t('backoffice.accounts.actions') }}</th>
+                <th class="px-4 py-3 text-start min-w-[220px]">{{ t('backoffice.accounts.actions') }}</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-stone-100 dark:divide-border">
