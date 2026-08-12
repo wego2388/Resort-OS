@@ -385,6 +385,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleGlobalKey))
 
       <!-- Content -->
       <main class="flex-1 overflow-auto bg-stone-50 p-4 dark:bg-gray-950 sm:p-6">
+        <div class="mx-auto w-full max-w-[1400px]">
         <RouterView v-slot="{ Component, route: r }">
           <Transition
             name="page"
@@ -394,6 +395,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleGlobalKey))
             <component :is="Component" :key="r.path" />
           </Transition>
         </RouterView>
+        </div>
       </main>
     </div>
   </div>
