@@ -102,10 +102,9 @@ async function loadLocations() {
 }
 
 // WS للتحديثات الحية من كاشير الشاطئ (تشيك-إن/تشيك-أوت)
-// لا نفتح WS إطلاقاً لو branchId null — useResortWebSocket على URL فاضي
-// يعمل connection وهمي على /api/v1/beach/ws/map/0.
+// computed URL: لو props.branchId=null — مفيش WS يتفتح.
 const { onMessage: onWsMessage } = useResortWebSocket(
-  props.branchId ? ENDPOINTS.beach.mapWs(props.branchId) : '',
+  computed(() => props.branchId != null ? ENDPOINTS.beach.mapWs(props.branchId) : null),
 )
 onWsMessage((message: any) => {
   if (message?.type === 'map_update' && message.location) {

@@ -138,12 +138,12 @@ async function fetchRooms() {
 }
 
 // اتصال لحظي — نفس نمط BeachMapView.vue/useResortWebSocket (بيعيد الاتصال
-// تلقائيًا لو النت اتقطع). الرسالة الوحيدة "rooms_changed" عامة عمدًا
-// (راجع تعليق pms_rooms_websocket في الباك إند) — بترجّع نفس fetchRooms()
-// اللي الشاشة أصلاً بتستخدمها، فمفيش منطق state-merge جديد يحتاج اختبار.
-const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
+// تلقائيًا لو النت اتقطع). computed URL: لو branchId=null — مفيش WS يتفتح.
 const { onMessage } = useResortWebSocket(
-  `${wsProtocol}//${location.host}/api/v1/pms/ws/rooms/${branchId.value}`,
+  computed(() => branchId.value != null
+    ? `/api/v1/pms/ws/rooms/${branchId.value}`
+    : null,
+  ),
 )
 onMessage((data: any) => {
   if (data?.type === 'rooms_changed') fetchRooms()

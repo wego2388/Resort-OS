@@ -169,11 +169,9 @@ function closeShiftDetail() { detailShift.value = null }
 // تحميل التقرير/سجل الفواتير تلقائيًا من غير أي polling. مقفول مدير+ من
 // الباك إند نفسه (get_websocket_user min_level=60)، متسق مع باقي شاشة
 // الحسابات دي كلها.
-// CX-02C: WebSocket URL is built from activeBranchId. If null (no branch
-// context yet), the WS hook still initialises but will receive no events
-// until a branch is selected and the component remounts.
+// CX-02C: computed URL — لو branchId=null مفيش WS يتفتح.
 const { onMessage: onShiftWsMessage } = useResortWebSocket(
-  branchId.value != null ? ENDPOINTS.finance.shiftsWs(branchId.value) : '',
+  computed(() => branchId.value != null ? ENDPOINTS.finance.shiftsWs(branchId.value) : null),
 )
 onShiftWsMessage((data: unknown) => {
   const msg = data as ShiftWsMessage

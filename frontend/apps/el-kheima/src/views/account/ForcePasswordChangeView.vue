@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 import { api, ENDPOINTS, useAuthStore } from '@resort-os/core'
 import LanguageSwitcher from '../../components/LanguageSwitcher.vue'
 
 const auth = useAuthStore()
+const router = useRouter()
 const { t, locale } = useI18n()
 
 const currentPassword = ref('')
@@ -57,6 +59,11 @@ async function submit() {
   }
 }
 
+// بعد تغيير الباسورد بنجاح، الـ access token القديم اتُلغي من الباك إند
+// (change_password يعمل revoke_user_tokens + delete_refresh_tokens).
+// المستخدم لازم يسجل دخول من جديد بالباسورد الجديد عشان يحصل على token
+// جديد وbootstrap سليم. window.location.replace يعمل hard reload يمسح
+// الـ in-memory token ويبدأ من صفر — أنظف من router.push في هذه الحالة.
 function returnToLogin() {
   window.location.replace('/login')
 }

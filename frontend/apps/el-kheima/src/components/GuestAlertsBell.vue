@@ -18,7 +18,9 @@ import { AppBadge, useToast } from '@resort-os/ui'
 const auth = useAuthStore()
 const toast = useToast()
 const { locale, t } = useI18n()
-const branchId = computed(() => auth.branchId ?? 0)
+// لا تستخدم ?? 0 هنا — branchId=0 يفتح WS بـ branch غير صالح ويحرق 4 اتصالات
+// فاشلة في الكونسول. الصح هو إيقاف WS والـ polling كاملاً لما branchId=null.
+const branchId = computed(() => auth.branchId)
 
 interface GuestAlert {
   id: number
@@ -82,8 +84,9 @@ async function fetchAlerts() {
   try {
     const { data } = await api.get(ENDPOINTS.core.alerts, { params: { branch_id: branchId.value, size: 50 } })
     alerts.value = data.items ?? []
-  } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? t('backoffice.guestAlerts.loadError'))
+  } catch {
+    // فشل صامت — الـ polling هو fallback وليس مصدر حرج؛ الـ toast هنا كان يظهر
+    // خطأ كل 20 ثانية للسوبر أدمن لما يكون على شاشة لا تحتاج alerts.
   }
 }
 
@@ -105,13 +108,14 @@ async function setStatus(alert: GuestAlert, status: 'acknowledged' | 'arrived' |
   }
 }
 
-// اتصال لحظي — نفس نمط KDS (useResortWebSocket بيعيد الاتصال تلقائيًا لو
-// النت اتقطع)، الـ GET أعلاه fallback للتحميل الأولي بس.
-// الـ URL بيييجي من ENDPOINTS.core.alertsWs — نفس الـ /api prefix اللي
-// الـ vite proxy (ws: true) بيعمله forward للباك إند تلقائياً.
-const { onMessage } = useResortWebSocket(
-  ENDPOINTS.core.alertsWs(branchId.value),
+// اتصال لحظي — useResortWebSocket الآن يقبل computed/ref كـ URL.
+// لما branchId=null (bootstrap لسه ما اكتملش): مفيش اتصال يتفتح — صفر
+// WS failures في الكونسول. لما branchId يتحدّد بعد fetchBootstrap: يفتح
+// الاتصال تلقائياً بدون أي تدخل إضافي.
+const wsUrl = computed(() =>
+  branchId.value ? ENDPOINTS.core.alertsWs(branchId.value) : null,
 )
+const { onMessage } = useResortWebSocket(wsUrl)
 onMessage((data: any) => {
   if (data?.type === 'new_alert') {
     alerts.value.unshift(data.alert)

@@ -110,7 +110,9 @@ const selectedContractId = ref<number | null>(null)
 // beach_location_id المختارة لما الكاشير يفتح طلب من الخريطة
 const selectedBeachLocationId = ref<number | null>(null)
 
-const { status: wsStatus, onMessage: onWsMessage } = useResortWebSocket(ENDPOINTS.dining.tablesWs(branchId.value ?? 0))
+const { status: wsStatus, onMessage: onWsMessage } = useResortWebSocket(
+  computed(() => branchId.value != null ? ENDPOINTS.dining.tablesWs(branchId.value) : null),
+)
 onWsMessage((message: any) => {
   if (message?.type === 'table_updated' || message?.type === 'tables_updated') {
     loadTables()

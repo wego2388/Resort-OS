@@ -114,8 +114,11 @@ const soundEnabled = ref(true)
 let knownTicketIds = new Set<number>()
 
 // relative path — useResortWebSocket بيبني الـ full WS URL داخلياً
-// (ws://host + path) عشان يشتغل صح مع vite proxy في dev ونginx في production
-const { status: wsStatus, onMessage } = useResortWebSocket(ENDPOINTS.dining.kdsWs(branchId.value ?? 0))
+// (ws://host + path) عشان يشتغل صح مع vite proxy في dev ونginx في production.
+// computed URL: لو branchId=null (قبل اكتمال bootstrap) — مفيش WS يتفتح.
+const { status: wsStatus, onMessage } = useResortWebSocket(
+  computed(() => branchId.value != null ? ENDPOINTS.dining.kdsWs(branchId.value) : null),
+)
 onMessage((data: any) => { if (data?.type === 'tickets_updated') fetchTickets() })
 
 const filteredTickets = computed(() =>

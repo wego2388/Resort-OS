@@ -97,12 +97,12 @@ function upsertLocation(loc: BeachLocation) {
 
 // اتصال لحظي — نفس نمط KDS/تنبيهات الضيوف (useResortWebSocket بيعيد
 // الاتصال تلقائيًا لو النت اتقطع).
-// CX-02C: WS URL requires a resolved branchId — skip if no branch context yet.
-const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
+// computed URL: لو branchId=null — مفيش WS يتفتح.
 const { status: wsStatus, onMessage } = useResortWebSocket(
-  branchId.value != null
-    ? `${wsProtocol}//${location.host}/api/v1/beach/ws/map/${branchId.value}`
-    : '',
+  computed(() => branchId.value != null
+    ? `/api/v1/beach/ws/map/${branchId.value}`
+    : null,
+  ),
 )
 onMessage((data: any) => {
   if (data?.type === 'map_update' && data.location) {

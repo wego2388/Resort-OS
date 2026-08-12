@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { useAuthStore, type AllowedBranch } from '@resort-os/core'
@@ -32,6 +32,15 @@ async function selectBranch(branchId: number) {
 async function logout() {
   await auth.logout()
 }
+
+// Auto-select: لو المستخدم عنده فرع واحد بالظبط ووصل هنا (كاشير/موظف جديد
+// عمل login وكان branchId=null لأسباب تقنية)، نختار الفرع تلقائياً بدون ما
+// نضيف خطوة إضافية غير ضرورية. لو في أكثر من فرع، نعرض الاختيار كالمعتاد.
+onMounted(async () => {
+  if (auth.branches.length === 1) {
+    await selectBranch(auth.branches[0].id)
+  }
+})
 </script>
 
 <template>

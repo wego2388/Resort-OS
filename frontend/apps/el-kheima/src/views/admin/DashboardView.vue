@@ -188,8 +188,10 @@ function updateLastUpdatedLabel() {
 
 // ── WebSocket — تحديثات لحظية للإيرادات عبر قناة KDS ────────────────────
 // tickets_updated يُبث عند كل أوردر جديد/دفع — فرصة لإعادة تحميل KPIs
-// (الباكند مالوش WS مخصص للـ dashboard — نفس القناة الوحيدة المتاحة هي KDS)
-const { onMessage: onKdsMessage } = useResortWebSocket(ENDPOINTS.dining.kdsWs(branchId.value ?? 0))
+// computed URL: لو branchId=null — مفيش WS يتفتح.
+const { onMessage: onKdsMessage } = useResortWebSocket(
+  computed(() => branchId.value != null ? ENDPOINTS.dining.kdsWs(branchId.value) : null),
+)
 onKdsMessage((data: any) => {
   if (data?.type === 'tickets_updated') {
     fetchDashboard()

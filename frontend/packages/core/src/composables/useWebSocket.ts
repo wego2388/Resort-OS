@@ -1,4 +1,4 @@
-import { ref, onUnmounted } from 'vue'
+import { ref, watch, onUnmounted, type MaybeRefOrGetter, toValue } from 'vue'
 import { getApiToken } from '../api/client'
 
 /**
@@ -18,9 +18,20 @@ function _toWsUrl(pathOrUrl: string): string {
   return `${protocol}//${window.location.host}${pathOrUrl}`
 }
 
-export function useResortWebSocket(pathOrUrl: string) {
+/**
+ * useResortWebSocket — composable للـ WebSocket مع reconnect تلقائي.
+ *
+ * يقبل pathOrUrl كـ string ثابت أو Ref أو getter (MaybeRefOrGetter):
+ * - لو القيمة null/undefined/'': لا يفتح اتصال — يغلق الموجود لو كان مفتوحاً.
+ * - لما تتغير القيمة: يغلق الاتصال القديم ويفتح جديد تلقائياً.
+ *
+ * ده يحل مشكلة branchId=null في GuestAlertsBell: الـ composable كان بيتنفذ
+ * مرة واحدة في setup بـ alertsWs(0) (لأن branchId ?? 0 = 0 لما null) ويحرق
+ * 4 اتصالات فاشلة في الكونسول قبل ما الـ bootstrap يكتمل.
+ */
+export function useResortWebSocket(pathOrUrl: MaybeRefOrGetter<string | null | undefined>) {
   const isConnected = ref(false)
-  const status = ref<'connecting' | 'connected' | 'disconnected' | 'error'>('connecting')
+  const status = ref<'connecting' | 'connected' | 'disconnected' | 'error'>('disconnected')
   let ws: WebSocket | null = null
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
   let reconnectDelay = 1000
@@ -29,13 +40,31 @@ export function useResortWebSocket(pathOrUrl: string) {
   let intentionalClose = false
   const handlers = ref<((data: unknown) => void)[]>([])
 
-  function connect() {
-    if (ws?.readyState === WebSocket.OPEN) return
-    intentionalClose = false
+  function _closeSocket() {
+    intentionalClose = true
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer)
+      reconnectTimer = null
+    }
+    if (ws) {
+      ws.onclose = null
+      ws.onerror = null
+      ws.onmessage = null
+      ws.onopen = null
+      ws.close()
+      ws = null
+    }
+    isConnected.value = false
+    status.value = 'disconnected'
+  }
 
-    // T-01: access_token في module scope جوه api/client.ts (مش localStorage)
+  function connect(url: string) {
+    _closeSocket()
+    intentionalClose = false
+    reconnectDelay = 1000
+
     const token = getApiToken()
-    const baseUrl = _toWsUrl(pathOrUrl)
+    const baseUrl = _toWsUrl(url)
     const authedUrl = token
       ? `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`
       : baseUrl
@@ -54,24 +83,40 @@ export function useResortWebSocket(pathOrUrl: string) {
         const data = JSON.parse(e.data)
         if (data.type === 'pong') return
         handlers.value.forEach(h => h(data))
-      } catch { /* ignore malformed */ }
+      } catch { /* ignore malformed frames */ }
     }
 
     ws.onclose = () => {
       isConnected.value = false
       status.value = 'disconnected'
       if (intentionalClose) return
-      // لو مفيش token (الـ session انتهت أو user عمل logout) — وقّف الـ reconnect.
-      // ده بيمنع طوفان 403 في الـ logs لما refresh token يفشل ويتعمل logout.
+      // لو مفيش token (session انتهت أو logout) — وقّف الـ reconnect.
+      // بيمنع طوفان 403 في الـ logs لما refresh token يفشل.
       if (!getApiToken()) return
       reconnectTimer = setTimeout(() => {
         reconnectDelay = Math.min(reconnectDelay * 2, 30_000)
-        connect()
+        const current = toValue(pathOrUrl)
+        if (current) connect(current)
       }, reconnectDelay)
     }
 
     ws.onerror = () => { status.value = 'error' }
   }
+
+  // watch بيراقب التغيير في الـ URL (أو branchId) — لما يتغير من null لقيمة
+  // حقيقية (بعد bootstrap) بيفتح الاتصال أوتوماتيكياً. لما يرجع null/''
+  // بيغلق الاتصال القائم. immediate: true يطبّق الحالة الحالية فوراً.
+  watch(
+    () => toValue(pathOrUrl),
+    (url) => {
+      if (url) {
+        connect(url)
+      } else {
+        _closeSocket()
+      }
+    },
+    { immediate: true },
+  )
 
   function onMessage(handler: (data: unknown) => void) {
     handlers.value.push(handler)
@@ -84,11 +129,8 @@ export function useResortWebSocket(pathOrUrl: string) {
   }
 
   onUnmounted(() => {
-    intentionalClose = true
-    if (reconnectTimer) clearTimeout(reconnectTimer)
-    ws?.close()
+    _closeSocket()
   })
 
-  connect()
   return { isConnected, status, onMessage, send }
 }

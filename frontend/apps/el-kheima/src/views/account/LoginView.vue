@@ -144,6 +144,12 @@ async function handleLogin() {
     )
     // بعد نجاح فعلي بس — تذكّر الـusername للمرة الجاية على نفس الجهاز.
     localStorage.setItem(REMEMBERED_USERNAME_KEY, username.value.trim())
+    // nextTick: نضمن إن Vue flush الـ reactive state (activeBranchId،
+    // needsPasswordChange، needsTwoFactorSetup) اللي اتحدثوا في
+    // _applyBootstrap() قبل ما الـ router guard يقرأهم. بدون ده، الـ guard
+    // كان ممكن يقرأ القيم القديمة (branchId=null) ويوجّه الكاشير لـ
+    // /select-branch بدل homeRoute الصحيح — freeze ظاهري للمستخدم.
+    await nextTick()
     if (auth.needsPasswordChange) {
       router.push('/change-temporary-password')
     } else if (auth.needsTwoFactorSetup) {
