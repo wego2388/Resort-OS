@@ -506,7 +506,7 @@ onMounted(() => switchTab('summary'))
                 </td>
                 <td class="px-4 py-3 text-xs text-gray-500 dark:text-gray-400">{{ fmtDate(c.valid_from) }} → {{ fmtDate(c.valid_until) }}</td>
                 <td class="px-4 py-3">
-                  <div class="flex gap-2">
+                  <div class="flex gap-2 whitespace-nowrap">
                     <button @click="openCreditEdit(c)" class="text-xs text-blue-600 hover:underline dark:text-blue-300">✏️ {{ t('backoffice.beachAdmin.credit') }}</button>
                     <button @click="openSettle(c)" class="text-xs text-green-600 hover:underline dark:text-green-300">✅ {{ t('backoffice.beachAdmin.settle') }}</button>
                   </div>

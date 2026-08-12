@@ -1075,7 +1075,7 @@ onMounted(fetchEmployees)
                   <AppBadge v-else size="sm" variant="warning">{{ t('backoffice.hr.accountPending') }}</AppBadge>
                 </td>
                 <td class="px-4 py-3">
-                  <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+                  <div class="flex flex-wrap items-center gap-x-3 gap-y-2 whitespace-nowrap">
                     <button @click="openProfileModal(emp)" class="text-xs font-semibold text-sky-700 hover:text-sky-900 dark:text-sky-300 dark:hover:text-sky-100">👤 {{ t('backoffice.hr.profileShort') }}</button>
                     <button v-if="canManageEmployeeRecords" @click="openEditModal(emp)" class="text-xs font-semibold text-indigo-600 hover:text-indigo-800 dark:text-indigo-300 dark:hover:text-indigo-200">✏️ {{ t('backoffice.hr.editShort') }}</button>
                     <button v-if="canManageEmployeeRecords" @click="openAllowanceModal(emp)" class="text-xs font-semibold text-blue-600 hover:text-blue-800 dark:text-blue-300 dark:hover:text-blue-200">{{ t('backoffice.hr.addAllowanceShort') }}</button>

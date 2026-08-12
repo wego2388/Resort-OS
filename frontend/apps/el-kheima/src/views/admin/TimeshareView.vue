@@ -2004,6 +2004,7 @@ onMounted(refreshAll)
       v-model:open="scheduleModal.open"
       :title="t('backoffice.timeshare.scheduleVisit.title')"
       max-width="sm"
+      @close="scheduleModal.open = false"
     >
       <div class="space-y-4">
         <!-- اختيار العقد — لو العميل عنده أكتر من عقد -->

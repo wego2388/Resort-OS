@@ -715,7 +715,7 @@ onMounted(() => {
               <tr v-for="row in users" :key="row.id">
                 <td class="px-4 py-3">
                   <div class="font-semibold text-gray-800 dark:text-gray-100">{{ row.full_name }}</div>
-                  <div class="text-xs text-gray-500">{{ row.email }}</div>
+                  <div class="text-xs text-gray-500 break-all" dir="ltr">{{ row.email }}</div>
                 </td>
                 <td class="px-4 py-3">{{ t(`backoffice.permissions.roles.${row.role}`, row.role) }}</td>
                 <td class="px-4 py-3">

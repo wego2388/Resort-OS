@@ -472,7 +472,7 @@ onMounted(() => switchTab('bookings'))
                   </AppBadge>
                 </td>
                 <td class="px-4 py-3">
-                  <div class="flex gap-2">
+                  <div class="flex gap-2 whitespace-nowrap">
                     <button v-if="b.status === 'pending'" @click="confirmBooking(b)"
                       class="text-xs font-semibold text-green-600 hover:underline dark:text-green-300">✅ {{ t('backoffice.hub.confirmAction') }}</button>
                     <button v-if="b.status === 'pending' || b.status === 'confirmed'" @click="cancelBooking(b)"
@@ -573,7 +573,7 @@ onMounted(() => switchTab('bookings'))
                 </td>
                 <td class="px-4 py-3 text-xs text-gray-500 dark:text-gray-400">{{ fmtDate(p.updated_at) }}</td>
                 <td class="px-4 py-3">
-                  <div class="flex gap-2">
+                  <div class="flex gap-2 whitespace-nowrap">
                     <button @click="openEditPage(p)" class="text-xs text-blue-600 hover:underline dark:text-blue-300">✏️ {{ t('backoffice.hub.edit') }}</button>
                     <button v-if="auth.hasRole('admin')" @click="deletePage(p)"
                       class="text-xs text-red-500 hover:underline">🗑️ {{ t('backoffice.hub.delete') }}</button>
@@ -731,7 +731,7 @@ onMounted(() => switchTab('bookings'))
                 </td>
                 <td class="px-4 py-3 text-xs text-gray-500 dark:text-gray-400">{{ fmtDate(p.created_at) }}</td>
                 <td class="px-4 py-3">
-                  <div class="flex gap-2">
+                  <div class="flex gap-2 whitespace-nowrap">
                     <button @click="openEditBlog(p)" class="text-xs font-semibold text-primary-700 hover:underline">{{ t('backoffice.hub.edit') }}</button>
                     <button @click="deleteBlogPost(p)" class="text-xs font-semibold text-red-500 hover:underline">{{ t('backoffice.hub.delete') }}</button>
                   </div>
