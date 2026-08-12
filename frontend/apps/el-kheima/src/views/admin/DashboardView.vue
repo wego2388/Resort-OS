@@ -200,7 +200,9 @@ function handleVisibilityChange() {
   if (document.hidden) {
     if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null }
   } else {
-    // الـ tab رجع visible — نحدّث فوراً ونشغّل الـ interval من جديد
+    // الـ tab رجع visible — نتأكد إن الـ timer القديم اتمسح أولاً
+    // قبل ما نشغّل جديد، عشان ما يتضاعفش لو اتفتح الـ tab أكتر من مرة.
+    if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null }
     fetchDashboard()
     fetchUrgentAlerts()
     refreshTimer = setInterval(() => { fetchDashboard(); fetchUrgentAlerts() }, REFRESH_INTERVAL_MS)

@@ -356,11 +356,17 @@ onUnmounted(() => clearInterval(refreshInterval))
         class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
         @click.self="selectedRoom = null"
       >
-        <div class="bg-white dark:bg-surface rounded-2xl p-6 w-full max-w-sm shadow-2xl">
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="room-detail-title"
+          class="bg-white dark:bg-surface rounded-2xl p-6 w-full max-w-sm shadow-2xl"
+        >
           <div class="flex items-center justify-between mb-5">
-            <h2 class="text-xl font-black text-gray-900 dark:text-gray-100">{{ t('backoffice.rooms.roomHash', { name: selectedRoom.name }) }}</h2>
+            <h2 id="room-detail-title" class="text-xl font-black text-gray-900 dark:text-gray-100">{{ t('backoffice.rooms.roomHash', { name: selectedRoom.name }) }}</h2>
             <button
               @click="selectedRoom = null"
+              :aria-label="t('backoffice.rooms.close')"
               class="text-gray-400 dark:text-gray-400 hover:text-gray-700 dark:text-gray-300 text-2xl leading-none"
             >×</button>
           </div>

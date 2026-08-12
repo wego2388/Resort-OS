@@ -443,7 +443,10 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleGlobalKey))
   :global(html:dir(rtl)) .sidebar-shell {
     position: sticky;
     top: 0;
-    height: 100vh;
+    /* h-screen كانت تعمل بشكل صح مع min-h-screen على الـ root.
+       بعد التغيير لـ h-screen overflow-hidden على الـ root،
+       height: 100% أصح — الـ sidebar يملأ الـ parent المقفول بالكامل. */
+    height: 100%;
     transform: none;
   }
 }

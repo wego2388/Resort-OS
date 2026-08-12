@@ -137,10 +137,15 @@ onMounted(() => { fetchLeaveTypes(); fetchLeaves() })
     <!-- Request modal -->
     <Teleport to="body">
       <div v-if="showModal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" @click.self="showModal = false">
-        <div class="bg-white dark:bg-surface rounded-2xl p-6 w-full max-w-sm shadow-2xl">
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="leave-modal-title"
+          class="bg-white dark:bg-surface rounded-2xl p-6 w-full max-w-sm shadow-2xl"
+        >
           <div class="flex items-center justify-between mb-5">
-            <h3 class="font-bold text-gray-900 dark:text-gray-100 text-lg">{{ t('backoffice.leaves.newRequestTitle') }}</h3>
-            <button @click="showModal = false" class="text-gray-400 dark:text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
+            <h3 id="leave-modal-title" class="font-bold text-gray-900 dark:text-gray-100 text-lg">{{ t('backoffice.leaves.newRequestTitle') }}</h3>
+            <button @click="showModal = false" :aria-label="t('backoffice.leaves.cancel')" class="text-gray-400 dark:text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
           </div>
           <div class="space-y-4">
             <div>

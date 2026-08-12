@@ -228,7 +228,9 @@ onUnmounted(() => { clearInterval(refreshInterval); clearInterval(clockInterval)
 
 <template>
   <!-- Direction inherited from <html dir> (central staff locale controller). -->
-  <div class="min-h-screen bg-slate-900 text-white flex flex-col">
+  <!-- h-full: يملأ الـ main.flex-1 في KioskLayout بالكامل بدون min-h-screen
+       اللي كانت بتكسر الـ layout المقفول بـ h-screen. -->
+  <div class="h-full bg-slate-900 text-white flex flex-col">
     <header class="bg-slate-800 border-b border-slate-700 px-6 py-3 flex items-center justify-between flex-shrink-0 flex-wrap gap-2">
       <div class="flex items-center gap-4 flex-wrap">
         <div class="flex items-center gap-2">

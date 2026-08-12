@@ -68,12 +68,26 @@ const emit = defineEmits<{
 
 const alignClass = (a?: DataTableColumn['align']) => a === 'center' ? 'text-center' : a === 'end' ? 'text-end' : 'text-start'
 const showPaginator = computed(() => !!props.totalPages && props.totalPages > 1 && props.page !== undefined)
+
+// min-w ديناميكي بناءً على عدد الأعمدة — نفس المبدأ المطبّق على الجداول اليدوية:
+// 4→500px / 5→600px / 6→700px / 7→800px / 8→900px / 9+→1000px
+// لو الـ column عنده width صريح ممكن يكون أضيق — نأخذ بالحد الأدنى الآمن.
+const tableMinWidth = computed(() => {
+  const n = props.columns.length
+  if (n <= 3) return undefined          // جداول قصيرة — بتتسع طبيعي
+  if (n === 4) return 'min-w-[500px]'
+  if (n === 5) return 'min-w-[600px]'
+  if (n === 6) return 'min-w-[700px]'
+  if (n === 7) return 'min-w-[800px]'
+  if (n === 8) return 'min-w-[900px]'
+  return 'min-w-[1000px]'
+})
 </script>
 
 <template>
   <div class="bg-white dark:bg-surface rounded-xl border border-stone-200 dark:border-border overflow-hidden">
     <div class="overflow-x-auto">
-      <table class="w-full border-collapse">
+      <table :class="['w-full border-collapse', tableMinWidth]">
         <thead :class="stickyHeader ? 'sticky top-0 z-10' : ''">
           <tr class="bg-stone-50 dark:bg-gray-800/60 border-b border-stone-200 dark:border-border">
             <th

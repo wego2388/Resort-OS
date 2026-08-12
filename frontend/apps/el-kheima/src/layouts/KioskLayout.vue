@@ -44,7 +44,9 @@ function logout() {
 
 <template>
   <!-- Direction inherited from <html dir> (central staff locale controller). -->
-  <div class="min-h-screen bg-slate-950 text-white flex flex-col">
+  <!-- h-screen overflow-hidden: يقفّل الـ layout في الشاشة لشاشة الحيط (KDS)
+       حتى يشتغل flex-1 + overflow-y-auto على main بشكل صح، بدون scroll على body. -->
+  <div class="h-screen overflow-hidden bg-slate-950 text-white flex flex-col">
     <header class="flex items-center justify-end px-4 py-1.5 bg-slate-900 border-b border-slate-800 flex-shrink-0 text-sm">
       <div class="flex items-center gap-4">
         <!-- dir="ltr": a clock is a fixed HH:MM:SS numeric token, not directional text. -->
@@ -52,7 +54,7 @@ function logout() {
         <button @click="logout" class="text-red-400 hover:text-red-300 font-medium">{{ t('backoffice.layout.logout') }}</button>
       </div>
     </header>
-    <main class="flex-1 overflow-auto">
+    <main class="flex-1 min-h-0 overflow-y-auto">
       <RouterView v-slot="{ Component, route: r }">
         <Transition name="page" mode="out-in" :duration="{ enter: 160, leave: 80 }">
           <component :is="Component" :key="r.fullPath" />
