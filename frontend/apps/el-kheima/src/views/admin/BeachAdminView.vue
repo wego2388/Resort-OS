@@ -415,7 +415,7 @@ onMounted(() => switchTab('summary'))
       <AppCard v-else padding="none">
         <EmptyState v-if="!transactions.length" icon="🧾" :title="t('backoffice.beachAdmin.noTransactionsToday')" />
         <div v-else class="overflow-x-auto">
-          <table class="w-full">
+          <table class="w-full min-w-[860px]">
             <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
                 <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.beachAdmin.type') }}</th>
@@ -474,7 +474,7 @@ onMounted(() => switchTab('summary'))
       <AppCard v-else padding="none">
         <EmptyState v-if="!b2bContracts.length" icon="🤝" :title="t('backoffice.beachAdmin.noB2bContracts')" />
         <div v-else class="overflow-x-auto">
-          <table class="w-full">
+          <table class="w-full min-w-[1000px]">
             <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
                 <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.beachAdmin.hotel') }}</th>

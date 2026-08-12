@@ -212,7 +212,7 @@ onUnmounted(() => {
 
       <!-- جدول الورديات — desktop -->
       <AppCard class="hidden sm:block overflow-x-auto">
-        <table class="w-full text-sm">
+        <table class="w-full min-w-[900px] text-sm">
           <thead>
             <tr class="text-xs text-gray-400 border-b border-stone-100 dark:border-stone-800">
               <th class="text-right py-2 px-3 font-medium">{{ t('backoffice.shiftMonitor.col.cashier') }}</th>

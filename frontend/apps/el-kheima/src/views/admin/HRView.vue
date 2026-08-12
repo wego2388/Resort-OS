@@ -1035,7 +1035,7 @@ onMounted(fetchEmployees)
       </div>
       <AppCard v-else :title="t('backoffice.hr.employeesCount', { count: employees.length })" padding="none">
         <div class="overflow-x-auto">
-          <table class="w-full">
+          <table class="w-full min-w-[900px]">
             <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
                 <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.hr.name') }}</th>
@@ -1617,7 +1617,7 @@ onMounted(fetchEmployees)
         :subtitle="t('backoffice.hr.noAttendanceRecordsHint')" />
       <AppCard v-else padding="none">
         <div class="overflow-x-auto">
-          <table class="w-full">
+          <table class="w-full min-w-[860px]">
             <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
                 <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.hr.employee') }}</th>
@@ -1672,7 +1672,7 @@ onMounted(fetchEmployees)
         :subtitle="t('backoffice.hr.noSalesRecordedHint')" />
       <AppCard v-else padding="none">
         <div class="overflow-x-auto">
-          <table class="w-full">
+          <table class="w-full min-w-[600px]">
             <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
                 <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.hr.rank') }}</th>

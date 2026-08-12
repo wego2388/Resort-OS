@@ -372,7 +372,7 @@ onMounted(() => { fetchCategories(); fetchWarehouses(); fetchSuppliers(); fetchP
 
     <AppCard v-else padding="none">
       <div class="overflow-x-auto">
-        <table class="w-full">
+        <table class="w-full min-w-[960px]">
           <thead class="bg-stone-50 dark:bg-gray-800/60">
             <tr>
               <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.inventory.column.product') }}</th>
@@ -522,7 +522,7 @@ onMounted(() => { fetchCategories(); fetchWarehouses(); fetchSuppliers(); fetchP
       <div class="space-y-3">
         <AppButton size="sm" @click="openCreateSupplier">+ {{ t('backoffice.inventory.newSupplier') }}</AppButton>
         <div class="overflow-x-auto border border-stone-100 dark:border-border/50 rounded-xl">
-          <table class="w-full">
+          <table class="w-full min-w-[700px]">
             <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
                 <th class="px-3 py-2 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.inventory.name') }}</th>

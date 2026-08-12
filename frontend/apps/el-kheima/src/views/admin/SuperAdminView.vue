@@ -1008,7 +1008,7 @@ onMounted(() => {
       <div v-else-if="auditError" class="text-red-600 text-sm">⚠️ {{ auditError }}</div>
       <AppCard v-else-if="auditLogs.length > 0" padding="none">
         <div class="overflow-x-auto">
-          <table class="w-full text-sm">
+          <table class="w-full min-w-[800px] text-sm">
             <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr class="text-xs font-bold text-gray-500 uppercase tracking-wide">
                 <th class="px-4 py-3 text-start">#</th>

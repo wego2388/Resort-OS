@@ -576,7 +576,7 @@ onMounted(loadAll)
         </div>
         <EmptyState v-if="!reviews || reviews.items.length === 0" icon="⭐" :title="t('backoffice.analytics.noPublishedReviews')" />
         <div v-else class="overflow-x-auto">
-          <table class="w-full">
+          <table class="w-full min-w-[700px]">
             <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
                 <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.analytics.column.guest') }}</th>
@@ -669,7 +669,7 @@ onMounted(loadAll)
 
         <EmptyState v-if="utilityReadings.length === 0" icon="🔌" :title="t('backoffice.analytics.noReadingsRecorded')" />
         <div v-else class="overflow-x-auto">
-          <table class="w-full">
+          <table class="w-full min-w-[600px]">
             <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
                 <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.analytics.column.date') }}</th>

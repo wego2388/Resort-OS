@@ -443,7 +443,7 @@ onMounted(() => switchTab('bookings'))
       <AppCard v-else padding="none">
         <EmptyState v-if="!bookings.length" icon="📅" :title="t('backoffice.hub.noBookings')" :subtitle="t('backoffice.hub.noBookingsHint')" />
         <div v-else class="overflow-x-auto">
-          <table class="w-full">
+          <table class="w-full min-w-[800px]">
             <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
                 <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.hub.column.guest') }}</th>
@@ -547,7 +547,7 @@ onMounted(() => switchTab('bookings'))
       <AppCard v-else padding="none">
         <EmptyState v-if="!pages.length" icon="📄" :title="t('backoffice.hub.noPages')" :subtitle="t('backoffice.hub.noPagesHint')" />
         <div v-else class="overflow-x-auto">
-          <table class="w-full">
+          <table class="w-full min-w-[800px]">
             <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
                 <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.hub.column.title') }}</th>
@@ -707,7 +707,7 @@ onMounted(() => switchTab('bookings'))
       <EmptyState v-else-if="!blogPosts.length" icon="✍️" :title="t('backoffice.hub.noPosts')" />
       <AppCard v-else padding="none">
         <div class="overflow-x-auto">
-          <table class="w-full text-sm">
+          <table class="w-full min-w-[700px] text-sm">
             <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
                 <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.hub.column.title') }}</th>

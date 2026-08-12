@@ -329,7 +329,7 @@ onMounted(() => { loadContracts(); loadExpiringSoon() })
           </div>
 
           <div class="overflow-x-auto mb-4">
-            <table class="w-full text-sm">
+            <table class="w-full min-w-[800px] text-sm">
               <thead>
                 <tr class="text-xs text-gray-400 dark:text-gray-400">
                   <th class="text-start py-1">{{ t('backoffice.leasing.column.dueDate') }}</th>

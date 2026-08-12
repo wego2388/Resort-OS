@@ -251,7 +251,7 @@ onMounted(loadAccounts)
       <div v-if="loading" class="py-12 text-center"><AppSpinner /></div>
       <EmptyState v-else-if="accounts.length === 0" icon="📒" :title="t('backoffice.credit.empty')" />
       <div v-else class="overflow-x-auto">
-        <table class="w-full text-sm">
+        <table class="w-full min-w-[700px] text-sm">
           <thead class="text-start text-gray-500"><tr>
             <th class="p-3 text-start">{{ t('backoffice.credit.holderName') }}</th>
             <th class="p-3 text-start">{{ t('backoffice.credit.balance') }}</th>

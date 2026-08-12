@@ -656,7 +656,7 @@ async function saveExchangeRate() {
       <div v-if="loading" class="flex justify-center py-12"><AppSpinner size="lg" /></div>
       <AppCard v-else padding="none">
         <div class="overflow-x-auto">
-          <table class="w-full">
+          <table class="w-full min-w-[760px]">
             <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
                 <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.finance.checkNumber') }}</th>
@@ -705,7 +705,7 @@ async function saveExchangeRate() {
       <div v-if="loading" class="flex justify-center py-12"><AppSpinner size="lg" /></div>
       <AppCard v-else padding="none">
         <div class="overflow-x-auto">
-          <table class="w-full">
+          <table class="w-full min-w-[600px]">
             <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
                 <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.finance.code') }}</th>
@@ -752,7 +752,7 @@ async function saveExchangeRate() {
       <template v-else>
         <AppCard padding="none" class="mb-4">
           <div class="overflow-x-auto">
-            <table class="w-full">
+            <table class="w-full min-w-[600px]">
               <thead class="bg-stone-50 dark:bg-gray-800/60">
                 <tr>
                   <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.finance.costCenter') }}</th>
@@ -924,7 +924,7 @@ async function saveExchangeRate() {
       <div v-if="loading" class="flex justify-center py-12"><AppSpinner size="lg" /></div>
       <AppCard v-else padding="none">
         <div class="overflow-x-auto">
-          <table class="w-full">
+          <table class="w-full min-w-[600px]">
             <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
                 <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.finance.asset') }}</th>
@@ -1014,7 +1014,7 @@ async function saveExchangeRate() {
 
         <AppCard padding="none">
           <div class="overflow-x-auto">
-            <table class="w-full">
+            <table class="w-full min-w-[600px]">
               <thead class="bg-stone-50 dark:bg-gray-800/60">
                 <tr>
                   <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.finance.date') }}</th>
@@ -1070,7 +1070,7 @@ async function saveExchangeRate() {
         <button @click="loadShifts()" class="ms-auto px-3 py-1 rounded-lg text-xs font-semibold border border-stone-200 dark:border-border bg-white dark:bg-surface text-gray-500 dark:text-gray-400 hover:bg-stone-50 dark:bg-gray-800/60 transition-all">🔄 {{ t('backoffice.finance.refresh') }}</button>
       </div>
       <div class="overflow-x-auto rounded-xl border border-stone-200 dark:border-border">
-        <table class="w-full text-sm">
+        <table class="w-full min-w-[1100px] text-sm">
           <thead class="bg-stone-50 dark:bg-gray-800/60 text-xs text-gray-500 dark:text-gray-400 uppercase">
             <tr>
               <th class="px-4 py-3 text-start">#</th>
@@ -1282,7 +1282,7 @@ async function saveExchangeRate() {
         <p v-if="fxError" role="alert" class="text-sm text-danger">{{ fxError }}</p>
         <EmptyState v-else-if="!fxLoading && exchangeRates.length === 0" icon="💱" :title="t('backoffice.finance.fx.empty')" />
         <div v-else class="overflow-x-auto">
-          <table class="w-full text-sm">
+          <table class="w-full min-w-[600px] text-sm">
             <thead>
               <tr class="text-start text-gray-500 dark:text-gray-400 border-b border-stone-200 dark:border-border">
                 <th class="pb-2 font-semibold text-start">{{ t('backoffice.finance.fx.fromCurrency') }}</th>

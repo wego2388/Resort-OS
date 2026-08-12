@@ -304,7 +304,7 @@ onMounted(async () => { await loadOutlets(); await fetchReport() })
       <!-- Full lines table -->
       <AppCard :title="t('backoffice.foodCostReport.itemsBreakdown')" padding="none">
         <div class="overflow-x-auto">
-          <table class="w-full">
+          <table class="w-full min-w-[960px]">
             <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
                 <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.foodCostReport.column.item') }}</th>

@@ -359,7 +359,7 @@ onMounted(loadSettings)
         :subtitle="t('backoffice.settings.noSettingsSubtitle')"
       />
       <div v-else class="overflow-x-auto">
-        <table class="w-full">
+        <table class="w-full min-w-[600px]">
           <thead class="bg-stone-50 dark:bg-gray-800/60">
             <tr>
               <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.settings.colKey') }}</th>
