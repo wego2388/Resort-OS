@@ -1615,6 +1615,11 @@ def import_contracts_excel(
     import openpyxl  # noqa: PLC0415
     import io as _io  # noqa: PLC0415
 
+    # حد أقصى 5 MB قبل load_workbook — zip bomb protection
+    _EXCEL_MAX_BYTES = 5 * 1024 * 1024
+    if len(file_content) > _EXCEL_MAX_BYTES:
+        raise ValueError("حجم الملف أكبر من 5 ميجابايت")
+
     wb = openpyxl.load_workbook(_io.BytesIO(file_content), data_only=True)
     ws = wb.active
 

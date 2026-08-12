@@ -270,6 +270,12 @@ def import_attendance_excel(
 
     from app.modules.hr.schemas import AttendanceImportResult, AttendanceRecordCreate  # noqa: PLC0415
 
+    # حد أقصى 5 MB قبل load_workbook — ملف Excel مضغوط صغير ممكن يفتح
+    # لمئات الـ MB في الذاكرة (zip bomb). الفحص هنا على bytes الخام قبل الفك.
+    _EXCEL_MAX_BYTES = 5 * 1024 * 1024
+    if len(file_content) > _EXCEL_MAX_BYTES:
+        raise ValueError("حجم الملف أكبر من 5 ميجابايت")
+
     wb = openpyxl.load_workbook(_io.BytesIO(file_content), data_only=True)
     ws = wb.active
     rows = list(ws.iter_rows(values_only=True))

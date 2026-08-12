@@ -335,7 +335,11 @@ async def upload_item_image(
     _=Depends(get_manager_user),
 ):
     """T-05 — رفع صورة لصنف في قائمة الطعام (مدير+).
-    يقبل: image/jpeg, image/png, image/webp — حد أقصى 2 ميجابايت."""
+    يقبل: image/jpeg, image/png, image/webp — حد أقصى 2 ميجابايت.
+
+    فحص مزدوج: content-type header + magic bytes فعلية من محتوى الملف —
+    عشان نمنع content-type spoofing (رفع ملف تنفيذي بـ header image/jpeg).
+    """
     import os, uuid  # noqa: PLC0415
 
     item = crud.get_item(db, item_id)
@@ -345,12 +349,30 @@ async def upload_item_image(
     ALLOWED = {"image/jpeg", "image/png", "image/webp"}
     MAX_SIZE = 2 * 1024 * 1024  # 2 MB
 
+    # فحص أول: content-type header
     if file.content_type not in ALLOWED:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"نوع الملف غير مسموح: {file.content_type}. المقبول: jpeg/png/webp")
 
     contents = await file.read()
+
+    # فحص ثاني: حجم الملف الفعلي
     if len(contents) > MAX_SIZE:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "حجم الصورة أكبر من 2 ميجابايت")
+
+    # فحص ثالث: magic bytes — نتأكد إن المحتوى الفعلي صورة حقيقية
+    # وليس ملف تنفيذي بـ content-type مزوّر
+    MAGIC = {
+        "image/jpeg": (b"\xff\xd8\xff",),
+        "image/png":  (b"\x89PNG\r\n\x1a\n",),
+        "image/webp": (b"RIFF",),  # RIFF????WEBP
+    }
+    magic_sigs = MAGIC.get(file.content_type, ())
+    if not any(contents.startswith(sig) for sig in magic_sigs):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "محتوى الملف لا يطابق نوعه المُعلَن")
+
+    # webp: بعد RIFF بييجي 4 bytes حجم ثم WEBP
+    if file.content_type == "image/webp" and len(contents) >= 12 and contents[8:12] != b"WEBP":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "محتوى الملف لا يطابق نوعه المُعلَن")
 
     ext = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}[file.content_type]
     filename = f"{item_id}_{uuid.uuid4().hex[:8]}.{ext}"

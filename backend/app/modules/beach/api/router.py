@@ -83,8 +83,20 @@ async def beach_map_websocket(ws: WebSocket, branch_id: int, db: DbDep):
     """اتصال WebSocket لطاقم الشاطئ — بث تحديثات الخريطة الحية (تشيك-إن/
     تشيك-أوت/إضافة أو حذف مواقع/تغيير حالة) لحظيًا لكل الكاشيرين/المشرفين
     الفاتحين الشاشة في نفس الوقت. بيرد بـ pong كـ heartbeat فقط، زي KDS
-    وتنبيهات الضيوف. محتاج ?token= JWT صالح بمستوى كاشير+."""
-    if not await get_websocket_user(ws, db, min_level=40):
+    وتنبيهات الضيوف. محتاج ?token= JWT صالح بمستوى كاشير+.
+
+    ⚠️ باج أمني كان هنا (2026-08-12): get_websocket_user بتتحقق من الـ token
+    والمستوى فقط — بدون فحص إن branch_id في الـ URL هو فرع المستخدم نفسه.
+    كاشير فرع A كان يقدر يشترك في بث خريطة فرع B ويشوف بيانات الضيوف الحية
+    (تشيك-إن/أوت + أماكنهم) بمجرد تغيير الرقم في الـ URL. نفس فئة الباج
+    اللي اتصلح في alerts WS وأُضيف صراحةً في guest_alerts_websocket."""
+    user = await get_websocket_user(ws, db, min_level=40)
+    if not user:
+        return
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "الاشتراك في خريطة الشاطئ الحية")
+    except PermissionError:
+        await ws.close(code=4403)
         return
     await beach_map_manager.connect(ws, str(branch_id))
     try:
