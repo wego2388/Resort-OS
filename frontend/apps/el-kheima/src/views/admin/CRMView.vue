@@ -919,7 +919,8 @@ onMounted(loadLeads)
 
       <div v-if="loading" class="flex justify-center py-12"><AppSpinner size="lg" /></div>
       <AppCard v-else padding="none">
-        <table class="w-full">
+        <div class="overflow-x-auto">
+        <table class="w-full min-w-[560px]">
           <thead class="bg-stone-50 dark:bg-gray-800/60">
             <tr>
               <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.crm.customer') }}</th>
@@ -965,6 +966,7 @@ onMounted(loadLeads)
             </tr>
           </tbody>
         </table>
+        </div>
       </AppCard>
       <p
         v-if="customersTotal > customers.length"
@@ -1109,7 +1111,8 @@ onMounted(loadLeads)
       </div>
       <div v-if="loading" class="flex justify-center py-12"><AppSpinner size="lg" /></div>
       <AppCard v-else padding="none">
-        <table class="w-full">
+        <div class="overflow-x-auto">
+        <table class="w-full min-w-[500px]">
           <thead class="bg-stone-50 dark:bg-gray-800/60">
             <tr>
               <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.crm.guest') }}</th>
@@ -1140,6 +1143,7 @@ onMounted(loadLeads)
             </tr>
           </tbody>
         </table>
+        </div>
       </AppCard>
     </div>
 

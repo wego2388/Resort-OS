@@ -380,7 +380,8 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
             </div>
           </div>
 
-          <table class="w-full text-xs">
+          <div class="overflow-x-auto">
+          <table class="w-full min-w-[320px] text-xs">
             <thead>
               <tr class="text-gray-400 dark:text-gray-400 border-b border-stone-100 dark:border-border/50">
                 <th class="text-start font-bold py-2">{{ t('backoffice.beachLive.transactionType') }}</th>
@@ -399,6 +400,7 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
               </tr>
             </tbody>
           </table>
+          </div>
         </template>
       </AppCard>
     </template>

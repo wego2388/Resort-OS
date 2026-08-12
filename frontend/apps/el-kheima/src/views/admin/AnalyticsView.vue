@@ -411,7 +411,7 @@ onMounted(loadAll)
       <AppCard :title="t('backoffice.analytics.revenueBreakdown30d')">
         <EmptyState v-if="!dashboard?.revenue_30d" icon="📊" :title="t('backoffice.analytics.noRevenueData')" :subtitle="t('backoffice.analytics.noRevenueDataHint')" />
         <div v-else class="overflow-x-auto">
-          <table class="w-full">
+          <table class="w-full min-w-[360px]">
             <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
                 <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.analytics.column.department') }}</th>
@@ -464,7 +464,8 @@ onMounted(loadAll)
           </div>
 
           <!-- صفوف المقارنة -->
-          <table class="w-full text-sm">
+          <div class="overflow-x-auto">
+          <table class="w-full min-w-[480px] text-sm">
             <thead>
               <tr class="border-b border-stone-200 dark:border-border">
                 <th class="px-3 py-2 text-start text-xs text-gray-500 dark:text-gray-400 font-semibold">{{ t('backoffice.analytics.column.source') }}</th>
@@ -514,10 +515,9 @@ onMounted(loadAll)
               </tr>
             </tbody>
           </table>
+          </div>
         </div>
       </AppCard>
-
-      <!-- إحصائيات اليوم -->
       <AppCard :title="t('backoffice.analytics.todayStats')">
         <EmptyState v-if="!dailyStats || dailyStats.message" icon="🗓️" :title="t('backoffice.analytics.noTodayData')" :subtitle="t('backoffice.analytics.noTodayDataHint')" />
         <div v-else class="grid grid-cols-2 md:grid-cols-5 gap-4">

@@ -812,7 +812,7 @@ async function saveExchangeRate() {
           <AppCard padding="none">
             <div class="px-4 py-3 border-b border-stone-100 dark:border-border/50 font-bold text-gray-900 dark:text-gray-100">{{ t('backoffice.finance.assets') }}</div>
             <div class="overflow-x-auto">
-              <table class="w-full">
+              <table class="w-full min-w-[380px]">
                 <tbody>
                   <tr v-for="l in bsData.asset_lines" :key="l.account_code" class="border-t border-stone-100 dark:border-border/50">
                     <td class="px-4 py-2 text-xs font-mono text-gray-500 dark:text-gray-400">{{ l.account_code }}</td>
@@ -837,7 +837,7 @@ async function saveExchangeRate() {
             <AppCard padding="none">
               <div class="px-4 py-3 border-b border-stone-100 dark:border-border/50 font-bold text-gray-900 dark:text-gray-100">{{ t('backoffice.finance.liabilities') }}</div>
               <div class="overflow-x-auto">
-                <table class="w-full">
+                <table class="w-full min-w-[380px]">
                   <tbody>
                     <tr v-for="l in bsData.liability_lines" :key="l.account_code" class="border-t border-stone-100 dark:border-border/50">
                       <td class="px-4 py-2 text-xs font-mono text-gray-500 dark:text-gray-400">{{ l.account_code }}</td>
@@ -861,7 +861,7 @@ async function saveExchangeRate() {
             <AppCard padding="none">
               <div class="px-4 py-3 border-b border-stone-100 dark:border-border/50 font-bold text-gray-900 dark:text-gray-100">{{ t('backoffice.finance.equity') }}</div>
               <div class="overflow-x-auto">
-                <table class="w-full">
+                <table class="w-full min-w-[380px]">
                   <tbody>
                     <tr v-for="l in bsData.equity_lines" :key="l.account_code" class="border-t border-stone-100 dark:border-border/50">
                       <td class="px-4 py-2 text-xs font-mono text-gray-500 dark:text-gray-400">{{ l.account_code }}</td>
