@@ -254,7 +254,10 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleGlobalKey))
 
 <template>
   <!-- Direction inherited from <html dir> (central staff locale controller). -->
-  <div class="min-h-screen bg-stone-50 dark:bg-gray-950 flex">
+  <!-- h-screen + overflow-hidden على الـ root: يقفّل الـ layout في الشاشة تماماً
+       حتى يشتغل الـ scroll داخل main.overflow-y-auto بشكل صح على كل المقاسات.
+       overflow-x-auto على الجداول الداخلية يشتغل صح لأن الـ main مش overflow-auto. -->
+  <div class="h-screen overflow-hidden bg-stone-50 dark:bg-gray-950 flex">
     <button
       v-if="mobileSidebarOpen"
       type="button"
