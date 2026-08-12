@@ -1487,7 +1487,8 @@ def _seed_menus(db: Session) -> None:
         for cat_key, name, name_ar, price, station in restaurant_items:
             db.add(DiningItem(
                 branch_id=branch.id, outlet_id=restaurant_outlet.id, category_id=cat_map[cat_key],
-                name=name, name_ar=name_ar, price=price, station=station,
+                name=name, name_ar=name_ar, price=price,
+                price_includes_vat_service=True, station=station,
             ))
         db.flush()
         print(f"  ✓ Restaurant menu seeded ({len(restaurant_items)} items across {len(restaurant_categories)} categories)")
@@ -1592,7 +1593,8 @@ def _seed_menus(db: Session) -> None:
         for cat_en, name, name_ar, price in cafe_items:
             db.add(DiningItem(
                 branch_id=branch.id, outlet_id=cafe_outlet.id, category_id=cat_map2[cat_en],
-                name=name, name_ar=name_ar, price=price, station="bar",
+                name=name, name_ar=name_ar, price=price,
+                price_includes_vat_service=True, station="bar",
             ))
         db.flush()
         print(f"  ✓ Cafe menu seeded ({len(cafe_items)} beverage items across {len(cafe_categories)} categories)")

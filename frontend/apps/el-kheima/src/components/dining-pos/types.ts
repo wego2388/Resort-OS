@@ -102,6 +102,7 @@ export interface OrderItemExtra {
   extra_name: string
   extra_name_ar?: string | null
   price_addition: number | string
+  listed_price_addition?: number | string | null
   text_value: string | null
 }
 
@@ -111,6 +112,7 @@ export interface OrderItem {
   name: string
   name_ar?: string | null
   unit_price: number | string
+  listed_unit_price?: number | string | null
   quantity: number
   notes: string | null
   status: string

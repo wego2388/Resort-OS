@@ -100,6 +100,8 @@ class DiningItemCreate(BaseModel):
     name_ar:             Optional[str] = Field(None, max_length=200)
     description:         Optional[str] = Field(None, max_length=500)
     price:               Decimal = Field(..., gt=0)
+    # Owner decision 2026-08-12: every newly managed menu price is final.
+    price_includes_vat_service: bool = True
     cost:                Optional[Decimal] = Field(None, ge=0)
     is_available:        bool = True
     preparation_minutes: int  = 10
@@ -115,6 +117,7 @@ class DiningItemUpdate(BaseModel):
     name_ar:             Optional[str]     = None
     description:         Optional[str]     = Field(None, max_length=500)
     price:               Optional[Decimal] = Field(None, gt=0)
+    price_includes_vat_service: Optional[bool] = None
     cost:                Optional[Decimal] = None
     is_available:        Optional[bool]    = None
     preparation_minutes: Optional[int]     = None
@@ -392,6 +395,7 @@ class OrderItemExtraRead(BaseModel):
     extra_name:     str
     extra_name_ar:  Optional[str] = None
     price_addition: Decimal
+    listed_price_addition: Optional[Decimal] = None
     text_value:     Optional[str] = None
 
 
@@ -404,6 +408,7 @@ class OrderItemRead(BaseModel):
     name:         str
     name_ar:      Optional[str] = None
     unit_price:   Decimal
+    listed_unit_price: Optional[Decimal] = None
     quantity:     int
     notes:        Optional[str]
     status:       str

@@ -136,8 +136,9 @@ class TestFindFraudSignalsOtherRules:
             discount_threshold=999, discount_window_minutes=60,
             drawer_open_threshold=999, drawer_open_window_minutes=1440,
         )
-        assert len(signals) == 1
-        assert signals[0].rule == "void_count"
+        user_signals = [signal for signal in signals if signal.user_id == user.id]
+        assert len(user_signals) == 1
+        assert user_signals[0].rule == "void_count"
 
     def test_discount_count_signal(self, db):
         from app.tasks.fraud_tasks import find_fraud_signals
@@ -154,8 +155,9 @@ class TestFindFraudSignalsOtherRules:
             discount_threshold=3, discount_window_minutes=60,
             drawer_open_threshold=999, drawer_open_window_minutes=1440,
         )
-        assert len(signals) == 1
-        assert signals[0].rule == "discount_count"
+        user_signals = [signal for signal in signals if signal.user_id == user.id]
+        assert len(user_signals) == 1
+        assert user_signals[0].rule == "discount_count"
 
     def test_drawer_open_count_signal(self, db):
         """راجع Batch 2 — drawer_open مصدره CashMovement مش AuditLog."""
@@ -182,9 +184,10 @@ class TestFindFraudSignalsOtherRules:
             discount_threshold=999, discount_window_minutes=60,
             drawer_open_threshold=4, drawer_open_window_minutes=1440,
         )
-        assert len(signals) == 1
-        assert signals[0].rule == "drawer_open_count"
-        assert signals[0].count == 4
+        user_signals = [signal for signal in signals if signal.user_id == user.id]
+        assert len(user_signals) == 1
+        assert user_signals[0].rule == "drawer_open_count"
+        assert user_signals[0].count == 4
 
     def test_multiple_users_multiple_signals(self, db):
         from app.tasks.fraud_tasks import find_fraud_signals

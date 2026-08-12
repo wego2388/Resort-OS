@@ -35,6 +35,7 @@ from app.modules.dining.schemas import (
     FoodCostReportLine, FoodCostReportResponse, GrossMarginSummary, OrderCreate,
 )
 from app.resort_os.discount_engine import DiscountRule, OrderContext, OrderLineItem, calculate_discount
+from app.resort_os.dining_pricing import calculate_mixed_pricing, snapshot_price_component
 from app.resort_os.food_cost_engine import DEFAULT_FOOD_COST_THRESHOLD_PCT, compute_food_cost_result, exceeds_threshold
 from app.resort_os.timezone_utils import (
     local_date_to_utc_range, local_now, local_today,
@@ -191,6 +192,59 @@ def _service_charge_pct(db: Session, outlet: Optional[Outlet], order_type: str =
     from app.modules.core.services import get_effective_service_charge_percentage  # noqa: PLC0415
     branch_id = outlet.branch_id if outlet is not None else None
     return get_effective_service_charge_percentage(db, branch_id) / Decimal("100")
+
+
+def _order_price_components(order: DiningOrder) -> tuple[Decimal, Decimal, Decimal]:
+    """Aggregate active order snapshots by legacy-vs-final price contract."""
+    subtotal = Decimal("0")
+    exclusive_subtotal = Decimal("0")
+    listed_gross_total = Decimal("0")
+    for item in order.items:
+        if item.status in ("cancelled", "refunded"):
+            continue
+        quantity = Decimal(item.quantity)
+        base_net = item.unit_price * quantity
+        subtotal += base_net
+        if item.listed_unit_price is None:
+            exclusive_subtotal += base_net
+        else:
+            listed_gross_total += item.listed_unit_price * quantity
+        for extra in item.extras:
+            extra_net = extra.price_addition * quantity
+            subtotal += extra_net
+            if extra.listed_price_addition is None:
+                exclusive_subtotal += extra_net
+            else:
+                listed_gross_total += extra.listed_price_addition * quantity
+    return subtotal, exclusive_subtotal, listed_gross_total
+
+
+def _snapshot_selected_extras(
+    extras_data: list[dict],
+    *,
+    is_final_price: bool,
+    vat_pct: Decimal,
+    service_pct: Decimal,
+) -> tuple[list[dict], Decimal, Decimal, Decimal]:
+    """Convert selected modifier prices to accounting snapshots."""
+    net_total = Decimal("0")
+    exclusive_total = Decimal("0")
+    listed_total = Decimal("0")
+    for extra in extras_data:
+        net_price, listed_price = snapshot_price_component(
+            extra["price_addition"],
+            is_final_price=is_final_price,
+            vat_pct=vat_pct,
+            service_pct=service_pct,
+        )
+        extra["price_addition"] = net_price
+        extra["listed_price_addition"] = listed_price
+        net_total += net_price
+        if listed_price is None:
+            exclusive_total += net_price
+        else:
+            listed_total += listed_price
+    return extras_data, net_total, exclusive_total, listed_total
 
 
 # مركز التكلفة (finance.CostCenter.code — Batch 3) المقابل لـ outlet_type —
@@ -602,8 +656,14 @@ def create_order(
                 f"الطاولة {table.table_number} مشغولة بطلب نشط بالفعل ({conflicting.order_number})"
             )
 
+    from app.modules.core.services import get_effective_vat_percentage  # noqa: PLC0415
+
+    vat_pct = get_effective_vat_percentage(db, branch_id) / Decimal("100")
+    svc_pct = _service_charge_pct(db, outlet, data.order_type)
     items_data = []
     subtotal = Decimal("0")
+    exclusive_subtotal = Decimal("0")
+    listed_gross_total = Decimal("0")
 
     # ── batch-load كل الأصناف بـ query واحدة بدل N queries فردية ──────────
     item_ids = [req.item_id for req in data.items]
@@ -634,17 +694,36 @@ def create_order(
         _check_item_available_now(item)
 
         variant = _resolve_variant(db, item, item_req.variant_id)
-        base_price = variant.price if variant else item.price
+        displayed_base_price = variant.price if variant else item.price
+        base_price, listed_base_price = snapshot_price_component(
+            displayed_base_price,
+            is_final_price=item.price_includes_vat_service,
+            vat_pct=vat_pct,
+            service_pct=svc_pct,
+        )
         item_name = f"{item.name} - {variant.name}" if variant else item.name
         # name_ar snapshot (2026-08-03): بغض النظر عن لغة الضيف اللي طلب
         # بيها (ar/en/ru/it) — راجع docstring DiningOrderItem.name_ar.
         item_name_ar = f"{item.name_ar} - {variant.name_ar}" if variant and item.name_ar and variant.name_ar \
             else (item.name_ar if not variant else None)
 
-        extras_data, extra_price_per_unit = _resolve_extras(db, item, item_req.extra_ids, item_req.extra_texts)
+        extras_data, _ = _resolve_extras(db, item, item_req.extra_ids, item_req.extra_texts)
+        extras_data, extra_price_per_unit, exclusive_extra, listed_extra = _snapshot_selected_extras(
+            extras_data,
+            is_final_price=item.price_includes_vat_service,
+            vat_pct=vat_pct,
+            service_pct=svc_pct,
+        )
 
         line_total = (base_price + extra_price_per_unit) * item_req.quantity
         subtotal += line_total
+        quantity = Decimal(item_req.quantity)
+        if listed_base_price is None:
+            exclusive_subtotal += base_price * quantity
+        else:
+            listed_gross_total += listed_base_price * quantity
+        exclusive_subtotal += exclusive_extra * quantity
+        listed_gross_total += listed_extra * quantity
         items_data.append({
             "item_id":    item_req.item_id,
             "outlet_id":  item.outlet_id,
@@ -652,16 +731,19 @@ def create_order(
             "name":       item_name,
             "name_ar":    item_name_ar,
             "unit_price": base_price,
+            "listed_unit_price": listed_base_price,
             "quantity":   item_req.quantity,
             "notes":      item_req.notes,
             "extras":     extras_data,
         })
 
-    from app.modules.core.services import get_effective_vat_percentage  # noqa: PLC0415
-    vat_pct    = get_effective_vat_percentage(db, branch_id) / Decimal("100")
-    svc_pct    = _service_charge_pct(db, outlet, data.order_type)
-    vat_amount = (subtotal * vat_pct).quantize(Decimal("0.01"))
-    svc_charge = (subtotal * svc_pct).quantize(Decimal("0.01"))
+    vat_amount, svc_charge, gross_total = calculate_mixed_pricing(
+        subtotal=subtotal,
+        exclusive_subtotal=exclusive_subtotal,
+        listed_gross_total=listed_gross_total,
+        vat_pct=vat_pct,
+        service_pct=svc_pct,
+    )
 
     # رسم توصيل ثابت — بس delivery، ولقطة وقت الإنشاء (رسم ثابت مش نسبة،
     # فمش محتاج إعادة حساب لما الأصناف تتغيّر بعدين، راجع add_items_to_order
@@ -676,7 +758,7 @@ def create_order(
     # راجع _resolve_order_discount تحت لقرار "الأفضل يفوز، مش تراكم" لما
     # الاتنين يتقابلوا لاحقًا على نفس الطلب).
     discount_amount = _customer_group_discount_amount(db, data.customer_id, subtotal)
-    total = max(Decimal("0"), subtotal + vat_amount + svc_charge + delivery_fee - discount_amount)
+    total = max(Decimal("0"), gross_total + delivery_fee - discount_amount)
 
     order_number = crud.generate_order_number(db, branch_id)
 
@@ -839,7 +921,10 @@ def add_items_to_order(db: Session, order_id: int, items: list, added_by: Option
         raise ValueError(f"لا يمكن إضافة أصناف لطلب بحالة {order.status}")
 
     outlet = crud.get_outlet(db, order.outlet_id)
-    added_subtotal = Decimal("0")
+    from app.modules.core.services import get_effective_vat_percentage  # noqa: PLC0415
+
+    vat_pct = get_effective_vat_percentage(db, order.branch_id) / Decimal("100")
+    svc_pct = _service_charge_pct(db, outlet, order.order_type)
     new_items = []
 
     # ── batch-load الأصناف بـ query واحدة ────────────────────────────────
@@ -861,11 +946,23 @@ def add_items_to_order(db: Session, order_id: int, items: list, added_by: Option
         _check_item_available_now(item)
 
         variant = _resolve_variant(db, item, item_req.variant_id)
-        base_price = variant.price if variant else item.price
+        displayed_base_price = variant.price if variant else item.price
+        base_price, listed_base_price = snapshot_price_component(
+            displayed_base_price,
+            is_final_price=item.price_includes_vat_service,
+            vat_pct=vat_pct,
+            service_pct=svc_pct,
+        )
         item_name  = f"{item.name} - {variant.name}" if variant else item.name
         item_name_ar = f"{item.name_ar} - {variant.name_ar}" if variant and item.name_ar and variant.name_ar \
             else (item.name_ar if not variant else None)
-        extras_data, extra_price = _resolve_extras(db, item, item_req.extra_ids, item_req.extra_texts)
+        extras_data, _ = _resolve_extras(db, item, item_req.extra_ids, item_req.extra_texts)
+        extras_data, _, _, _ = _snapshot_selected_extras(
+            extras_data,
+            is_final_price=item.price_includes_vat_service,
+            vat_pct=vat_pct,
+            service_pct=svc_pct,
+        )
 
         new_item = DiningOrderItem(
             order_id  = order.id,
@@ -875,6 +972,7 @@ def add_items_to_order(db: Session, order_id: int, items: list, added_by: Option
             name      = item_name,
             name_ar   = item_name_ar,
             unit_price= base_price,
+            listed_unit_price=listed_base_price,
             quantity  = item_req.quantity,
             notes     = item_req.notes,
             status    = "pending",
@@ -891,37 +989,14 @@ def add_items_to_order(db: Session, order_id: int, items: list, added_by: Option
                 extra_name     = e["extra_name"],
                 extra_name_ar  = e.get("extra_name_ar"),
                 price_addition = e["price_addition"],
+                listed_price_addition = e.get("listed_price_addition"),
                 text_value     = e.get("text_value"),
             ))
 
-        added_subtotal += (base_price + extra_price) * item_req.quantity
-
-    from app.modules.core.services import get_effective_vat_percentage  # noqa: PLC0415
-    vat_pct   = get_effective_vat_percentage(db, order.branch_id) / Decimal("100")
-    svc_pct   = _service_charge_pct(db, outlet, order.order_type)
-    new_sub   = order.subtotal + added_subtotal
-    new_vat   = (new_sub * vat_pct).quantize(Decimal("0.01"))
-    new_svc   = (new_sub * svc_pct).quantize(Decimal("0.01"))
-
-    # ⚠️ باج حقيقي كان هنا (اتصلح أثناء ربط خصم مجموعة العميل): الخصم
-    # القديم (discount_amount) كان بيتطبّق زي ما هو على subtotal الجديد
-    # الأكبر من غير أي إعادة حساب — لو الطلب كان عليه خصم نسبة مئوية شرطية
-    # مطبّق قبل إضافة الأصناف دي، القيمة كانت بتفضل مجمّدة عند رقم قديم
-    # أصغر من المفروض (نفس فئة الباج اللي void_order_item كان بيتفاداه
-    # بـ _recompute_discount_for_rule بالفعل، بس add_items_to_order ماكانش
-    # بيعمل كده خالص). دلوقتي بيعيد حساب أفضل خصم (مجموعة أو قاعدة شرطية)
-    # زي void_order_item بالظبط.
-    discount_amount, applied_rule_id = _resolve_order_discount(db, order, new_sub)
-    # order.delivery_fee رسم ثابت اتحدد وقت الإنشاء — بيفضل زي ما هو هنا،
-    # مش بيتصفّر ولا بيتعاد حسابه (راجع تعليق DiningOrder.delivery_fee).
-    new_total = max(Decimal("0"), new_sub + new_vat + new_svc + order.delivery_fee - discount_amount)
-
-    order.subtotal                 = new_sub
-    order.vat_amount               = new_vat
-    order.service_charge           = new_svc
-    order.discount_amount          = discount_amount
-    order.applied_discount_rule_id = applied_rule_id
-    order.total                    = new_total
+    db.flush()
+    # يعيد بناء الخصم والضرائب من كل اللقطات، بما فيها الأصناف القديمة
+    # الصافية والأصناف ذات السعر النهائي على نفس الفاتورة.
+    _recompute_order_totals(db, order)
 
     # أصناف تضاف بعد إرسال الطلب لازم تظهر في KDS فورًا. ولو الطلب كان served،
     # وجود صنف pending جديد يعيده لحالة in_kitchen بدل ادعاء أن الكل اتخدم.
@@ -1918,37 +1993,7 @@ def void_order_item(
         data={"reason": reason},
     )
 
-    subtotal = Decimal("0")
-    for i in order.items:
-        if i.status == "cancelled":
-            continue
-        extras_total = sum((e.price_addition for e in i.extras), Decimal("0"))
-        subtotal += (i.unit_price + extras_total) * i.quantity
-
-    outlet = crud.get_outlet(db, order.outlet_id)
-    from app.modules.core.services import get_effective_vat_percentage  # noqa: PLC0415
-    vat_pct    = get_effective_vat_percentage(db, order.branch_id) / Decimal("100")
-    svc_pct    = _service_charge_pct(db, outlet, order.order_type)
-    vat_amount = (subtotal * vat_pct).quantize(Decimal("0.01"))
-    svc_charge = (subtotal * svc_pct).quantize(Decimal("0.01"))
-
-    # راجع _resolve_order_discount — بيعيد حساب أفضل خصم (مجموعة العميل
-    # الدائمة أو القاعدة الشرطية المطبّقة يدويًا لو موجودة) على subtotal
-    # الجديد بعد الإلغاء، مش بس القاعدة الشرطية زي قبل كده (باج مشابه
-    # لـ add_items_to_order كان ممكن يسيب خصم مجموعة العميل مجمّد على رقم
-    # قديم بعد إلغاء صنف).
-    discount_amount, applied_rule_id = _resolve_order_discount(db, order, subtotal)
-
-    # order.delivery_fee رسم ثابت اتحدد وقت الإنشاء — بيفضل زي ما هو (نفس
-    # منطق add_items_to_order بالظبط).
-    total = max(Decimal("0"), subtotal + vat_amount + svc_charge + order.delivery_fee - discount_amount)
-
-    order.subtotal                 = subtotal
-    order.vat_amount               = vat_amount
-    order.service_charge           = svc_charge
-    order.discount_amount          = discount_amount
-    order.applied_discount_rule_id = applied_rule_id
-    order.total                    = total
+    _recompute_order_totals(db, order)
 
     db.commit()
     db.refresh(order)
@@ -2046,18 +2091,19 @@ def transfer_order_waiter(
 
 def _recompute_order_totals(db: Session, order: DiningOrder) -> None:
     """Rebuild all monetary snapshots from the order lines currently in DB."""
-    active_items = crud.list_active_order_items(db, order.id)
-    subtotal = Decimal("0")
-    for item in active_items:
-        extras_total = sum((extra.price_addition for extra in item.extras), Decimal("0"))
-        subtotal += (item.unit_price + extras_total) * item.quantity
+    subtotal, exclusive_subtotal, listed_gross_total = _order_price_components(order)
 
     outlet = crud.get_outlet(db, order.outlet_id)
     from app.modules.core.services import get_effective_vat_percentage  # noqa: PLC0415
     vat_pct = get_effective_vat_percentage(db, order.branch_id) / Decimal("100")
     service_pct = _service_charge_pct(db, outlet, order.order_type)
-    vat_amount = (subtotal * vat_pct).quantize(Decimal("0.01"))
-    service_charge = (subtotal * service_pct).quantize(Decimal("0.01"))
+    vat_amount, service_charge, gross_total = calculate_mixed_pricing(
+        subtotal=subtotal,
+        exclusive_subtotal=exclusive_subtotal,
+        listed_gross_total=listed_gross_total,
+        vat_pct=vat_pct,
+        service_pct=service_pct,
+    )
     discount_amount, rule_id = _resolve_order_discount(db, order, subtotal)
 
     order.subtotal = subtotal
@@ -2067,7 +2113,7 @@ def _recompute_order_totals(db: Session, order: DiningOrder) -> None:
     order.applied_discount_rule_id = rule_id
     order.total = max(
         Decimal("0"),
-        subtotal + vat_amount + service_charge + order.delivery_fee - discount_amount,
+        gross_total + order.delivery_fee - discount_amount,
     )
 
 
@@ -2834,16 +2880,55 @@ def generate_receipt_pdf(db: Session, order_id: int) -> bytes:
     if order.table:
         fields.append(("الطاولة · Table", order.table.table_number))
 
-    items = [
-        (item.name, item.quantity, float(item.unit_price), float(item.unit_price) * item.quantity)
-        for item in order.items
+    active_items = [
+        item for item in order.items
+        if item.status not in ("cancelled", "refunded")
     ]
 
-    summary = [("المجموع قبل الضريبة · Subtotal", f"{order.subtotal:,.2f} EGP")]
+    def displayed_unit_price(item) -> Decimal:
+        base_price = item.listed_unit_price if item.listed_unit_price is not None else item.unit_price
+        extras_price = sum(
+            (
+                extra.listed_price_addition
+                if extra.listed_price_addition is not None
+                else extra.price_addition
+            )
+            for extra in item.extras
+        )
+        return base_price + extras_price
+
+    items = [
+        (
+            item.name,
+            item.quantity,
+            float(displayed_unit_price(item)),
+            float(displayed_unit_price(item) * item.quantity),
+        )
+        for item in active_items
+    ]
+
+    all_prices_are_final = bool(active_items) and all(
+        item.listed_unit_price is not None
+        and all(extra.listed_price_addition is not None for extra in item.extras)
+        for item in active_items
+    )
+    displayed_subtotal = (
+        sum((displayed_unit_price(item) * item.quantity for item in active_items), Decimal("0"))
+        if all_prices_are_final
+        else order.subtotal
+    )
+    subtotal_label = (
+        "إجمالي أسعار المنيو · Menu prices total"
+        if all_prices_are_final
+        else "المجموع قبل الضريبة · Subtotal"
+    )
+    summary = [(subtotal_label, f"{displayed_subtotal:,.2f} EGP")]
     if order.vat_amount:
-        summary.append(("ضريبة القيمة المضافة · VAT", f"{order.vat_amount:,.2f} EGP"))
+        vat_label = "ضريبة القيمة المضافة (شاملة) · VAT (included)" if all_prices_are_final else "ضريبة القيمة المضافة · VAT"
+        summary.append((vat_label, f"{order.vat_amount:,.2f} EGP"))
     if order.service_charge:
-        summary.append(("رسوم الخدمة · Service", f"{order.service_charge:,.2f} EGP"))
+        service_label = "رسوم الخدمة (شاملة) · Service (included)" if all_prices_are_final else "رسوم الخدمة · Service"
+        summary.append((service_label, f"{order.service_charge:,.2f} EGP"))
     if order.discount_amount and order.discount_amount > 0:
         summary.append(("الخصم · Discount", f"-{order.discount_amount:,.2f} EGP"))
 

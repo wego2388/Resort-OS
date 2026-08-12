@@ -171,6 +171,13 @@ class DiningItem(Base, TimestampMixin):
     # ترتيب العرض داخل الفئة (رقم الصنف في المنيو المطبوع، 1-56 مثلاً) —
     # مفيش أي ترتيب صريح كان موجود قبل كده، الأصناف كانت بترجع بترتيب الـID.
     price:               Mapped[Decimal]     = mapped_column(Numeric(10, 2))
+    # قرار المالك 2026-08-12: كل سعر منشور في منيو الخيمة نهائي وشامل
+    # VAT/service. يظل price هو السعر الظاهر، والخدمة تحوله لصافي وقت إنشاء
+    # الطلب وتحفظ اللقطتين على DiningOrderItem؛ كده الموقع والـPOS يعرضوا
+    # الرقم المعتمد من غير ما المحاسبة تفقد فصل الضريبة/الخدمة. False موجود
+    # فقط للتوافق مع لقطات/تكاملات عقد التسعير القديم. الـAPI والـseed
+    # المعتمدان يمرران True صراحةً، والـmigration يضع True لكل صف إنتاجي.
+    price_includes_vat_service: Mapped[bool] = mapped_column(Boolean, default=False)
     cost:                Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
     is_available:        Mapped[bool]        = mapped_column(Boolean, default=True)
     preparation_minutes: Mapped[int]         = mapped_column(Integer, default=10)
@@ -570,6 +577,9 @@ class DiningOrderItem(Base, TimestampMixin):
     # حوّل شاشته عربي، اسم الصنف على الطلب المُقدَّم فعلاً كان بيفضل
     # إنجليزي (عكس باقي الشاشة اللي بتحترم اللغة المختارة).
     unit_price:   Mapped[Decimal]    = mapped_column(Numeric(10, 2))       # snapshot
+    # السعر النهائي الظاهر وقت البيع، لو الصنف منشور بسعر شامل. unit_price
+    # يظل صافيًا للتقارير والقيود؛ NULL يعني عقد التسعير القديم (السعر صافي).
+    listed_unit_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
     quantity:     Mapped[int]        = mapped_column(Integer, default=1)
     notes:        Mapped[str | None] = mapped_column(String(200), nullable=True)
     status:       Mapped[str]        = mapped_column(String(20), default="pending")  # pending|in_kitchen|ready|served|cancelled|refunded
@@ -601,6 +611,8 @@ class DiningOrderItemExtra(Base, TimestampMixin):
     extra_name:     Mapped[str]      = mapped_column(String(100))
     extra_name_ar:  Mapped[str | None] = mapped_column(String(100), nullable=True)
     price_addition: Mapped[Decimal]  = mapped_column(Numeric(10, 2), default=Decimal("0"))
+    # نفس لقطة listed_unit_price لكن للإضافة المختارة. NULL = الإضافة صافية.
+    listed_price_addition: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
     text_value:     Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     order_item: Mapped["DiningOrderItem"] = relationship("DiningOrderItem", back_populates="extras")

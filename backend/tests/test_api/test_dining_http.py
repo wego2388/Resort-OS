@@ -164,6 +164,7 @@ class TestDiningMenuHTTP:
         )
         assert create_resp.status_code == 201, create_resp.text
         item = create_resp.json()
+        assert item["price_includes_vat_service"] is True
         assert item["available_from_time"] == "07:00:00"
         assert item["available_until_time"] == "11:00:00"
 

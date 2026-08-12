@@ -382,9 +382,26 @@ function onPaymentCompleted(paidOrder: DiningOrderDetail) {
 
 function lineTotal(item: OrderItem): number {
   if (item.status === 'cancelled' || item.status === 'refunded') return 0
-  const extras = item.extras.reduce((sum, extra) => sum + Number(extra.price_addition), 0)
-  return (Number(item.unit_price) + extras) * item.quantity
+  const extras = item.extras.reduce(
+    (sum, extra) => sum + Number(extra.listed_price_addition ?? extra.price_addition),
+    0,
+  )
+  return (Number(item.listed_unit_price ?? item.unit_price) + extras) * item.quantity
 }
+
+const usesFinalMenuPrices = computed(() => {
+  if (!order.value) return false
+  const activeItems = order.value.items.filter(item => !['cancelled', 'refunded'].includes(item.status))
+  return activeItems.length > 0 && activeItems.every(item => (
+    item.listed_unit_price != null &&
+    item.extras.every(extra => extra.listed_price_addition != null)
+  ))
+})
+
+const displayedSubtotal = computed(() => {
+  if (!order.value || !usesFinalMenuPrices.value) return Number(order.value?.subtotal ?? 0)
+  return order.value.items.reduce((sum, item) => sum + lineTotal(item), 0)
+})
 
 function paymentMethodLabel(method: string): string {
   if (method === 'split') return t('backoffice.pos.payment.split')
@@ -559,13 +576,13 @@ function paymentMethodLabel(method: string): string {
 
       <section class="rounded-2xl border border-stone-200 dark:border-border p-4 space-y-2 text-sm">
         <div class="flex justify-between gap-3 text-gray-500 dark:text-gray-400">
-          <span>{{ t('backoffice.pos.orderDetail.subtotal') }}</span><span class="tabular-nums">{{ formatMoney(order.subtotal, currency) }}</span>
+          <span>{{ t('backoffice.pos.orderDetail.subtotal') }}</span><span class="tabular-nums">{{ formatMoney(displayedSubtotal, currency) }}</span>
         </div>
         <div class="flex justify-between gap-3 text-gray-500 dark:text-gray-400">
-          <span>{{ t('backoffice.pos.orderDetail.vat') }}</span><span class="tabular-nums">{{ formatMoney(order.vat_amount, currency) }}</span>
+          <span>{{ t('backoffice.pos.orderDetail.vat') }}<template v-if="usesFinalMenuPrices"> ({{ t('backoffice.pos.orderDetail.included') }})</template></span><span class="tabular-nums">{{ formatMoney(order.vat_amount, currency) }}</span>
         </div>
         <div class="flex justify-between gap-3 text-gray-500 dark:text-gray-400">
-          <span>{{ t('backoffice.pos.orderDetail.service') }}</span><span class="tabular-nums">{{ formatMoney(order.service_charge, currency) }}</span>
+          <span>{{ t('backoffice.pos.orderDetail.service') }}<template v-if="usesFinalMenuPrices"> ({{ t('backoffice.pos.orderDetail.included') }})</template></span><span class="tabular-nums">{{ formatMoney(order.service_charge, currency) }}</span>
         </div>
         <div v-if="Number(order.delivery_fee) > 0" class="flex justify-between gap-3 text-gray-500 dark:text-gray-400">
           <span>{{ t('backoffice.pos.orderDetail.deliveryFee') }}</span><span class="tabular-nums">{{ formatMoney(order.delivery_fee, currency) }}</span>

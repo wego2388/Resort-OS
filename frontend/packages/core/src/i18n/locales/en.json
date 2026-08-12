@@ -4268,6 +4268,7 @@
         "subtotal": "Subtotal",
         "vat": "VAT",
         "service": "Service",
+        "included": "included",
         "deliveryFee": "Delivery fee",
         "discount": "Discount",
         "refunds": "Total refunds",

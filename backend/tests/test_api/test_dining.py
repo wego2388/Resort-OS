@@ -46,7 +46,8 @@ def make_item(db, branch, outlet, available=True, station="hot", price=Decimal("
     from app.modules.dining.models import DiningItem
     item = DiningItem(
         branch_id=branch.id, outlet_id=outlet.id, name="شاورما دجاج",
-        price=price, is_available=available, station=station,
+        price=price, price_includes_vat_service=False,
+        is_available=available, station=station,
     )
     db.add(item)
     db.commit()
@@ -225,6 +226,140 @@ class TestOrder:
         item = make_item(db, branch, outlet, price=Decimal("55.00"))
         order = make_order(db, branch, outlet, item, quantity=2)
         assert order.subtotal == Decimal("110.00")
+
+    def test_final_menu_price_is_not_taxed_twice_for_multiple_units(self, db):
+        """الـ50 جنيه المعروضة تفضل 50 نهائي حتى مع كمية أكبر من واحد."""
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch, outlet_type="cafe")
+        item = make_item(db, branch, outlet, price=Decimal("50.00"))
+        item.price_includes_vat_service = True
+        db.commit()
+
+        with (
+            patch("app.modules.core.services.get_effective_vat_percentage", return_value=Decimal("14")),
+            patch("app.modules.dining.services._service_charge_pct", return_value=Decimal("0.12")),
+        ):
+            order = make_order(db, branch, outlet, item, quantity=2)
+
+        assert order.items[0].listed_unit_price == Decimal("50.00")
+        assert order.items[0].unit_price == Decimal("39.68")
+        assert order.subtotal == Decimal("79.36")
+        assert order.vat_amount == Decimal("11.11")
+        # فرق تقريب السنت يروح لرسم الخدمة، والإجمالي يظل 100 بالضبط.
+        assert order.service_charge == Decimal("9.53")
+        assert order.total == Decimal("100.00")
+
+    def test_final_variant_and_modifiers_keep_exact_listed_total(self, db):
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch, outlet_type="cafe")
+        item = make_item(db, branch, outlet, price=Decimal("50.00"))
+        item.name = "Ice Cream Scoop"
+        item.price_includes_vat_service = True
+        db.commit()
+        variant = services.add_variant(db, item.id, DiningItemVariantCreate(
+            name="Vanilla", name_ar="فانيليا", price=Decimal("50.00"),
+        ))
+        sauce_group = crud.create_extra_group(db, item.id, DiningItemExtraGroupCreate(
+            name="Sauce", min_select=0, max_select=3,
+            options=[DiningItemExtraCreate(name="Chocolate", price_addition=Decimal("15.00"))],
+        ))
+        toppings_group = crud.create_extra_group(db, item.id, DiningItemExtraGroupCreate(
+            name="Toppings", min_select=0, max_select=3,
+            options=[DiningItemExtraCreate(name="Cookies", price_addition=Decimal("30.00"))],
+        ))
+        db.commit()
+        data = OrderCreate(
+            outlet_id=outlet.id,
+            order_type="takeaway",
+            items=[OrderItemCreate(
+                item_id=item.id,
+                variant_id=variant.id,
+                quantity=1,
+                extra_ids=[sauce_group.options[0].id, toppings_group.options[0].id],
+            )],
+        )
+
+        with (
+            patch("app.modules.core.services.get_effective_vat_percentage", return_value=Decimal("14")),
+            patch("app.modules.dining.services._service_charge_pct", return_value=Decimal("0.12")),
+        ):
+            order = services.create_order(db, branch.id, data, waiter_id=1)
+
+        line = order.items[0]
+        assert line.listed_unit_price == Decimal("50.00")
+        assert {extra.listed_price_addition for extra in line.extras} == {
+            Decimal("15.00"), Decimal("30.00"),
+        }
+        assert order.total == Decimal("95.00")
+
+    def test_final_price_stays_exact_after_add_and_void(self, db):
+        from app.core.kernel.models.user import User
+
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch, outlet_type="cafe")
+        item = make_item(db, branch, outlet, price=Decimal("50.00"))
+        item.price_includes_vat_service = True
+        actor = User(
+            email=f"final-price-{uuid.uuid4().hex}@test.local",
+            password_hash="not-used",
+            full_name="Final price test actor",
+            role="super_admin",
+            is_active=True,
+        )
+        db.add(actor)
+        db.commit()
+
+        with (
+            patch("app.modules.core.services.get_effective_vat_percentage", return_value=Decimal("14")),
+            patch("app.modules.dining.services._service_charge_pct", return_value=Decimal("0.12")),
+        ):
+            order = make_order(db, branch, outlet, item, quantity=1)
+            updated = services.add_items_to_order(
+                db,
+                order.id,
+                [OrderItemCreate(item_id=item.id, quantity=1)],
+                added_by=actor.id,
+            )
+            assert updated.total == Decimal("100.00")
+            added_line_id = max(line.id for line in updated.items)
+            updated = services.void_order_item(
+                db,
+                order.id,
+                added_line_id,
+                "اختبار إلغاء",
+                voided_by=actor.id,
+                acting_user_level=100,
+            )
+
+        assert updated.total == Decimal("50.00")
+        assert updated.items[0].listed_unit_price == Decimal("50.00")
+
+    def test_final_and_legacy_price_contracts_can_share_one_order(self, db):
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch, outlet_type="cafe")
+        legacy_item = make_item(db, branch, outlet, price=Decimal("100.00"))
+        final_item = make_item(db, branch, outlet, price=Decimal("50.00"))
+        final_item.price_includes_vat_service = True
+        db.commit()
+        data = OrderCreate(
+            outlet_id=outlet.id,
+            order_type="takeaway",
+            items=[
+                OrderItemCreate(item_id=legacy_item.id, quantity=1),
+                OrderItemCreate(item_id=final_item.id, quantity=1),
+            ],
+        )
+
+        with (
+            patch("app.modules.core.services.get_effective_vat_percentage", return_value=Decimal("14")),
+            patch("app.modules.dining.services._service_charge_pct", return_value=Decimal("0.12")),
+        ):
+            order = services.create_order(db, branch.id, data, waiter_id=1)
+
+        assert order.subtotal == Decimal("139.68")
+        assert order.vat_amount == Decimal("19.56")
+        assert order.service_charge == Decimal("16.76")
+        assert order.total == Decimal("176.00")
 
     def test_hold_order(self, db):
         branch = make_branch(db)
@@ -1874,4 +2009,3 @@ class TestCrossOutletRevenueAllocation:
         assert len(entries) == 1
         credit_codes = {line.account.code for line in entries[0].lines if line.credit > 0}
         assert "4200" in credit_codes
-

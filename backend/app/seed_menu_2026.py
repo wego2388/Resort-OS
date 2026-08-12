@@ -97,6 +97,7 @@ def _upsert_item(db: Session, *, branch_id: int, outlet_id: int,
     ).first()
     if item:
         item.price        = price
+        item.price_includes_vat_service = True
         item.name_ar      = name_ar
         item.category_id  = category_id
         item.station      = station
@@ -110,7 +111,8 @@ def _upsert_item(db: Session, *, branch_id: int, outlet_id: int,
         item = DiningItem(
             branch_id=branch_id, outlet_id=outlet_id,
             category_id=category_id, name=name_en, name_ar=name_ar,
-            price=price, station=station, sort_order=sort_order,
+            price=price, price_includes_vat_service=True,
+            station=station, sort_order=sort_order,
             is_available=True,
             description=description, description_ar=description_ar,
         )
