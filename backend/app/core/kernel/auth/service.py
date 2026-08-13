@@ -1698,6 +1698,12 @@ class AuthService(BaseService):
         expires_at = datetime.now(timezone.utc) + timedelta(
             minutes=self.settings.TWO_FACTOR_ENROLLMENT_TOKEN_TTL_MINUTES,
         )
+        # 2FA bootstrap is mandatory only for privileged roles (super_admin,
+        # accountant, owner). Regular staff (cashier, waiter, etc.) can use
+        # password-only login when LOGIN_2FA_ENFORCED=False.
+        from app.core.deps import MANDATORY_2FA_ROLES  # noqa: PLC0415
+        requires_2fa_bootstrap = role in MANDATORY_2FA_ROLES
+        
         user = self.repo.model(
             email=normalized_email,
             password_hash=get_password_hash(temporary_password),
@@ -1708,9 +1714,9 @@ class AuthService(BaseService):
             preferred_language=preferred_language,
             must_change_password=True,
             two_factor_enabled=False,
-            two_factor_bootstrap_required=True,
-            two_factor_enrollment_token_hash=self._hash_token(enrollment_token),
-            two_factor_enrollment_expires_at=expires_at,
+            two_factor_bootstrap_required=requires_2fa_bootstrap,
+            two_factor_enrollment_token_hash=self._hash_token(enrollment_token) if requires_2fa_bootstrap else None,
+            two_factor_enrollment_expires_at=expires_at if requires_2fa_bootstrap else None,
         )
         self.db.add(user)
         self.db.flush()
@@ -1758,8 +1764,9 @@ class AuthService(BaseService):
                 "reason": normalized_reason,
                 "step_up_public_reference": step_up_public_reference,
                 "assurance_method": assurance_method,
-                "enrollment_expires_at": expires_at.isoformat(),
+                "enrollment_expires_at": expires_at.isoformat() if requires_2fa_bootstrap else None,
                 "requires_password_change": True,
+                "requires_2fa_bootstrap": requires_2fa_bootstrap,
             }, ensure_ascii=False, sort_keys=True),
         ))
         try:
@@ -1771,8 +1778,8 @@ class AuthService(BaseService):
         return {
             "user": user,
             "temporary_password": temporary_password,
-            "enrollment_token": enrollment_token,
-            "enrollment_expires_at": expires_at,
+            "enrollment_token": enrollment_token if requires_2fa_bootstrap else None,
+            "enrollment_expires_at": expires_at if requires_2fa_bootstrap else None,
         }
 
     # ── Token blacklist / revocation ────────────────────────────────────

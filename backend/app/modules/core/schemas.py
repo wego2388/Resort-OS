@@ -319,8 +319,8 @@ class StaffUserCreate(BaseModel):
 class StaffUserProvisioned(BaseModel):
     user: UserRead
     temporary_password: str
-    enrollment_token: str
-    enrollment_expires_at: datetime
+    enrollment_token: str | None  # None للموظفين العاديين (مش محتاجين 2FA)
+    enrollment_expires_at: datetime | None
 
 
 class UserRoleUpdate(BaseModel):

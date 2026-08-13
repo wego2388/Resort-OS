@@ -301,13 +301,15 @@ async function onStepUpConfirmed({ stepUpToken, reason }: { stepUpToken: string;
 
 async function copyBootstrap() {
   if (!bootstrap.value) return
-  const msg = [
+  const lines = [
     `${t('backoffice.accounts.email')}: ${bootstrap.value.user.email}`,
     `${t('backoffice.accounts.temporaryPassword')}: ${bootstrap.value.temporary_password}`,
-    `${t('backoffice.accounts.enrollmentToken')}: ${bootstrap.value.enrollment_token}`,
-    `${t('backoffice.accounts.loginUrl')}: ${window.location.origin}/login`,
-  ].join('\n')
-  await navigator.clipboard.writeText(msg)
+  ]
+  if (bootstrap.value.enrollment_token) {
+    lines.push(`${t('backoffice.accounts.enrollmentToken')}: ${bootstrap.value.enrollment_token}`)
+  }
+  lines.push(`${t('backoffice.accounts.loginUrl')}: ${window.location.origin}/login`)
+  await navigator.clipboard.writeText(lines.join('\n'))
   toast.success(t('backoffice.accounts.copied'))
 }
 
@@ -912,7 +914,7 @@ onMounted(() => {
           <dl class="space-y-3 text-sm">
             <div><dt class="text-gray-500">{{ t('backoffice.accounts.email') }}</dt><dd class="font-mono break-all">{{ bootstrap.user.email }}</dd></div>
             <div><dt class="text-gray-500">{{ t('backoffice.accounts.temporaryPassword') }}</dt><dd class="rounded bg-stone-100 p-2 font-mono break-all dark:bg-surface-2">{{ bootstrap.temporary_password }}</dd></div>
-            <div><dt class="text-gray-500">{{ t('backoffice.accounts.enrollmentToken') }}</dt><dd class="rounded bg-stone-100 p-2 font-mono break-all dark:bg-surface-2">{{ bootstrap.enrollment_token }}</dd></div>
+            <div v-if="bootstrap.enrollment_token"><dt class="text-gray-500">{{ t('backoffice.accounts.enrollmentToken') }}</dt><dd class="rounded bg-stone-100 p-2 font-mono break-all dark:bg-surface-2">{{ bootstrap.enrollment_token }}</dd></div>
           </dl>
           <p class="text-xs text-gray-500">{{ t('backoffice.accounts.onboardingHint') }}</p>
         </div>

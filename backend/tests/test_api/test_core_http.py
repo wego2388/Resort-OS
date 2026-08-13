@@ -129,7 +129,9 @@ class TestStaffProvisioningEndpoints:
         assert payload["user"]["role"] == "cashier"
         assert payload["user"]["must_change_password"] is True
         assert len(payload["temporary_password"]) >= 20
-        assert len(payload["enrollment_token"]) >= 20
+        # cashier ليس من MANDATORY_2FA_ROLES، فـ enrollment_token يجب أن يكون None
+        assert payload["enrollment_token"] is None
+        assert payload["enrollment_expires_at"] is None
 
         db = TestingSessionLocal()
         try:
@@ -149,17 +151,17 @@ class TestStaffProvisioningEndpoints:
                 AuditLog.entity_id == created.id,
             ).one()
             assert payload["temporary_password"] not in (audit.new_data or "")
-            assert payload["enrollment_token"] not in (audit.new_data or "")
+            # enrollment_token is None للكاشير، فمفيش داعي نتحقق منه في audit
             assert audit.branch_id == branch.id
         finally:
             db.close()
 
+        # الكاشير (دور عادي) ما يحتاجش enrollment_token للدخول — كلمة المرور المؤقتة تكفي
         login = client.post(
             "/api/v1/auth/login",
             data={
                 "username": email,
                 "password": payload["temporary_password"],
-                "enrollment_token": payload["enrollment_token"],
             },
         )
         assert login.status_code == 200, login.text
@@ -709,13 +711,68 @@ class TestCreateUserEndpoint:
         assert body["user"]["role"] == "cashier"
         assert body["user"]["must_change_password"] is True
         assert len(body["temporary_password"]) >= 20
-        assert len(body["enrollment_token"]) >= 20
+        # cashier ليس من MANDATORY_2FA_ROLES، فـ enrollment_token يجب أن يكون None
+        assert body["enrollment_token"] is None
         assert "password_hash" not in body["user"]
         membership = db.query(UserBranchMembership).filter(
             UserBranchMembership.user_id == body["user"]["id"],
             UserBranchMembership.branch_id == branch.id,
         ).one()
         assert membership.is_default is True
+
+    def test_privileged_roles_still_require_2fa_enrollment(self, client: TestClient, db):
+        """الأدوار المميزة (accountant) لازم تفعّل 2FA — enrollment_token مش None."""
+        from tests.conftest import TestingSessionLocal, _fresh_super_admin, _issue_step_up
+        from app.modules.core.models import Branch
+        from app.modules.hr.models import Employee
+        from datetime import date
+        from decimal import Decimal
+
+        branch = Branch(
+            name="Accountant Branch",
+            code=f"AB-{uuid.uuid4().hex[:8].upper()}",
+            is_active=True,
+        )
+        db.add(branch)
+        db.commit()
+        employee = Employee(
+            branch_id=branch.id,
+            employee_code=f"ACC-{uuid.uuid4().hex[:8].upper()}",
+            full_name="Senior Accountant",
+            position="Accountant",
+            basic_salary=Decimal("8000"),
+            hire_date=date.today(),
+            phone="+201111111111",
+        )
+        db.add(employee)
+        db.commit()
+
+        _sa_id, sa_headers, sa_secret = _fresh_super_admin(
+            "accountant-provision", branch_id=branch.id,
+        )
+        email = f"accountant-{uuid.uuid4().hex}@test.local"
+        body = {
+            "email": email,
+            "full_name": "Senior Accountant",
+            "phone": "+201111111111",
+            "employee_id": employee.id,
+            "role": "accountant",
+            "preferred_language": "ar",
+            "reason": "تعيين محاسب كبير",
+        }
+        token = _issue_step_up(
+            client, sa_headers, purpose="user_provision", intent=body, totp_secret=sa_secret,
+        )
+        response = client.post(
+            "/api/v1/users", json=body, headers={**sa_headers, "X-Step-Up-Token": token},
+        )
+        assert response.status_code == 201, response.text
+        payload = response.json()
+        assert payload["user"]["role"] == "accountant"
+        # accountant من MANDATORY_2FA_ROLES، فـ enrollment_token لازم يكون موجود
+        assert payload["enrollment_token"] is not None
+        assert len(payload["enrollment_token"]) >= 20
+        assert payload["enrollment_expires_at"] is not None
 
     def test_rejects_duplicate_email(self, client: TestClient, super_admin_headers):
         """الـ provision endpoint يرفض إيميل مكرر بـ 409.
