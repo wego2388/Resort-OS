@@ -158,7 +158,7 @@ class TestUtilityReadingFlow:
         periods = [row["period"] for row in body]
         assert periods == ["2025-12", "2026-01", "2026-02", "2026-03"]
         feb = next(row for row in body if row["period"] == "2026-02")
-        assert feb["by_type"]["electricity"] == 150.0
+        assert Decimal(str(feb["by_type"]["electricity"])) == Decimal("150.00")
 
     def test_energy_trend_export_returns_valid_excel(self, client: TestClient, db, manager_headers):
         branch = make_branch_committed(db)

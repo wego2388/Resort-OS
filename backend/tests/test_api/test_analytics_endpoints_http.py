@@ -34,7 +34,7 @@ class TestRevenueSummary:
         body = resp.json()
         assert body["branch_id"] == branch.id
         assert Decimal(str(body["total"])) == Decimal("0")
-        assert body["restaurant"]["total"] == 0
+        assert Decimal(str(body["restaurant"]["total"])) == Decimal("0")
         assert body["restaurant"]["orders"] == 0
 
     def test_paid_restaurant_order_counted_in_total(self, client: TestClient, db, manager_headers):
@@ -266,7 +266,7 @@ class TestDailyStatsEndpoint:
         body = resp.json()
         assert body["occupancy_pct"] == 75.5
         assert body["beach_visitors"] == 42
-        assert body["total_revenue"] == 19200.00
+        assert Decimal(str(body["total_revenue"])) == Decimal("19200.00")
         assert body["avg_check_per_cover"] == 75.0  # 6000.00 / 80 covers
 
     def test_avg_check_per_cover_is_none_when_no_covers(self, client: TestClient, db, manager_headers):
@@ -392,5 +392,5 @@ class TestFullDashboard:
         assert body["as_of"] == str(date.today())
         assert body["hr"]["active_employees"] == 1
         assert body["revenue_30d"] is not None
-        assert body["revenue_30d"]["total"] == 0.0
-        assert body["revenue_30d"]["beach"] == 0.0  # ثبت إن قسم الشاطئ مش None (راجع باج visit_date)
+        assert Decimal(str(body["revenue_30d"]["total"])) == Decimal("0")
+        assert Decimal(str(body["revenue_30d"]["beach"])) == Decimal("0")  # ثبت إن قسم الشاطئ مش None (راجع باج visit_date)

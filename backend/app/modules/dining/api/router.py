@@ -8,49 +8,95 @@
 """
 from __future__ import annotations
 
+import secrets
 from datetime import date, timedelta
 from decimal import Decimal
-import secrets
-from typing import Optional
 
 from fastapi import (
-    APIRouter, Depends, Header, HTTPException, Query, Request,
-    WebSocket, WebSocketDisconnect, status, UploadFile,
+    APIRouter,
+    Depends,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
 )
 from fastapi.responses import Response
 
 from app.core.config import settings
 from app.core.deps import (
-    DbDep, get_cashier_user, get_current_active_user, get_websocket_user,
-    get_manager_user, get_waiter_user, require_permission, user_level,
-)
-from app.modules.dining import crud, payment_policy, services
-from app.modules.dining.models import DiningKitchenTicket, DiningOrder, VenueTable
-from app.modules.dining.schemas import (
-    ApplyDiscountRequest,
-    DiningCategoryCreate, DiningCategoryRead, DiningCategoryUpdate,
-    DiningItemCreate, DiningItemExtraGroupCreate, DiningItemExtraGroupRead,
-    DiningItemRead, DiningItemUpdate,
-    DiningItemRecipeLineCreate, DiningItemRecipeLineRead, DiningItemRecipeLineUpdate,
-    DiningItemVariantCreate, DiningItemVariantRead, DiningItemVariantRecipeLineCreate,
-    DiningItemVariantRecipeLineRead, DiningItemVariantRecipeLineUpdate, DiningItemVariantUpdate,
-    DiningTableRead, DiningTableCreate, DiningTableUpdate, DiningTableGridUpdate,
-    FoodCostReportResponse,
-    KDSScreenCreate, KDSScreenRead,
-    KitchenTicketRead, TicketStatusUpdate,
-    OrderCreate, OrderItemCreate, OrderItemRead, OrderItemStatusUpdate, OrderItemVoidRequest,
-    OrderRead, OrderStatusUpdate, OrderTransferRequest, SplitBillRequest, WaiterTransferRequest,
-    OrderSyncRequest, OrderSyncResponse,
-    OutletCreate, OutletRead, OutletUpdate,
-    GuestOrderCreate, GuestOrderRead, GuestServiceMenuResponse,
-    PublicMenuCategoryRead, PublicMenuItemRead, PublicMenuResponse,
-    PublicOutletRead,
-    OutletSalesReport,
-    HotelConsumptionReport, HotelConsumptionRow, HotelOutletBreakdown,
+    DbDep,
+    get_cashier_user,
+    get_current_active_user,
+    get_manager_user,
+    get_waiter_user,
+    get_websocket_user,
+    require_permission,
+    user_level,
 )
 from app.modules.core import services as core_services
 from app.modules.core.schemas import PaginatedResponse
 from app.modules.credit import services as credit_services
+from app.modules.dining import crud, payment_policy, services
+from app.modules.dining.models import DiningKitchenTicket, DiningOrder, VenueTable
+from app.modules.dining.schemas import (
+    ApplyDiscountRequest,
+    DiningCategoryCreate,
+    DiningCategoryRead,
+    DiningCategoryUpdate,
+    DiningItemCreate,
+    DiningItemExtraGroupCreate,
+    DiningItemExtraGroupRead,
+    DiningItemRead,
+    DiningItemRecipeLineCreate,
+    DiningItemRecipeLineRead,
+    DiningItemRecipeLineUpdate,
+    DiningItemUpdate,
+    DiningItemVariantCreate,
+    DiningItemVariantRead,
+    DiningItemVariantRecipeLineCreate,
+    DiningItemVariantRecipeLineRead,
+    DiningItemVariantRecipeLineUpdate,
+    DiningItemVariantUpdate,
+    DiningTableCreate,
+    DiningTableGridUpdate,
+    DiningTableRead,
+    DiningTableUpdate,
+    FoodCostReportResponse,
+    GuestOrderCreate,
+    GuestOrderRead,
+    GuestServiceMenuResponse,
+    HotelConsumptionReport,
+    HotelConsumptionRow,
+    HotelOutletBreakdown,
+    KDSScreenCreate,
+    KDSScreenRead,
+    KitchenTicketRead,
+    OrderCreate,
+    OrderItemCreate,
+    OrderItemRead,
+    OrderItemStatusUpdate,
+    OrderItemVoidRequest,
+    OrderRead,
+    OrderStatusUpdate,
+    OrderSyncRequest,
+    OrderSyncResponse,
+    OrderTransferRequest,
+    OutletCreate,
+    OutletRead,
+    OutletSalesReport,
+    OutletUpdate,
+    PublicMenuCategoryRead,
+    PublicMenuItemRead,
+    PublicMenuResponse,
+    PublicOutletRead,
+    SplitBillRequest,
+    TicketStatusUpdate,
+    WaiterTransferRequest,
+)
 from app.modules.finance import services as finance_services
 from app.modules.inventory import services as inventory_services
 from app.resort_os.food_cost_engine import DEFAULT_FOOD_COST_THRESHOLD_PCT
@@ -77,12 +123,12 @@ def _assert_order_branch(db, user, order_id: int, action_desc: str):
     return order
 
 
-def _enrich_order(db, order: "DiningOrder") -> "OrderRead":
+def _enrich_order(db, order: DiningOrder) -> OrderRead:
     """يحسب hotel_name وbeach_location_label لطلب واحد ثم يبني OrderRead.
 
     للقوائم استخدم _enrich_order_list بدلاً منها لتجنب N+1 queries.
     """
-    from app.modules.beach.models import B2BContract, BeachLocation  # noqa: PLC0415
+    from app.modules.beach.models import B2BContract, BeachLocation
 
     LOCATION_TYPE_ICONS = {
         "umbrella": "⛱️",
@@ -91,8 +137,8 @@ def _enrich_order(db, order: "DiningOrder") -> "OrderRead":
         "cabana": "🏖️",
     }
 
-    hotel_name: Optional[str] = None
-    beach_location_label: Optional[str] = None
+    hotel_name: str | None = None
+    beach_location_label: str | None = None
 
     if order.b2b_contract_id:
         contract = db.query(B2BContract).filter(B2BContract.id == order.b2b_contract_id).first()
@@ -111,13 +157,13 @@ def _enrich_order(db, order: "DiningOrder") -> "OrderRead":
     return validated
 
 
-def _enrich_order_list(db, orders: list["DiningOrder"]) -> list["OrderRead"]:
+def _enrich_order_list(db, orders: list[DiningOrder]) -> list[OrderRead]:
     """يحسب hotel_name وbeach_location_label لقائمة طلبات بـ 2 queries فقط.
 
     بدلاً من N+1 queries (query لكل طلب)، بيجمع كل الـ IDs المطلوبة
     ويعمل query واحدة لكل نوع (B2BContract وBeachLocation)، ثم يوزّعها.
     """
-    from app.modules.beach.models import B2BContract, BeachLocation  # noqa: PLC0415
+    from app.modules.beach.models import B2BContract, BeachLocation
 
     LOCATION_TYPE_ICONS = {
         "umbrella": "⛱️",
@@ -292,7 +338,7 @@ def delete_category(category_id: int, db: DbDep, _=Depends(get_manager_user)):
 @router.get("/dining/outlets/{outlet_id}/items", response_model=list[DiningItemRead])
 def get_items(
     outlet_id: int, db: DbDep, _=Depends(get_current_active_user),
-    category_id: Optional[int] = Query(None), available_only: bool = Query(True),
+    category_id: int | None = Query(None), available_only: bool = Query(True),
 ):
     items = crud.list_items(db, outlet_id, category_id, available_only)
     return [DiningItemRead.model_validate(i) for i in items]
@@ -330,7 +376,7 @@ def delete_item(item_id: int, db: DbDep, _=Depends(get_manager_user)):
 @router.post("/dining/items/{item_id}/image", response_model=DiningItemRead)
 async def upload_item_image(
     item_id: int,
-    file: "UploadFile",
+    file: UploadFile,
     db: DbDep,
     _=Depends(get_manager_user),
 ):
@@ -340,7 +386,8 @@ async def upload_item_image(
     فحص مزدوج: content-type header + magic bytes فعلية من محتوى الملف —
     عشان نمنع content-type spoofing (رفع ملف تنفيذي بـ header image/jpeg).
     """
-    import os, uuid  # noqa: PLC0415
+    import os
+    import uuid
 
     item = crud.get_item(db, item_id)
     if not item:
@@ -602,9 +649,9 @@ def delete_table(table_id: int, db: DbDep, _=Depends(get_manager_user)):
 @router.get("/dining/orders", response_model=PaginatedResponse)
 def list_orders(
     db: DbDep, _=Depends(get_cashier_user),
-    branch_id: int = Query(...), outlet_id: Optional[int] = Query(None),
-    status_filter: Optional[str] = Query(None, alias="status"),
-    order_date: Optional[date] = Query(None),
+    branch_id: int = Query(...), outlet_id: int | None = Query(None),
+    status_filter: str | None = Query(None, alias="status"),
+    order_date: date | None = Query(None),
     page: int = Query(1, ge=1), size: int = Query(20, ge=1, le=100),
 ):
     items, total = crud.list_orders(db, branch_id, outlet_id, status_filter, order_date,
@@ -684,7 +731,7 @@ def get_order(order_id: int, db: DbDep, user=Depends(get_current_active_user)):
 @router.patch("/dining/orders/{order_id}/status", response_model=OrderRead)
 async def update_order_status(
     order_id: int, data: OrderStatusUpdate, db: DbDep, user=Depends(get_waiter_user),
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ):
     """Gate 1B: التحقق من صلاحية الفرع بقى مطبّق على كل تحويلات الحالة (مش
     "مدفوع" بس) قبل أي تعديل — راجع core.services.assert_branch_access
@@ -866,15 +913,17 @@ async def add_items_to_order(order_id: int, items: list[OrderItemCreate], db: Db
 def refund_order_item(
     order_id: int, item_id: int, data: OrderItemVoidRequest, db: DbDep, request: Request,
     user=Depends(get_current_active_user),
-    x_step_up_token: Optional[str] = Header(default=None, alias="X-Step-Up-Token"),
+    x_step_up_token: str | None = Header(default=None, alias="X-Step-Up-Token"),
 ):
     """مرتجع بعد الدفع — مستوى مدير (60)، نفس restaurant/cafe.refund_order_item.
 
     Gate 4 (جولة مراجعة Codex الأولى — M5a): عكس مالي حقيقي لصنف اتحصّل
     فعليًا، أعلى خطورة من إلغاء صنف قبل الدفع (لسه محمي بـPIN موافقة مدير
     بس، مقصود) — محتاج step-up فوق صلاحية مدير+ العادية."""
-    from app.core.kernel.auth.step_up import dining_refund_scope  # noqa: PLC0415
-    from app.modules.core.api.step_up_utils import consume_step_up_or_raise  # noqa: PLC0415
+    from app.core.kernel.auth.step_up import dining_refund_scope
+    from app.modules.core.api.step_up_utils import (
+        consume_step_up_or_raise,
+    )
 
     _assert_order_branch(db, user, order_id, "استرجاع صنف من هذا الطلب")
     scope_hash = dining_refund_scope(order_id=order_id, item_id=item_id, reason=data.reason)
@@ -932,7 +981,7 @@ def apply_discount(
 @router.post("/dining/orders/{order_id}/split-bill", response_model=OrderRead)
 def split_bill(
     order_id: int, data: SplitBillRequest, db: DbDep, user=Depends(get_cashier_user),
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ):
     """P-07 — تقسيم الفاتورة على أكثر من طريقة دفع (كاشير+). Gate 4A: بقى
     وحدة عمل صارمة كاملة عبر services.settle_order — كل tender مباشر بيتعمله
@@ -1029,8 +1078,8 @@ async def merge_orders(
 @router.get("/dining/kitchen/tickets", response_model=list[KitchenTicketRead])
 def list_kitchen_tickets(
     db: DbDep, user=Depends(get_current_active_user),
-    branch_id: int = Query(...), outlet_id: Optional[int] = Query(None),
-    stations: Optional[str] = Query(None, description="Comma-separated list of stations"),
+    branch_id: int = Query(...), outlet_id: int | None = Query(None),
+    stations: str | None = Query(None, description="Comma-separated list of stations"),
 ):
     """قائمة تذاكر الـ KDS المعلقة — outlet_id اختياري (None = كل الـ
     outlets في الفرع). كل تذكرة بتيجي معاها table_number + order_type +
@@ -1142,9 +1191,10 @@ def get_outlet_sales_report(
     if not outlet:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "المنفذ غير موجود")
 
-    from app.modules.dining.models import DiningOrder, DiningOrderItem  # noqa: PLC0415
-    from app.resort_os.timezone_utils import local_date_to_utc_range  # noqa: PLC0415
-    from sqlalchemy import func  # noqa: PLC0415
+    from sqlalchemy import func
+
+    from app.modules.dining.models import DiningOrder, DiningOrderItem
+    from app.resort_os.timezone_utils import local_date_to_utc_range
 
     range_start, _ = local_date_to_utc_range(date_from, settings.TIMEZONE)
     _, range_end = local_date_to_utc_range(date_to, settings.TIMEZONE)
@@ -1164,7 +1214,7 @@ def get_outlet_sales_report(
     payment_breakdown: dict[str, dict] = {}
     for o in paid_orders:
         method = o.payment_method or "cash"
-        payment_breakdown.setdefault(method, {"orders": 0, "total": Decimal("0")})
+        payment_breakdown.setdefault(method, {"orders": 0, "total": Decimal(0)})
         payment_breakdown[method]["orders"] += 1
         payment_breakdown[method]["total"] += o.total
 
@@ -1181,18 +1231,21 @@ def get_outlet_sales_report(
             .limit(10)
             .all()
         )
-        top_items = [{"name": r.name, "qty": int(r.qty), "revenue": float(r.revenue)} for r in rows]
+        top_items = [{"name": r.name, "qty": int(r.qty), "revenue": Decimal(str(r.revenue)).quantize(Decimal("0.01"))} for r in rows]
 
+    total_revenue_d = Decimal(str(total_revenue)).quantize(Decimal("0.01")) if total_revenue else Decimal(0)
+    total_vat_d = Decimal(str(total_vat)).quantize(Decimal("0.01")) if total_vat else Decimal(0)
+    total_discount_d = Decimal(str(total_discount)).quantize(Decimal("0.01")) if total_discount else Decimal(0)
     return {
         "period": {"from": str(date_from), "to": str(date_to)},
         "outlet_id": outlet_id,
         "branch_id": outlet.branch_id,
         "total_orders": total_orders,
-        "total_revenue": float(total_revenue),
-        "total_vat": float(total_vat),
-        "total_discount": float(total_discount),
-        "avg_order_value": float(total_revenue / total_orders) if total_orders else 0,
-        "payment_breakdown": {k: {"orders": v["orders"], "total": float(v["total"])} for k, v in payment_breakdown.items()},
+        "total_revenue": total_revenue_d,
+        "total_vat": total_vat_d,
+        "total_discount": total_discount_d,
+        "avg_order_value": (total_revenue_d / total_orders).quantize(Decimal("0.01")) if total_orders else Decimal(0),
+        "payment_breakdown": {k: {"orders": v["orders"], "total": Decimal(str(v["total"])).quantize(Decimal("0.01"))} for k, v in payment_breakdown.items()},
         "top_items": top_items,
     }
 
@@ -1262,7 +1315,7 @@ def list_public_outlets(db: DbDep, branch_id: int = Query(...)):
 def get_public_menu(
     db: DbDep,
     outlet_id: int = Query(..., description="رقم المنفذ (مطعم/كافيه/...) — مضمّن في الـ QR"),
-    table_id: Optional[int] = Query(None, ge=1, description="رقم الطاولة — مضمّن في الـ QR"),
+    table_id: int | None = Query(None, ge=1, description="رقم الطاولة — مضمّن في الـ QR"),
 ):
     """Public endpoint — لا يحتاج login. يُستدعى من apps/public's OrderView
     عند مسح QR الطاولة. يُرجع categories + items في طلب واحد لتقليل round trips."""
@@ -1344,7 +1397,7 @@ async def create_guest_order(
     data: GuestOrderCreate,
     db: DbDep,
     x_guest_session: str = Header(..., alias="X-Guest-Session"),
-    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ):
     """Public endpoint — لا يحتاج login. الضيف يطلب من القائمة عبر QR
     الطاولة (dine_in) أو QR الأوضة (room_service — راجع باج ⚠️ تحت).
@@ -1398,7 +1451,7 @@ async def create_guest_order(
         if location.location_type == "dining_table":
             table_id, order_type, notes = location.location_id, "dine_in", data.notes
         else:
-            from app.modules.pms.models import Room  # noqa: PLC0415
+            from app.modules.pms.models import Room
             room = db.query(Room).filter(Room.id == location.location_id).first()
             room_label = f"🛎️ خدمة غرف — غرفة {room.name}" if room else "🛎️ خدمة غرف"
             notes = f"{room_label}\n{data.notes}" if data.notes else room_label
@@ -1499,7 +1552,7 @@ def hotel_consumption_report(
     branch_id: int = Query(...),
     from_date: date = Query(...),
     to_date: date = Query(...),
-    contract_id: Optional[int] = Query(None, description="فلترة لفندق واحد بالاختياري"),
+    contract_id: int | None = Query(None, description="فلترة لفندق واحد بالاختياري"),
 ):
     """تقرير إيرادات الفنادق المتعاقدة من المطعم والكافيه.
 
@@ -1536,7 +1589,7 @@ def hotel_consumption_report(
 
     grand_total_orders = sum(h.total_orders for h in hotels)
     grand_total_guests = sum(h.total_guests for h in hotels)
-    grand_total_revenue = sum(h.total_revenue for h in hotels) if hotels else D("0")
+    grand_total_revenue = sum(h.total_revenue for h in hotels) if hotels else D(0)
 
     return HotelConsumptionReport(
         from_date=from_date,

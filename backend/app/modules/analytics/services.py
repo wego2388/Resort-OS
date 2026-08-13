@@ -32,7 +32,7 @@ def get_dining_revenue_by_outlet_type(
     المضمونة الوجود في الـ response (زي "restaurant"/"cafe" اللي الفرونت
     إند بيعتمد عليهم فعليًا)، الدالة دي مجرد بترجع اللي لقيته فعليًا في
     البيانات."""
-    from app.modules.dining.models import DiningOrder, Outlet  # noqa: PLC0415
+    from app.modules.dining.models import DiningOrder, Outlet
 
     rows = (
         db.query(Outlet.outlet_type, DiningOrder)
@@ -47,9 +47,9 @@ def get_dining_revenue_by_outlet_type(
     )
     result: dict[str, dict] = {}
     for outlet_type, order in rows:
-        bucket = result.setdefault(outlet_type, {"orders": 0, "total": Decimal("0"), "covers": 0})
+        bucket = result.setdefault(outlet_type, {"orders": 0, "total": Decimal(0), "covers": 0})
         bucket["orders"] += 1
-        bucket["total"] += order.total or Decimal("0")
+        bucket["total"] += order.total or Decimal(0)
         bucket["covers"] += order.guests_count or 0
     return result
 
@@ -94,7 +94,7 @@ def verify_survey_token(token: str) -> dict:
 def submit_review(
     db, branch_id: int, booking_id: int | None, data: dict,
     timeshare_visit_id: int | None = None,
-) -> "GuestReview":
+) -> GuestReview:
     """يُسجّل تقييم الضيف + ينشئ Activity(complaint) لو avg ≤ 2. يُربط إما
     بحجز فندقي (booking_id) أو بزيارة ملكية جزئية (timeshare_visit_id) — الاثنين
     اختياريان ومستقلان (مش نفس الجدول، وحدات الملكية الجزئية مبنى منفصل)."""
@@ -216,10 +216,16 @@ def _post_utility_expense_journal(db, reading) -> None:
     leasing._post_deposit_journal (try/except، no-op بصمت لو الحسابات
     مش موجودة)."""
     try:
-        from app.modules.finance.crud import get_account_by_code, create_journal_entry  # noqa: PLC0415
-        from app.modules.finance.schemas import JournalEntryCreate, JournalLineCreate  # noqa: PLC0415
+        from app.modules.finance.crud import (
+            create_journal_entry,
+            get_account_by_code,
+        )
+        from app.modules.finance.schemas import (
+            JournalEntryCreate,
+            JournalLineCreate,
+        )
 
-        amount = reading.total_cost or Decimal("0")
+        amount = reading.total_cost or Decimal(0)
         if amount <= 0:
             return
 
@@ -236,8 +242,8 @@ def _post_utility_expense_journal(db, reading) -> None:
             source="analytics",
             source_id=reading.id,
             lines=[
-                JournalLineCreate(account_id=expense_acc.id, debit=amount, credit=Decimal("0")),
-                JournalLineCreate(account_id=cash_acc.id, debit=Decimal("0"), credit=amount),
+                JournalLineCreate(account_id=expense_acc.id, debit=amount, credit=Decimal(0)),
+                JournalLineCreate(account_id=cash_acc.id, debit=Decimal(0), credit=amount),
             ],
         ), reading.recorded_by or 0)
     except Exception:
@@ -274,7 +280,7 @@ def get_energy_kpis(db, branch_id: int, period: str) -> dict:
     readings = list_utility_readings(db, branch_id, period=period)
     by_type: dict[str, Decimal] = {}
     for r in readings:
-        by_type.setdefault(r.utility_type, Decimal("0"))
+        by_type.setdefault(r.utility_type, Decimal(0))
         by_type[r.utility_type] += r.total_cost
 
     year, month = (int(x) for x in period.split("-"))
@@ -285,7 +291,7 @@ def get_energy_kpis(db, branch_id: int, period: str) -> dict:
     ).all()
     guest_nights = sum(s.occupied_rooms for s in stats) or 0
 
-    electricity_cost = by_type.get("electricity", Decimal("0"))
+    electricity_cost = by_type.get("electricity", Decimal(0))
     cost_per_guest = (
         (electricity_cost / guest_nights).quantize(Decimal("0.01"))
         if guest_nights > 0 else None
@@ -293,10 +299,10 @@ def get_energy_kpis(db, branch_id: int, period: str) -> dict:
 
     return {
         "period": period,
-        "by_type": {k: float(v) for k, v in by_type.items()},
-        "total_cost": float(sum(by_type.values())),
+        "by_type": {k: v.quantize(Decimal("0.01")) for k, v in by_type.items()},
+        "total_cost": sum(by_type.values()).quantize(Decimal("0.01")) if by_type else Decimal(0),
         "guest_nights": guest_nights,
-        "electricity_cost_per_guest_night": float(cost_per_guest) if cost_per_guest is not None else None,
+        "electricity_cost_per_guest_night": cost_per_guest,
     }
 
 
@@ -320,7 +326,7 @@ def get_energy_trend(db, branch_id: int, end_period: str, months: int = 24) -> l
 
 def generate_energy_trend_excel(db, branch_id: int, end_period: str, months: int = 24) -> bytes:
     """تصدير Excel لاتجاه تكلفة المرافق (wagdy.md #18)."""
-    from app.resort_os.report_builder import builder  # noqa: PLC0415
+    from app.resort_os.report_builder import builder
 
     trend = get_energy_trend(db, branch_id, end_period, months)
     utility_types = sorted({k for row in trend for k in row["by_type"].keys()})

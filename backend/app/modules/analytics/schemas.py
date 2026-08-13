@@ -15,7 +15,6 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -26,8 +25,8 @@ class UtilityReadingCreate(BaseModel):
     utility_type:  str = Field(..., pattern=r"^(electricity|water|gas|diesel)$")
     reading_value: Decimal = Field(..., gt=0)
     unit:          str = Field("kWh", max_length=10)
-    unit_cost:     Decimal = Field(Decimal("0"), ge=0)
-    notes:         Optional[str] = Field(None, max_length=300)
+    unit_cost:     Decimal = Field(Decimal(0), ge=0)
+    notes:         str | None = Field(None, max_length=300)
 
 
 class UtilityReadingRead(BaseModel):
@@ -40,8 +39,8 @@ class UtilityReadingRead(BaseModel):
     unit:          str
     unit_cost:     Decimal
     total_cost:    Decimal
-    notes:         Optional[str]
-    recorded_by:   Optional[int]
+    notes:         str | None
+    recorded_by:   int | None
     created_at:    datetime
 
 
@@ -61,7 +60,7 @@ class GuestReviewCategoryInput(BaseModel):
 class GuestReviewSubmitRequest(BaseModel):
     guest_name:     str = Field("ضيف", max_length=200)
     overall_rating: int = Field(3, ge=1, le=5)
-    comment:        Optional[str] = Field(None, max_length=2000)
+    comment:        str | None = Field(None, max_length=2000)
     categories:     list[GuestReviewCategoryInput] = Field(default_factory=list)
 
 
@@ -82,11 +81,11 @@ class SurveySendResponse(BaseModel):
 
 class RevenueBucket(BaseModel):
     """إيراد موديول واحد (مطعم/كافيه/فندق/شاطئ/إيجار/ملكية جزئية)."""
-    orders: Optional[int] = None        # dining buckets
-    bookings: Optional[int] = None      # pms
-    visits: Optional[int] = None        # beach
-    payments: Optional[int] = None      # leasing / timeshare
-    total: float = 0.0
+    orders: int | None = None        # dining buckets
+    bookings: int | None = None      # pms
+    visits: int | None = None        # beach
+    payments: int | None = None      # leasing / timeshare
+    total: Decimal = Decimal(0)
 
 class RevenuePeriod(BaseModel):
     from_: str = Field(alias="from")
@@ -98,13 +97,13 @@ class RevenueSummary(BaseModel):
     """GET /analytics/revenue"""
     period:     RevenuePeriod
     branch_id:  int
-    restaurant: Optional[RevenueBucket] = None
-    cafe:       Optional[RevenueBucket] = None
-    pms:        Optional[RevenueBucket] = None
-    beach:      Optional[RevenueBucket] = None
-    leasing:    Optional[RevenueBucket] = None
-    timeshare:  Optional[RevenueBucket] = None
-    total:      float = 0.0
+    restaurant: RevenueBucket | None = None
+    cafe:       RevenueBucket | None = None
+    pms:        RevenueBucket | None = None
+    beach:      RevenueBucket | None = None
+    leasing:    RevenueBucket | None = None
+    timeshare:  RevenueBucket | None = None
+    total:      Decimal = Decimal(0)
 
 
 # ── Occupancy ─────────────────────────────────────────────────────────────────
@@ -118,7 +117,7 @@ class OccupancySummary(BaseModel):
     """GET /analytics/occupancy"""
     month:  int
     year:   int
-    pms:    Optional[PMSOccupancy] = None
+    pms:    PMSOccupancy | None = None
     beach:  None = None   # حاليًا لا يُحسب
 
 
@@ -132,7 +131,7 @@ class LastPayrollSummary(BaseModel):
 class HRSummary(BaseModel):
     """GET /analytics/hr"""
     active_employees: int = 0
-    last_payroll:     Optional[LastPayrollSummary] = None
+    last_payroll:     LastPayrollSummary | None = None
 
 
 # ── Maintenance KPIs ──────────────────────────────────────────────────────────
@@ -148,7 +147,7 @@ class MaintenanceSummary(BaseModel):
 class PipelineStage(BaseModel):
     stage: str
     count: int
-    value: Optional[Decimal] = None
+    value: Decimal | None = None
 
 class CRMSummary(BaseModel):
     """GET /analytics/crm"""
@@ -172,22 +171,22 @@ class DailyStatsRead(BaseModel):
     occupancy_pct:      float = 0
     adr:                float = 0
     revpar:             float = 0
-    room_revenue:       float = 0
+    room_revenue:       Decimal = Decimal(0)
     beach_visitors:     int   = 0
-    beach_revenue:      float = 0
+    beach_revenue:      Decimal = Decimal(0)
     restaurant_covers:  int   = 0
-    restaurant_revenue: float = 0
+    restaurant_revenue: Decimal = Decimal(0)
     # متوسط الفاتورة للفرد (Average Check per Cover) — مؤشر ضيافة أساسي،
     # الداتا (revenue وcovers) كانت متجمّعة أصلاً بس متقسمتش على بعض قبل
     # كده (2026-08-11، طلب Mohamed أثناء نقاش POS الكاشير). restaurant فقط
     # (مش cafe) لأن restaurant_covers نفسها بتتبع guests_count المطعم بس —
     # الكافيه counter-service من غير مفهوم "غطاء" حقيقي. null لو صفر غطاء
     # بدل 0 مضلّل (يبان وكأنه متوسط فعلي صفر مش "مفيش بيانات كافية").
-    avg_check_per_cover: Optional[float] = None
-    cafe_revenue:       float = 0
-    total_revenue:      float = 0
+    avg_check_per_cover: float | None = None
+    cafe_revenue:       Decimal = Decimal(0)
+    total_revenue:      Decimal = Decimal(0)
     # حالة "لا توجد بيانات" — نرجع message بدل الأرقام
-    message:            Optional[str] = None
+    message:            str | None = None
 
 
 # ── Energy KPIs ───────────────────────────────────────────────────────────────
@@ -195,10 +194,10 @@ class DailyStatsRead(BaseModel):
 class EnergyKPIs(BaseModel):
     """GET /analytics/energy — يطابق شكل get_energy_kpis() في services.py"""
     period:                            str
-    by_type:                           dict[str, float] = Field(default_factory=dict)
-    total_cost:                        float = 0.0
+    by_type:                           dict[str, Decimal] = Field(default_factory=dict)
+    total_cost:                        Decimal = Decimal(0)
     guest_nights:                      int   = 0
-    electricity_cost_per_guest_night:  Optional[float] = None
+    electricity_cost_per_guest_night:  Decimal | None = None
 
 
 # ── Energy Trend ──────────────────────────────────────────────────────────────
@@ -212,10 +211,10 @@ EnergyTrendResponse = list[EnergyKPIs]
 
 class GuestReviewItem(BaseModel):
     id:             int
-    guest_name:     Optional[str] = None
+    guest_name:     str | None = None
     overall_rating: float
-    comment:        Optional[str] = None
-    source:         Optional[str] = None
+    comment:        str | None = None
+    source:         str | None = None
     reviewed_at:    str
 
 class GuestReviewListResponse(BaseModel):
@@ -234,8 +233,8 @@ class CategoryInsightItem(BaseModel):
 
 class ReviewCategoryInsights(BaseModel):
     """GET /analytics/reviews/insights — يطابق get_review_category_insights()"""
-    overall_avg:        Optional[float] = None
-    gss_score:          Optional[float] = None
+    overall_avg:        float | None = None
+    gss_score:          float | None = None
     review_count:       int = 0
     category_breakdown: list[CategoryInsightItem] = Field(default_factory=list)
 
@@ -243,17 +242,17 @@ class ReviewCategoryInsights(BaseModel):
 # ── Full Dashboard ─────────────────────────────────────────────────────────────
 
 class DashboardRevenue(BaseModel):
-    restaurant: float = 0
-    cafe:       float = 0
-    pms:        float = 0
-    beach:      float = 0
-    leasing:    float = 0
-    timeshare:  float = 0
-    total:      float = 0
+    restaurant: Decimal = Decimal(0)
+    cafe:       Decimal = Decimal(0)
+    pms:        Decimal = Decimal(0)
+    beach:      Decimal = Decimal(0)
+    leasing:    Decimal = Decimal(0)
+    timeshare:  Decimal = Decimal(0)
+    total:      Decimal = Decimal(0)
 
 class DashboardHR(BaseModel):
     active_employees:   int   = 0
-    last_payroll_period: Optional[str] = None
+    last_payroll_period: str | None = None
 
 class DashboardMaintenance(BaseModel):
     open_work_orders: int = 0
@@ -266,15 +265,15 @@ class DashboardInventory(BaseModel):
 
 class DashboardReviews(BaseModel):
     count:      int   = 0
-    avg_rating: Optional[float] = None
+    avg_rating: float | None = None
 
 class FullDashboard(BaseModel):
     """GET /analytics/dashboard"""
     branch_id:   int
     as_of:       str
-    revenue_30d: Optional[DashboardRevenue]    = None
-    hr:          Optional[DashboardHR]         = None
-    maintenance: Optional[DashboardMaintenance] = None
-    crm:         Optional[DashboardCRM]        = None
-    inventory:   Optional[DashboardInventory]  = None
-    reviews:     Optional[DashboardReviews]    = None
+    revenue_30d: DashboardRevenue | None    = None
+    hr:          DashboardHR | None         = None
+    maintenance: DashboardMaintenance | None = None
+    crm:         DashboardCRM | None        = None
+    inventory:   DashboardInventory | None  = None
+    reviews:     DashboardReviews | None    = None

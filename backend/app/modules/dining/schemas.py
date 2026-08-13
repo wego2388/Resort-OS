@@ -8,40 +8,38 @@ from __future__ import annotations
 
 from datetime import date, datetime, time
 from decimal import Decimal
-from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-
 
 # ─────────────────────── Outlet ────────────────────────────────────────
 
 class OutletCreate(BaseModel):
     branch_id:            int
     name:                 str = Field(..., max_length=100)
-    name_ar:              Optional[str] = Field(None, max_length=100)
+    name_ar:              str | None = Field(None, max_length=100)
     outlet_type:          str = Field("restaurant", max_length=30)
     revenue_account_code: str = Field("4200", max_length=10)
-    default_service_charge_pct: Optional[Decimal] = Field(None, ge=0, le=100)
+    default_service_charge_pct: Decimal | None = Field(None, ge=0, le=100)
     # تسعير حسب قناة الطلب — NULL افتراضيًا = صفر تغيير (راجع
     # services._service_charge_pct). كلهم اختياريين، مفيش أي حد إجباري.
-    takeaway_service_charge_pct:     Optional[Decimal] = Field(None, ge=0, le=100)
-    delivery_service_charge_pct:     Optional[Decimal] = Field(None, ge=0, le=100)
-    room_service_service_charge_pct: Optional[Decimal] = Field(None, ge=0, le=100)
-    delivery_fee: Optional[Decimal] = Field(None, ge=0)
+    takeaway_service_charge_pct:     Decimal | None = Field(None, ge=0, le=100)
+    delivery_service_charge_pct:     Decimal | None = Field(None, ge=0, le=100)
+    room_service_service_charge_pct: Decimal | None = Field(None, ge=0, le=100)
+    delivery_fee: Decimal | None = Field(None, ge=0)
     is_active:            bool = True
 
 
 class OutletUpdate(BaseModel):
-    name:                 Optional[str] = Field(None, max_length=100)
-    name_ar:              Optional[str] = Field(None, max_length=100)
-    outlet_type:          Optional[str] = Field(None, max_length=30)
-    revenue_account_code: Optional[str] = Field(None, max_length=10)
-    default_service_charge_pct: Optional[Decimal] = Field(None, ge=0, le=100)
-    takeaway_service_charge_pct:     Optional[Decimal] = Field(None, ge=0, le=100)
-    delivery_service_charge_pct:     Optional[Decimal] = Field(None, ge=0, le=100)
-    room_service_service_charge_pct: Optional[Decimal] = Field(None, ge=0, le=100)
-    delivery_fee: Optional[Decimal] = Field(None, ge=0)
-    is_active:            Optional[bool] = None
+    name:                 str | None = Field(None, max_length=100)
+    name_ar:              str | None = Field(None, max_length=100)
+    outlet_type:          str | None = Field(None, max_length=30)
+    revenue_account_code: str | None = Field(None, max_length=10)
+    default_service_charge_pct: Decimal | None = Field(None, ge=0, le=100)
+    takeaway_service_charge_pct:     Decimal | None = Field(None, ge=0, le=100)
+    delivery_service_charge_pct:     Decimal | None = Field(None, ge=0, le=100)
+    room_service_service_charge_pct: Decimal | None = Field(None, ge=0, le=100)
+    delivery_fee: Decimal | None = Field(None, ge=0)
+    is_active:            bool | None = None
 
 
 class OutletRead(BaseModel):
@@ -49,16 +47,16 @@ class OutletRead(BaseModel):
     id:                    int
     branch_id:             int
     name:                  str
-    name_ar:               Optional[str]
+    name_ar:               str | None
     outlet_type:           str
     revenue_account_code:  str
-    default_service_charge_pct: Optional[Decimal]
-    takeaway_service_charge_pct:     Optional[Decimal] = None
-    delivery_service_charge_pct:     Optional[Decimal] = None
-    room_service_service_charge_pct: Optional[Decimal] = None
-    delivery_fee: Optional[Decimal] = None
+    default_service_charge_pct: Decimal | None
+    takeaway_service_charge_pct:     Decimal | None = None
+    delivery_service_charge_pct:     Decimal | None = None
+    room_service_service_charge_pct: Decimal | None = None
+    delivery_fee: Decimal | None = None
     is_active:              bool
-    legacy_module:           Optional[str] = None
+    legacy_module:           str | None = None
     created_at:              datetime
 
 
@@ -68,16 +66,16 @@ class DiningCategoryCreate(BaseModel):
     branch_id:  int
     outlet_id:  int
     name:       str = Field(..., max_length=100)
-    name_ar:    Optional[str] = Field(None, max_length=100)
+    name_ar:    str | None = Field(None, max_length=100)
     sort_order: int = 0
     is_active:  bool = True
 
 
 class DiningCategoryUpdate(BaseModel):
-    name:       Optional[str] = Field(None, max_length=100)
-    name_ar:    Optional[str] = Field(None, max_length=100)
-    sort_order: Optional[int] = None
-    is_active:  Optional[bool] = None
+    name:       str | None = Field(None, max_length=100)
+    name_ar:    str | None = Field(None, max_length=100)
+    sort_order: int | None = None
+    is_active:  bool | None = None
 
 
 class DiningCategoryRead(BaseModel):
@@ -86,7 +84,7 @@ class DiningCategoryRead(BaseModel):
     branch_id:  int
     outlet_id:  int
     name:       str
-    name_ar:    Optional[str]
+    name_ar:    str | None
     sort_order: int
     is_active:  bool
     created_at: datetime
@@ -95,46 +93,46 @@ class DiningCategoryRead(BaseModel):
 class DiningItemCreate(BaseModel):
     branch_id:           int
     outlet_id:           int
-    category_id:         Optional[int] = None
+    category_id:         int | None = None
     name:                str  = Field(..., max_length=200)
-    name_ar:             Optional[str] = Field(None, max_length=200)
-    description:         Optional[str] = Field(None, max_length=500)
+    name_ar:             str | None = Field(None, max_length=200)
+    description:         str | None = Field(None, max_length=500)
     price:               Decimal = Field(..., gt=0)
     # Owner decision 2026-08-12: every newly managed menu price is final.
     price_includes_vat_service: bool = True
-    cost:                Optional[Decimal] = Field(None, ge=0)
+    cost:                Decimal | None = Field(None, ge=0)
     is_available:        bool = True
     preparation_minutes: int  = 10
-    image_url:           Optional[str] = Field(None, max_length=500)
+    image_url:           str | None = Field(None, max_length=500)
     station:             str = Field("hot", pattern=r"^(hot|grill|cold|bar|dessert)$")
-    linked_product_id:   Optional[int] = None
-    available_from_time:  Optional[time] = None
-    available_until_time: Optional[time] = None
+    linked_product_id:   int | None = None
+    available_from_time:  time | None = None
+    available_until_time: time | None = None
 
 
 class DiningItemUpdate(BaseModel):
-    name:                Optional[str]     = None
-    name_ar:             Optional[str]     = None
-    description:         Optional[str]     = Field(None, max_length=500)
-    price:               Optional[Decimal] = Field(None, gt=0)
-    price_includes_vat_service: Optional[bool] = None
-    cost:                Optional[Decimal] = None
-    is_available:        Optional[bool]    = None
-    preparation_minutes: Optional[int]     = None
-    category_id:         Optional[int]     = None
-    station:             Optional[str]     = Field(None, pattern=r"^(hot|grill|cold|bar|dessert)$")
-    image_url:           Optional[str]     = None
-    linked_product_id:   Optional[int]     = None
-    available_from_time:  Optional[time]   = None
-    available_until_time: Optional[time]   = None
+    name:                str | None     = None
+    name_ar:             str | None     = None
+    description:         str | None     = Field(None, max_length=500)
+    price:               Decimal | None = Field(None, gt=0)
+    price_includes_vat_service: bool | None = None
+    cost:                Decimal | None = None
+    is_available:        bool | None    = None
+    preparation_minutes: int | None     = None
+    category_id:         int | None     = None
+    station:             str | None     = Field(None, pattern=r"^(hot|grill|cold|bar|dessert)$")
+    image_url:           str | None     = None
+    linked_product_id:   int | None     = None
+    available_from_time:  time | None   = None
+    available_until_time: time | None   = None
 
 
 # ─────────────────────── Extras / Modifiers ───────────────────────────
 
 class DiningItemExtraCreate(BaseModel):
     name:           str = Field(..., max_length=100)
-    name_ar:        Optional[str] = Field(None, max_length=100)
-    price_addition: Decimal = Field(Decimal("0"), ge=0)
+    name_ar:        str | None = Field(None, max_length=100)
+    price_addition: Decimal = Field(Decimal(0), ge=0)
     is_available:   bool = True
     sort_order:     int = 0
 
@@ -147,7 +145,7 @@ class DiningItemExtraRead(DiningItemExtraCreate):
 
 class DiningItemExtraGroupCreate(BaseModel):
     name:       str = Field(..., max_length=100)
-    name_ar:    Optional[str] = Field(None, max_length=100)
+    name_ar:    str | None = Field(None, max_length=100)
     group_type: str = Field("pick_list", pattern=r"^(pick_list|text)$")
     # pick_list = قائمة اختيارات (options تحت)، text = prompt نصي حر (مثلاً
     # "كام سمكة؟") — راجع docstring models.DiningItemExtraGroup. لمجموعات
@@ -163,7 +161,7 @@ class DiningItemExtraGroupRead(BaseModel):
     id:         int
     item_id:    int
     name:       str
-    name_ar:    Optional[str]
+    name_ar:    str | None
     group_type: str
     min_select: int
     max_select: int
@@ -176,12 +174,12 @@ class DiningItemExtraGroupRead(BaseModel):
 class DiningItemRecipeLineCreate(BaseModel):
     product_id:        int
     quantity_per_unit: Decimal = Field(..., gt=0)
-    notes:             Optional[str] = Field(None, max_length=200)
+    notes:             str | None = Field(None, max_length=200)
 
 
 class DiningItemRecipeLineUpdate(BaseModel):
-    quantity_per_unit: Optional[Decimal] = Field(None, gt=0)
-    notes:             Optional[str]     = Field(None, max_length=200)
+    quantity_per_unit: Decimal | None = Field(None, gt=0)
+    notes:             str | None     = Field(None, max_length=200)
 
 
 class DiningItemRecipeLineRead(BaseModel):
@@ -194,7 +192,7 @@ class DiningItemRecipeLineRead(BaseModel):
     quantity_per_unit: Decimal
     unit_cost:         Decimal
     line_cost:         Decimal
-    notes:             Optional[str]
+    notes:             str | None
 
 
 # ─────────────────────── Variants ──────────────────────────────────────
@@ -202,12 +200,12 @@ class DiningItemRecipeLineRead(BaseModel):
 class DiningItemVariantRecipeLineCreate(BaseModel):
     product_id:        int
     quantity_per_unit: Decimal = Field(..., gt=0)
-    notes:             Optional[str] = Field(None, max_length=200)
+    notes:             str | None = Field(None, max_length=200)
 
 
 class DiningItemVariantRecipeLineUpdate(BaseModel):
-    quantity_per_unit: Optional[Decimal] = Field(None, gt=0)
-    notes:             Optional[str]     = Field(None, max_length=200)
+    quantity_per_unit: Decimal | None = Field(None, gt=0)
+    notes:             str | None     = Field(None, max_length=200)
 
 
 class DiningItemVariantRecipeLineRead(BaseModel):
@@ -220,23 +218,23 @@ class DiningItemVariantRecipeLineRead(BaseModel):
     quantity_per_unit: Decimal
     unit_cost:         Decimal
     line_cost:         Decimal
-    notes:             Optional[str]
+    notes:             str | None
 
 
 class DiningItemVariantCreate(BaseModel):
     name:         str = Field(..., max_length=100)
-    name_ar:      Optional[str] = Field(None, max_length=100)
+    name_ar:      str | None = Field(None, max_length=100)
     price:        Decimal = Field(..., gt=0)
     is_available: bool = True
     sort_order:   int = 0
 
 
 class DiningItemVariantUpdate(BaseModel):
-    name:         Optional[str]     = Field(None, max_length=100)
-    name_ar:      Optional[str]     = Field(None, max_length=100)
-    price:        Optional[Decimal] = Field(None, gt=0)
-    is_available: Optional[bool]    = None
-    sort_order:   Optional[int]     = None
+    name:         str | None     = Field(None, max_length=100)
+    name_ar:      str | None     = Field(None, max_length=100)
+    price:        Decimal | None = Field(None, gt=0)
+    is_available: bool | None    = None
+    sort_order:   int | None     = None
 
 
 class DiningItemVariantRead(BaseModel):
@@ -244,12 +242,12 @@ class DiningItemVariantRead(BaseModel):
     id:            int
     item_id:       int
     name:          str
-    name_ar:       Optional[str]
+    name_ar:       str | None
     price:         Decimal
     is_available:  bool
     sort_order:    int
     recipe_lines:  list[DiningItemVariantRecipeLineRead] = []
-    computed_cost: Decimal = Decimal("0")
+    computed_cost: Decimal = Decimal(0)
 
 
 class DiningItemRead(DiningItemCreate):
@@ -260,7 +258,7 @@ class DiningItemRead(DiningItemCreate):
     extra_groups: list[DiningItemExtraGroupRead] = []
     recipe_lines: list[DiningItemRecipeLineRead] = []
     variants:     list[DiningItemVariantRead] = []
-    computed_cost: Decimal = Decimal("0")
+    computed_cost: Decimal = Decimal(0)
 
     @model_validator(mode="before")
     @classmethod
@@ -271,7 +269,7 @@ class DiningItemRead(DiningItemCreate):
         validation العادي."""
         if isinstance(obj, (dict, cls)):
             return obj
-        from app.modules.dining import services as _services  # noqa: PLC0415
+        from app.modules.dining import services as _services
 
         data = {name: getattr(obj, name, None) for name in cls.model_fields
                 if name not in ("recipe_lines", "computed_cost", "extra_groups", "variants")}
@@ -291,55 +289,55 @@ class DiningTableRead(BaseModel):
     table_number: str
     capacity:     int
     status:       str
-    section:      Optional[str]
-    occupied_at:  Optional[datetime] = None
-    grid_row:     Optional[int] = None
-    grid_col:     Optional[int] = None
+    section:      str | None
+    occupied_at:  datetime | None = None
+    grid_row:     int | None = None
+    grid_col:     int | None = None
     # ── Active order info — computed in list_tables_with_orders (not a DB field) ──
-    active_order_id:     Optional[int]   = None
-    active_order_number: Optional[str]   = None
-    active_order_total:  Optional[float] = None
-    active_covers:       Optional[int]   = None
-    order_status:        Optional[str]   = None  # open | in_kitchen | served
+    active_order_id:     int | None   = None
+    active_order_number: str | None   = None
+    active_order_total:  float | None = None
+    active_covers:       int | None   = None
+    order_status:        str | None   = None  # open | in_kitchen | served
     # أي منفذ فتح الطلب الشاغل للطاولة دي — مهم لما الكاشير يكون واقف على
     # منيو منفذ تاني ويشوف الطاولة مشغولة (مثلاً طلب كافيه وهو واقف على
     # تاب المطعم)، عشان يعرف يفتح تفاصيل الطلب الصح بدل ما يفتره إنه فاضي.
-    active_order_outlet_id: Optional[int] = None
+    active_order_outlet_id: int | None = None
     # هوية الضيف القاعد على الطاولة دي (2026-08-03) — من DiningOrder.
     # guest_name/guest_phone بتاعة الطلب النشط، نفس نمط active_order_* فوق.
-    active_order_guest_name:  Optional[str] = None
-    active_order_guest_phone: Optional[str] = None
+    active_order_guest_name:  str | None = None
+    active_order_guest_phone: str | None = None
 
 
 class DiningTableCreate(BaseModel):
     branch_id:    int
     table_number: str = Field(..., max_length=20)
     capacity:     int = Field(4, ge=1)
-    section:      Optional[str] = Field(None, max_length=50)
-    grid_row:     Optional[int] = Field(None, ge=0)
-    grid_col:     Optional[int] = Field(None, ge=0)
+    section:      str | None = Field(None, max_length=50)
+    grid_row:     int | None = Field(None, ge=0)
+    grid_col:     int | None = Field(None, ge=0)
 
 
 class DiningTableUpdate(BaseModel):
-    table_number: Optional[str] = Field(None, max_length=20)
-    capacity:     Optional[int] = Field(None, ge=1)
-    section:      Optional[str] = Field(None, max_length=50)
-    grid_row:     Optional[int] = Field(None, ge=0)
-    grid_col:     Optional[int] = Field(None, ge=0)
+    table_number: str | None = Field(None, max_length=20)
+    capacity:     int | None = Field(None, ge=1)
+    section:      str | None = Field(None, max_length=50)
+    grid_row:     int | None = Field(None, ge=0)
+    grid_col:     int | None = Field(None, ge=0)
 
 
 class DiningTableGridUpdate(BaseModel):
-    grid_row: Optional[int] = Field(None, ge=0)
-    grid_col: Optional[int] = Field(None, ge=0)
+    grid_row: int | None = Field(None, ge=0)
+    grid_col: int | None = Field(None, ge=0)
 
 
 # ─────────────────────── Orders ────────────────────────────────────────
 
 class OrderItemCreate(BaseModel):
     item_id:    int
-    variant_id: Optional[int] = None  # DiningItemVariant.id — إجباري لو الصنف عنده متغيّرات متاحة
+    variant_id: int | None = None  # DiningItemVariant.id — إجباري لو الصنف عنده متغيّرات متاحة
     quantity:   int = Field(1, ge=1)
-    notes:      Optional[str] = Field(None, max_length=200)
+    notes:      str | None = Field(None, max_length=200)
     extra_ids:  list[int] = Field(default_factory=list)
     extra_texts: dict[int, str] = Field(default_factory=dict)
     # group_id (DiningItemExtraGroup.id بـ group_type="text") -> إجابة نصية
@@ -349,11 +347,11 @@ class OrderItemCreate(BaseModel):
 
 class OrderCreate(BaseModel):
     outlet_id:    int
-    table_id:     Optional[int] = Field(None, ge=1)
+    table_id:     int | None = Field(None, ge=1)
     order_type:   str = Field("dine_in", pattern=r"^(dine_in|takeaway|delivery|room_service)$")
     guests_count: int = Field(1, ge=1)
-    notes:        Optional[str] = Field(None, max_length=500)
-    customer_id:  Optional[int] = None
+    notes:        str | None = Field(None, max_length=500)
+    customer_id:  int | None = None
     items:        list[OrderItemCreate] = Field(..., min_length=1)
     # هوية الضيف القاعد على الطاولة (2026-08-03، طلب Mohamed) — اختياريان
     # هنا على مستوى الـschema عمدًا (OrderCreate بيغطي dine_in/takeaway/
@@ -361,20 +359,20 @@ class OrderCreate(BaseModel):
     # طاولة جديدة" قرار UX بيتفرض من الفرونت إند (UnifiedPOSView.vue's
     # فورم فتح الطاولة)، مش من الـschema العام ده. للطلب الذاتي عبر QR،
     # الراوتر بيملأهم من GuestSession.guest_name/guest_phone تلقائيًا.
-    guest_name:   Optional[str] = Field(None, max_length=100)
-    guest_phone:  Optional[str] = Field(None, max_length=30)
+    guest_name:   str | None = Field(None, max_length=100)
+    guest_phone:  str | None = Field(None, max_length=30)
     # ── فيتشر الفنادق (2026-08-07) ──────────────────────────────────────
     # اختياري — الكاشير/الويتر يختار الفندق المتعاقد لو الضيف من فندق.
-    b2b_contract_id:   Optional[int] = None
+    b2b_contract_id:   int | None = None
     # ── فيتشر خريطة الشمسيات (2026-08-07) ──────────────────────────────
     # اختياري — بديل table_id لما الطلب من شمسية/برجولة مش طاولة مطعم.
-    beach_location_id: Optional[int] = None
+    beach_location_id: int | None = None
 
 
 class OrderItemVoidRequest(BaseModel):
     reason: str = Field(..., min_length=3, max_length=200)
-    approver_user_id: Optional[int] = None
-    approver_pin:      Optional[str] = Field(None, pattern=r"^\d{4,6}$")
+    approver_user_id: int | None = None
+    approver_pin:      str | None = Field(None, pattern=r"^\d{4,6}$")
 
 
 class ApplyDiscountRequest(BaseModel):
@@ -384,19 +382,19 @@ class ApplyDiscountRequest(BaseModel):
     نتيجة قاعدة الخصم نفسها — الموافقة مطلوبة على *محاولة* التطبيق نفسها
     مش بس على نتيجتها (زي OrderItemVoidRequest بالظبط، مفيش نظام موافقة
     موازي)."""
-    approver_user_id: Optional[int] = None
-    approver_pin:      Optional[str] = Field(None, pattern=r"^\d{4,6}$")
+    approver_user_id: int | None = None
+    approver_pin:      str | None = Field(None, pattern=r"^\d{4,6}$")
 
 
 class OrderItemExtraRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id:             int
-    extra_id:       Optional[int]
+    extra_id:       int | None
     extra_name:     str
-    extra_name_ar:  Optional[str] = None
+    extra_name_ar:  str | None = None
     price_addition: Decimal
-    listed_price_addition: Optional[Decimal] = None
-    text_value:     Optional[str] = None
+    listed_price_addition: Decimal | None = None
+    text_value:     str | None = None
 
 
 class OrderItemRead(BaseModel):
@@ -404,18 +402,18 @@ class OrderItemRead(BaseModel):
     id:           int
     order_id:     int
     item_id:      int
-    variant_id:   Optional[int] = None
+    variant_id:   int | None = None
     name:         str
-    name_ar:      Optional[str] = None
+    name_ar:      str | None = None
     unit_price:   Decimal
-    listed_unit_price: Optional[Decimal] = None
+    listed_unit_price: Decimal | None = None
     quantity:     int
-    notes:        Optional[str]
+    notes:        str | None
     status:       str
     extras:       list[OrderItemExtraRead] = []
-    voided_reason: Optional[str] = None
-    voided_by:     Optional[int] = None
-    voided_at:     Optional[datetime] = None
+    voided_reason: str | None = None
+    voided_by:     int | None = None
+    voided_at:     datetime | None = None
 
 
 class OrderRead(BaseModel):
@@ -423,31 +421,31 @@ class OrderRead(BaseModel):
     id:                       int
     branch_id:                int
     outlet_id:                int
-    table_id:                 Optional[int]
+    table_id:                 int | None
     order_number:             str
     status:                   str
     order_type:               str
     subtotal:                 Decimal
     vat_amount:                Decimal
     service_charge:            Decimal
-    delivery_fee:               Decimal = Decimal("0")
+    delivery_fee:               Decimal = Decimal(0)
     discount_amount:           Decimal
     total:                     Decimal
     refunded_amount:           Decimal
     guests_count:              int
-    notes:                     Optional[str]
-    waiter_id:                 Optional[int]
-    payment_method:            Optional[str] = None
-    applied_discount_rule_id:  Optional[int]
-    customer_id:                Optional[int]
-    guest_name:                 Optional[str] = None
-    guest_phone:                Optional[str] = None
+    notes:                     str | None
+    waiter_id:                 int | None
+    payment_method:            str | None = None
+    applied_discount_rule_id:  int | None
+    customer_id:                int | None
+    guest_name:                 str | None = None
+    guest_phone:                str | None = None
     # ── فيتشر الفنادق (2026-08-07) ──────────────────────────────────────
-    b2b_contract_id:            Optional[int] = None
-    hotel_name:                 Optional[str] = None   # snapshot من b2b_contracts.hotel_name
+    b2b_contract_id:            int | None = None
+    hotel_name:                 str | None = None   # snapshot من b2b_contracts.hotel_name
     # ── فيتشر خريطة الشمسيات (2026-08-07) ──────────────────────────────
-    beach_location_id:          Optional[int] = None
-    beach_location_label:       Optional[str] = None   # مثال: "⛱️ شمسية 5" — بيتحسب في الراوتر
+    beach_location_id:          int | None = None
+    beach_location_label:       str | None = None   # مثال: "⛱️ شمسية 5" — بيتحسب في الراوتر
     items:                      list[OrderItemRead] = []
     created_at:                 datetime
     updated_at:                 datetime
@@ -455,18 +453,18 @@ class OrderRead(BaseModel):
 
 class OrderStatusUpdate(BaseModel):
     status: str = Field(..., pattern=r"^(held|open|in_kitchen|served|paid|cancelled)$")
-    charge_to_room_id: Optional[int] = None
-    payment_method: Optional[str] = Field(None, pattern=r"^(cash|card|room|wallet|credit_account)$")
-    credit_account_id: Optional[int] = Field(None, gt=0)
-    approver_user_id: Optional[int] = Field(None, gt=0)
-    approver_pin: Optional[str] = Field(None, min_length=4, max_length=12)
+    charge_to_room_id: int | None = None
+    payment_method: str | None = Field(None, pattern=r"^(cash|card|room|wallet|credit_account)$")
+    credit_account_id: int | None = Field(None, gt=0)
+    approver_user_id: int | None = Field(None, gt=0)
+    approver_pin: str | None = Field(None, min_length=4, max_length=12)
     # POS-03: عملة الدفع الكاش — اختيارية، افتراضية EGP. لو currency ≠ EGP
     # وpayment_method="cash"، يجب تمرير fx_rate (سعر الصرف الحالي).
-    payment_currency: Optional[str] = Field(None, pattern=r"^[A-Z]{3}$")
-    payment_fx_rate:  Optional[Decimal] = Field(None, gt=0)
+    payment_currency: str | None = Field(None, pattern=r"^[A-Z]{3}$")
+    payment_fx_rate:  Decimal | None = Field(None, gt=0)
 
     @model_validator(mode="after")
-    def _validate_fx(self) -> "OrderStatusUpdate":
+    def _validate_fx(self) -> OrderStatusUpdate:
         cur = (self.payment_currency or "EGP").upper()
         if cur != "EGP" and self.payment_method == "cash" and not self.payment_fx_rate:
             raise ValueError(
@@ -498,14 +496,14 @@ class SplitBillPayment(BaseModel):
     """جزء دفعة واحدة في تقسيم الفاتورة."""
     amount: Decimal = Field(..., gt=0)
     payment_method: str = Field(..., pattern=r"^(cash|card|room|wallet|credit_account)$")
-    charge_to_room_id: Optional[int] = None  # لو payment_method = room
-    credit_account_id: Optional[int] = Field(None, gt=0)
+    charge_to_room_id: int | None = None  # لو payment_method = room
+    credit_account_id: int | None = Field(None, gt=0)
     # POS-03: عملة الدفع الكاش — اختيارية، افتراضية EGP
-    currency: Optional[str] = Field(None, pattern=r"^[A-Z]{3}$")
-    fx_rate:  Optional[Decimal] = Field(None, gt=0)
+    currency: str | None = Field(None, pattern=r"^[A-Z]{3}$")
+    fx_rate:  Decimal | None = Field(None, gt=0)
 
     @model_validator(mode="after")
-    def _validate_fx(self) -> "SplitBillPayment":
+    def _validate_fx(self) -> SplitBillPayment:
         cur = (self.currency or "EGP").upper()
         if cur != "EGP" and self.payment_method == "cash" and not self.fx_rate:
             raise ValueError("fx_rate مطلوب لو currency ≠ EGP وطريقة الدفع كاش")
@@ -519,11 +517,11 @@ class SplitBillRequest(BaseModel):
     المجموع لازم يساوي order.total بفارق ≤ 0.01 جنيه (floating-point tolerance).
     مثال: فاتورة 300ج → كاش 200 + بطاقة 100."""
     payments: list[SplitBillPayment] = Field(..., min_length=2, max_length=10)
-    approver_user_id: Optional[int] = Field(None, gt=0)
-    approver_pin: Optional[str] = Field(None, min_length=4, max_length=12)
+    approver_user_id: int | None = Field(None, gt=0)
+    approver_pin: str | None = Field(None, min_length=4, max_length=12)
 
     @model_validator(mode="after")
-    def _validate_approval(self) -> "SplitBillRequest":
+    def _validate_approval(self) -> SplitBillRequest:
         if (self.approver_user_id is None) != (self.approver_pin is None):
             raise ValueError("بيانات موافقة المدير يجب أن تُرسل كاملة")
         return self
@@ -542,12 +540,12 @@ class OrderItemStatusUpdate(BaseModel):
 class OrderSyncRequest(BaseModel):
     local_id:     str = Field(..., max_length=60)
     outlet_id:    int
-    table_id:     Optional[int] = Field(None, ge=1)
+    table_id:     int | None = Field(None, ge=1)
     order_type:   str = Field("dine_in", pattern=r"^(dine_in|takeaway|delivery|room_service)$")
     guests_count: int = Field(1, ge=1)
-    notes:        Optional[str] = Field(None, max_length=500)
+    notes:        str | None = Field(None, max_length=500)
     items:        list[OrderItemCreate] = Field(..., min_length=1)
-    created_offline_at: Optional[datetime] = None
+    created_offline_at: datetime | None = None
 
 
 class RejectedSyncItem(BaseModel):
@@ -559,7 +557,7 @@ class RejectedSyncItem(BaseModel):
 
 
 class OrderSyncResponse(BaseModel):
-    order_id:         Optional[int]
+    order_id:         int | None
     status:            str  # fulfilled|partial|rejected
     fulfilled_items:   list[OrderItemRead] = []
     rejected_items:    list[RejectedSyncItem] = []
@@ -579,11 +577,11 @@ class KitchenTicketRead(BaseModel):
     status:         str
     created_at:     datetime
     # ── حقول إضافية للعرض في KDS — computed في router ──
-    order_number:   Optional[str] = None   # رقم الأوردر للعرض في بطاقة KDS
-    table_number:   Optional[str] = None   # رقم الطاولة (dine_in فقط)
-    order_type:     Optional[str] = None   # dine_in|takeaway|delivery|room_service
-    order_notes:    Optional[str] = None   # ملاحظة الأوردر الكلية
-    outlet_name:    Optional[str] = None   # اسم المنفذ — لو أكثر من منفذ في نفس المطبخ
+    order_number:   str | None = None   # رقم الأوردر للعرض في بطاقة KDS
+    table_number:   str | None = None   # رقم الطاولة (dine_in فقط)
+    order_type:     str | None = None   # dine_in|takeaway|delivery|room_service
+    order_notes:    str | None = None   # ملاحظة الأوردر الكلية
+    outlet_name:    str | None = None   # اسم المنفذ — لو أكثر من منفذ في نفس المطبخ
 
 
 class TicketStatusUpdate(BaseModel):
@@ -592,7 +590,7 @@ class TicketStatusUpdate(BaseModel):
 
 class KDSScreenCreate(BaseModel):
     branch_id:           int
-    outlet_id:           Optional[int] = None  # None = يعرض كل الـ outlets في الفرع
+    outlet_id:           int | None = None  # None = يعرض كل الـ outlets في الفرع
     name:                str = Field(..., max_length=100)
     stations:            list[str]
     display_mode:        str = Field("kanban", pattern=r"^(kanban|list|grid)$")
@@ -611,15 +609,15 @@ class KDSScreenRead(KDSScreenCreate):
 class FoodCostReportLine(BaseModel):
     item_id:                 int
     item_name:                str
-    variant_id:               Optional[int] = None
+    variant_id:               int | None = None
     has_recipe:               bool
     quantity_sold:            int
     revenue:                  Decimal
     theoretical_unit_cost:    Decimal
     theoretical_total_cost:   Decimal
-    food_cost_pct:            Optional[Decimal] = None
+    food_cost_pct:            Decimal | None = None
     gross_margin_amount:      Decimal
-    gross_margin_pct:         Optional[Decimal] = None
+    gross_margin_pct:         Decimal | None = None
     exceeds_threshold:        bool
 
 
@@ -627,20 +625,20 @@ class CogsTrendPoint(BaseModel):
     date:            date
     revenue:         Decimal
     theoretical_cost: Decimal
-    food_cost_pct:   Optional[Decimal] = None
+    food_cost_pct:   Decimal | None = None
 
 
 class GrossMarginSummary(BaseModel):
     branch_id:                int
-    outlet_id:                Optional[int]
+    outlet_id:                int | None
     date_from:                date
     date_to:                  date
     threshold_pct:            Decimal
     total_revenue:            Decimal
     total_theoretical_cost:   Decimal
-    food_cost_pct:            Optional[Decimal] = None
+    food_cost_pct:            Decimal | None = None
     gross_margin_amount:      Decimal
-    gross_margin_pct:         Optional[Decimal] = None
+    gross_margin_pct:         Decimal | None = None
     items_missing_recipe:        int
     items_missing_recipe_revenue: Decimal
 
@@ -667,7 +665,7 @@ class PublicOutletRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id:          int
     name:        str
-    name_ar:     Optional[str]
+    name_ar:     str | None
     outlet_type: str
 
 
@@ -675,7 +673,7 @@ class PublicMenuExtraRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id:             int
     name:           str
-    name_ar:        Optional[str]
+    name_ar:        str | None
     price_addition: Decimal
 
 
@@ -683,7 +681,7 @@ class PublicMenuExtraGroupRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id:         int
     name:       str
-    name_ar:    Optional[str]
+    name_ar:    str | None
     group_type: str
     min_select: int
     max_select: int
@@ -695,7 +693,7 @@ class PublicMenuVariantRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id:           int
     name:         str
-    name_ar:      Optional[str]
+    name_ar:      str | None
     price:        Decimal
     is_available: bool
 
@@ -713,18 +711,18 @@ class PublicMenuItemRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id:                  int
     name:                str
-    name_ar:             Optional[str]
-    name_ru:             Optional[str] = None
-    name_it:             Optional[str] = None
-    description:         Optional[str]
-    description_ar:      Optional[str] = None
-    description_ru:      Optional[str] = None
-    description_it:      Optional[str] = None
+    name_ar:             str | None
+    name_ru:             str | None = None
+    name_it:             str | None = None
+    description:         str | None
+    description_ar:      str | None = None
+    description_ru:      str | None = None
+    description_it:      str | None = None
     price:               Decimal
     is_available:        bool
     preparation_minutes: int
-    image_url:           Optional[str]
-    category_id:         Optional[int]
+    image_url:           str | None
+    category_id:         int | None
     extra_groups:        list[PublicMenuExtraGroupRead] = []
     variants:            list[PublicMenuVariantRead] = []
 
@@ -733,9 +731,9 @@ class PublicMenuCategoryRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id:      int
     name:    str
-    name_ar: Optional[str]
-    name_ru: Optional[str] = None
-    name_it: Optional[str] = None
+    name_ar: str | None
+    name_ru: str | None = None
+    name_it: str | None = None
 
 
 class PublicMenuResponse(BaseModel):
@@ -753,8 +751,8 @@ class PublicMenuResponse(BaseModel):
     branch_id:          int
     outlet_id:          int
     outlet_name:        str
-    outlet_name_ar:     Optional[str]
-    table_id:           Optional[int]
+    outlet_name_ar:     str | None
+    table_id:           int | None
     self_order_enabled: bool
     categories:         list[PublicMenuCategoryRead]
     items:              list[PublicMenuItemRead]
@@ -764,7 +762,7 @@ class GuestServiceMenuResponse(BaseModel):
     """Token/session-scoped menu without branch or physical-location IDs."""
     outlet_id:          int
     outlet_name:        str
-    outlet_name_ar:     Optional[str]
+    outlet_name_ar:     str | None
     self_order_enabled: bool
     categories:         list[PublicMenuCategoryRead]
     items:              list[PublicMenuItemRead]
@@ -772,9 +770,9 @@ class GuestServiceMenuResponse(BaseModel):
 
 class GuestOrderItemCreate(BaseModel):
     item_id:     int
-    variant_id:  Optional[int] = None
+    variant_id:  int | None = None
     quantity:    int = Field(1, ge=1)
-    notes:       Optional[str] = Field(None, max_length=200)
+    notes:       str | None = Field(None, max_length=200)
     extra_ids:   list[int] = Field(default_factory=list)
     extra_texts: dict[int, str] = Field(default_factory=dict)
 
@@ -785,7 +783,7 @@ class GuestOrderCreate(BaseModel):
 
     outlet_id:    int
     guests_count: int = Field(1, ge=1)
-    notes:        Optional[str] = Field(None, max_length=300)
+    notes:        str | None = Field(None, max_length=300)
     items:        list[GuestOrderItemCreate] = Field(..., min_length=1)
 
 
@@ -812,12 +810,12 @@ class SalesReportPeriod(BaseModel):
 
 class PaymentBreakdownItem(BaseModel):
     orders: int
-    total:  float
+    total:  Decimal
 
 class TopSalesItem(BaseModel):
     name:    str
     qty:     int
-    revenue: float
+    revenue: Decimal
 
 class OutletSalesReport(BaseModel):
     """GET /dining/outlets/{outlet_id}/reports/sales"""
@@ -825,10 +823,10 @@ class OutletSalesReport(BaseModel):
     outlet_id:        int
     branch_id:        int
     total_orders:     int
-    total_revenue:    float
-    total_vat:        float
-    total_discount:   float
-    avg_order_value:  float
+    total_revenue:    Decimal
+    total_vat:        Decimal
+    total_discount:   Decimal
+    avg_order_value:  Decimal
     payment_breakdown: dict[str, PaymentBreakdownItem] = Field(default_factory=dict)
     top_items:        list[TopSalesItem] = Field(default_factory=list)
 
@@ -848,7 +846,7 @@ class HotelConsumptionRow(BaseModel):
     """صف واحد في تقرير استهلاك الفنادق — فندق × فترة."""
     contract_id:        int
     hotel_name:         str
-    hotel_name_ar:      Optional[str] = None
+    hotel_name_ar:      str | None = None
     # إجماليات
     total_orders:       int
     total_guests:       int           # مجموع guests_count على الطلبات

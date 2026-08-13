@@ -4,27 +4,51 @@ Analytics Module — لوحة التحليلات الشاملة (Read-Only، ل�
 """
 from __future__ import annotations
 
-from datetime import date, timedelta
-from decimal import Decimal
-from typing import Optional
-
 import asyncio
 import json
+from datetime import date, timedelta
+from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Query,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
+)
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.deps import DbDep, get_current_active_user, get_manager_user, get_websocket_user
 from app.core.database import SessionLocal
+from app.core.deps import (
+    DbDep,
+    get_current_active_user,
+    get_manager_user,
+    get_websocket_user,
+)
 from app.modules.analytics import services
 from app.modules.analytics.schemas import (
-    UtilityReadingCreate, UtilityReadingRead,
-    GuestReviewSubmitRequest, ReviewSubmitResponse, SurveyTokenResponse, SurveySendResponse,
-    RevenueSummary, OccupancySummary, HRSummary, MaintenanceSummary,
-    CRMSummary, InventoryAlerts, DailyStatsRead, EnergyKPIs, EnergyTrendResponse,
-    GuestReviewListResponse, ReviewCategoryInsights, FullDashboard,
+    CRMSummary,
+    DailyStatsRead,
+    EnergyKPIs,
+    EnergyTrendResponse,
+    FullDashboard,
+    GuestReviewListResponse,
+    GuestReviewSubmitRequest,
+    HRSummary,
+    InventoryAlerts,
+    MaintenanceSummary,
+    OccupancySummary,
+    RevenueSummary,
+    ReviewCategoryInsights,
+    ReviewSubmitResponse,
+    SurveySendResponse,
+    SurveyTokenResponse,
+    UtilityReadingCreate,
+    UtilityReadingRead,
 )
 from app.resort_os.timezone_utils import business_today, local_date_to_utc_range
 
@@ -70,7 +94,7 @@ def revenue_summary(
         "beach":      None,
         "leasing":    None,
         "timeshare":  None,
-        "total":      Decimal("0"),
+        "total":      Decimal(0),
     }
 
     # إيراد المطعم/الكافيه — يقرأ من dining.DiningOrder بدل restaurant.Order/
@@ -81,7 +105,7 @@ def revenue_summary(
         return services.get_dining_revenue_by_outlet_type(db, branch_id, range_start, range_end)
 
     def _pms(db: Session):
-        from app.modules.pms.models import Booking  # noqa: PLC0415
+        from app.modules.pms.models import Booking
         rows = db.query(Booking).filter(
             Booking.branch_id == branch_id,
             Booking.status == "checked_out",
@@ -91,7 +115,7 @@ def revenue_summary(
         return {"bookings": len(rows), "total": sum(b.total_rate for b in rows)}
 
     def _beach(db: Session):
-        from app.modules.beach.models import BeachTransaction  # noqa: PLC0415
+        from app.modules.beach.models import BeachTransaction
         rows = db.query(BeachTransaction).filter(
             BeachTransaction.branch_id == branch_id,
             BeachTransaction.voided_at.is_(None),
@@ -101,7 +125,7 @@ def revenue_summary(
         return {"visits": len(rows), "total": sum(r.total_amount + r.vat_amount for r in rows)}
 
     def _leasing(db: Session):
-        from app.modules.leasing.models import LeasePayment  # noqa: PLC0415
+        from app.modules.leasing.models import LeasePayment
         rows = db.query(LeasePayment).filter(
             LeasePayment.paid_at.isnot(None),
             LeasePayment.status == "paid",
@@ -111,7 +135,7 @@ def revenue_summary(
         return {"payments": len(rows), "total": sum(p.amount for p in rows)}
 
     def _timeshare(db: Session):
-        from app.modules.timeshare.models import TimeshareInstallment  # noqa: PLC0415
+        from app.modules.timeshare.models import TimeshareInstallment
         rows = db.query(TimeshareInstallment).filter(
             TimeshareInstallment.paid_at.isnot(None),
             TimeshareInstallment.status == "paid",
@@ -121,7 +145,7 @@ def revenue_summary(
         return {"payments": len(rows), "total": sum(p.amount for p in rows)}
 
     dining_by_outlet = _safe_query(_dining_by_outlet_type, db)
-    empty_bucket = {"orders": 0, "total": Decimal("0")}
+    empty_bucket = {"orders": 0, "total": Decimal(0)}
     result["restaurant"] = (dining_by_outlet or {}).get("restaurant", empty_bucket) if dining_by_outlet is not None else None
     result["cafe"]       = (dining_by_outlet or {}).get("cafe", empty_bucket) if dining_by_outlet is not None else None
     result["pms"]        = _safe_query(_pms, db)
@@ -129,7 +153,7 @@ def revenue_summary(
     result["leasing"]    = _safe_query(_leasing, db)
     result["timeshare"]  = _safe_query(_timeshare, db)
 
-    total = Decimal("0")
+    total = Decimal(0)
     for key in ("restaurant", "cafe", "pms", "beach", "leasing", "timeshare"):
         val = result[key]
         if val and "total" in val:
@@ -146,8 +170,8 @@ def occupancy_summary(
     db: DbDep,
     _=Depends(get_manager_user),
     branch_id: int = Query(...),
-    month: Optional[int] = Query(None),
-    year:  Optional[int] = Query(None),
+    month: int | None = Query(None),
+    year:  int | None = Query(None),
 ):
     today = _today()
     target_month = month or today.month
@@ -156,7 +180,7 @@ def occupancy_summary(
     result: dict = {"month": target_month, "year": target_year, "pms": None, "beach": None}
 
     def _pms_occupancy(db: Session):
-        from app.modules.pms.models import NightAuditLog  # noqa: PLC0415
+        from app.modules.pms.models import NightAuditLog
         rows = db.query(NightAuditLog).filter(
             NightAuditLog.branch_id == branch_id,
             NightAuditLog.status == "completed",
@@ -184,7 +208,7 @@ def hr_summary(
     branch_id: int = Query(...),
 ):
     def _hr(db: Session):
-        from app.modules.hr.models import Employee, PayrollRun  # noqa: PLC0415
+        from app.modules.hr.models import Employee, PayrollRun
         active_employees = db.query(Employee).filter(
             Employee.branch_id == branch_id,
             Employee.status == "active",
@@ -213,7 +237,7 @@ def maintenance_summary(
     branch_id: int = Query(...),
 ):
     def _maint(db: Session):
-        from app.modules.maintenance.models import WorkOrder  # noqa: PLC0415
+        from app.modules.maintenance.models import WorkOrder
         open_wos = db.query(WorkOrder).filter(
             WorkOrder.branch_id == branch_id,
             WorkOrder.status.in_(["open", "in_progress"]),
@@ -237,8 +261,9 @@ def crm_summary(
     branch_id: int = Query(...),
 ):
     def _crm(db: Session):
-        from app.modules.crm.models import Opportunity, Customer  # noqa: PLC0415
-        from sqlalchemy import func  # noqa: PLC0415
+        from sqlalchemy import func
+
+        from app.modules.crm.models import Customer, Opportunity
 
         total_customers = db.query(Customer).filter(
             Customer.branch_id == branch_id, Customer.is_active.is_(True)
@@ -273,7 +298,7 @@ def inventory_alerts(
     branch_id: int = Query(...),
 ):
     def _inv(db: Session):
-        from app.modules.inventory.models import Product  # noqa: PLC0415
+        from app.modules.inventory.models import Product
         low_stock = db.query(Product).filter(
             Product.branch_id == branch_id,
             Product.is_active.is_(True),
@@ -298,7 +323,7 @@ def get_daily_stats(
     branch_id: int = Query(...),
     stat_date: date = Query(default_factory=_today),
 ):
-    from app.modules.analytics.models import DailyStats  # noqa: PLC0415
+    from app.modules.analytics.models import DailyStats
     row = db.query(DailyStats).filter(
         DailyStats.branch_id == branch_id,
         DailyStats.stat_date == stat_date,
@@ -310,14 +335,14 @@ def get_daily_stats(
         "occupancy_pct":      float(row.occupancy_pct),
         "adr":                float(row.adr),
         "revpar":             float(row.revpar),
-        "room_revenue":       float(row.room_revenue),
+        "room_revenue":       row.room_revenue,
         "beach_visitors":     row.beach_visitors,
-        "beach_revenue":      float(row.beach_revenue),
+        "beach_revenue":      row.beach_revenue,
         "restaurant_covers":  row.restaurant_covers,
-        "restaurant_revenue": float(row.restaurant_revenue),
+        "restaurant_revenue": row.restaurant_revenue,
         "avg_check_per_cover": float(row.restaurant_revenue / row.restaurant_covers) if row.restaurant_covers else None,
-        "cafe_revenue":       float(row.cafe_revenue),
-        "total_revenue":      float(row.total_revenue),
+        "cafe_revenue":       row.cafe_revenue,
+        "total_revenue":      row.total_revenue,
     }
 
 
@@ -336,8 +361,8 @@ def create_utility_reading(data: UtilityReadingCreate, db: DbDep, user=Depends(g
 def list_utility_readings(
     db: DbDep, _=Depends(get_manager_user),
     branch_id: int = Query(...),
-    utility_type: Optional[str] = Query(None),
-    period: Optional[str] = Query(None, description="YYYY-MM"),
+    utility_type: str | None = Query(None),
+    period: str | None = Query(None, description="YYYY-MM"),
 ):
     return services.list_utility_readings(db, branch_id, utility_type, period)
 
@@ -388,7 +413,7 @@ def _compute_live_kpis(branch_id: int) -> dict:
         result: dict = {"branch_id": branch_id, "as_of": str(today)}
 
         try:
-            from app.modules.pms.models import Room  # noqa: PLC0415
+            from app.modules.pms.models import Room
             total_rooms = db.query(Room).filter(Room.branch_id == branch_id).count()
             occupied    = db.query(Room).filter(
                 Room.branch_id == branch_id,
@@ -403,7 +428,7 @@ def _compute_live_kpis(branch_id: int) -> dict:
             result["pms"] = None
 
         try:
-            from app.modules.beach.models import BeachInventory  # noqa: PLC0415
+            from app.modules.beach.models import BeachInventory
             # ⚠️ باج حقيقي (اتصلح هنا): كان بيقرأ BeachInventory.inv_date —
             # عمود مش موجود خالص في الموديل الحقيقي (الاسم الصح
             # inventory_date). كان بيرمي AttributeError عند بناء الـ filter،
@@ -423,7 +448,7 @@ def _compute_live_kpis(branch_id: int) -> dict:
             result["beach"] = None
 
         try:
-            from app.modules.maintenance.models import WorkOrder  # noqa: PLC0415
+            from app.modules.maintenance.models import WorkOrder
             open_wos = db.query(WorkOrder).filter(
                 WorkOrder.branch_id == branch_id,
                 WorkOrder.status.in_(["open", "in_progress"]),
@@ -463,13 +488,13 @@ def list_reviews(
     db: DbDep,
     _=Depends(get_manager_user),
     branch_id: int = Query(...),
-    source: Optional[str] = Query(None),
-    booking_id: Optional[int] = Query(None),
-    timeshare_visit_id: Optional[int] = Query(None),
+    source: str | None = Query(None),
+    booking_id: int | None = Query(None),
+    timeshare_visit_id: int | None = Query(None),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
 ):
-    from app.modules.analytics.models import GuestReview  # noqa: PLC0415
+    from app.modules.analytics.models import GuestReview
     q = db.query(GuestReview).filter(GuestReview.branch_id == branch_id)
     if booking_id or timeshare_visit_id:
         # عرض تقييمات مرجع محدد (بروفايل عميل ملكية جزئية مثلاً) — يشمل الغير
@@ -527,8 +552,8 @@ def full_dashboard(
         return _safe_query(lambda d: _build_revenue(d, branch_id, date_from_30, today), db)
 
     def _build_revenue(d, bid, dfrom, dto):
-        from app.modules.pms.models import Booking       # noqa: PLC0415
-        from app.modules.beach.models import BeachTransaction  # noqa: PLC0415
+        from app.modules.beach.models import BeachTransaction
+        from app.modules.pms.models import Booking
         # ⚠️ باج حقيقي (اتصلح هنا، تاريخيًا): كان بيقارن created_at (UTC
         # فعليًا) بحدود يوم مبنية بـ datetime.combine ساذج من تاريخ محلي
         # (Africa/Cairo) — نفس الباج اللي اتصلح في /analytics/revenue جنبه
@@ -539,8 +564,8 @@ def full_dashboard(
         # cafe.CafeOrder (DINING_CUTOVER_PLAN.md D-05، نفس دالة
         # /analytics/revenue بالظبط، مفيش تكرار منطق).
         dining_by_outlet = services.get_dining_revenue_by_outlet_type(d, bid, range_start, range_end)
-        rest = dining_by_outlet.get("restaurant", {}).get("total", Decimal("0"))
-        cafe = dining_by_outlet.get("cafe", {}).get("total", Decimal("0"))
+        rest = dining_by_outlet.get("restaurant", {}).get("total", Decimal(0))
+        cafe = dining_by_outlet.get("cafe", {}).get("total", Decimal(0))
         pms_rev = sum(b.total_rate for b in d.query(Booking).filter(
             Booking.branch_id == bid, Booking.status == "checked_out",
             Booking.check_out >= dfrom, Booking.check_out <= dto,
@@ -551,27 +576,32 @@ def full_dashboard(
         ).all())
         # إيرادات الإيجار والملكية الجزئية — paid_at مخزّن UTC، نفس نطاق range_start/end
         try:
-            from app.modules.leasing.models import LeasePayment  # noqa: PLC0415
+            from app.modules.leasing.models import LeasePayment
             lease_rev = sum(p.amount for p in d.query(LeasePayment).filter(
                 LeasePayment.paid_at.isnot(None), LeasePayment.status == "paid",
                 LeasePayment.paid_at >= range_start, LeasePayment.paid_at <= range_end,
             ).all())
         except Exception:
-            lease_rev = Decimal("0")
+            lease_rev = Decimal(0)
         try:
-            from app.modules.timeshare.models import TimeshareInstallment  # noqa: PLC0415
+            from app.modules.timeshare.models import (
+                TimeshareInstallment,
+            )
             ts_rev = sum(p.amount for p in d.query(TimeshareInstallment).filter(
                 TimeshareInstallment.paid_at.isnot(None), TimeshareInstallment.status == "paid",
                 TimeshareInstallment.paid_at >= range_start, TimeshareInstallment.paid_at <= range_end,
             ).all())
         except Exception:
-            ts_rev = Decimal("0")
+            ts_rev = Decimal(0)
         total = rest + cafe + pms_rev + beach_rev + lease_rev + ts_rev
         return {
-            "restaurant": float(rest), "cafe": float(cafe),
-            "pms": float(pms_rev), "beach": float(beach_rev),
-            "leasing": float(lease_rev), "timeshare": float(ts_rev),
-            "total": float(total),
+            "restaurant": Decimal(str(rest)).quantize(Decimal("0.01")),
+            "cafe":       Decimal(str(cafe)).quantize(Decimal("0.01")),
+            "pms":        Decimal(str(pms_rev)).quantize(Decimal("0.01")),
+            "beach":      Decimal(str(beach_rev)).quantize(Decimal("0.01")),
+            "leasing":    Decimal(str(lease_rev)).quantize(Decimal("0.01")),
+            "timeshare":  Decimal(str(ts_rev)).quantize(Decimal("0.01")),
+            "total":      Decimal(str(total)).quantize(Decimal("0.01")),
         }
 
     return {
@@ -587,31 +617,31 @@ def full_dashboard(
 
 
 def _hr_data(db, branch_id):
-    from app.modules.hr.models import Employee, PayrollRun  # noqa: PLC0415
+    from app.modules.hr.models import Employee, PayrollRun
     emp_count = db.query(Employee).filter(Employee.branch_id == branch_id, Employee.status == "active").count()
     last = db.query(PayrollRun).filter(PayrollRun.branch_id == branch_id).order_by(PayrollRun.created_at.desc()).first()
     return {"active_employees": emp_count, "last_payroll_period": f"{last.period_year}-{last.period_month:02d}" if last else None}
 
 
 def _maint_data(db, branch_id):
-    from app.modules.maintenance.models import WorkOrder  # noqa: PLC0415
+    from app.modules.maintenance.models import WorkOrder
     open_wo = db.query(WorkOrder).filter(WorkOrder.branch_id == branch_id, WorkOrder.status.in_(["open", "in_progress"])).count()
     return {"open_work_orders": open_wo}
 
 
 def _crm_data(db, branch_id):
-    from app.modules.crm.models import Customer  # noqa: PLC0415
+    from app.modules.crm.models import Customer
     return {"total_customers": db.query(Customer).filter(Customer.branch_id == branch_id, Customer.is_active.is_(True)).count()}
 
 
 def _inv_data(db, branch_id):
-    from app.modules.inventory.models import Product  # noqa: PLC0415
+    from app.modules.inventory.models import Product
     low = db.query(Product).filter(Product.branch_id == branch_id, Product.is_active.is_(True), Product.current_stock <= Product.reorder_point).count()
     return {"low_stock_count": low}
 
 
 def _review_avg(db, branch_id):
-    from app.modules.analytics.models import GuestReview  # noqa: PLC0415
+    from app.modules.analytics.models import GuestReview
     reviews = db.query(GuestReview).filter(GuestReview.branch_id == branch_id, GuestReview.is_published.is_(True)).all()
     if not reviews:
         return {"count": 0, "avg_rating": None}
@@ -630,7 +660,10 @@ async def submit_guest_review(
     يتحقق من JWT أولاً، ويحدِّد نوع المرجع (ref_type) من التوكن نفسه.
     endpoint عام بالكامل (بدون auth، token JWT بس) — GuestReviewSubmitRequest
     (راجع schemas.py) بيفرض حدود المدخلات بدل dict خام."""
-    from app.modules.analytics.services import verify_survey_token, submit_review  # noqa: PLC0415
+    from app.modules.analytics.services import (
+        submit_review,
+        verify_survey_token,
+    )
     payload = verify_survey_token(token)
     ref_id = int(payload["sub"])
     branch_id = payload["branch_id"]
@@ -660,14 +693,14 @@ async def get_survey_token(
     (حتى بأقل صلاحية) كان يقدر يولّد token صحيح لحجز مش بتاع الفرع اللي
     مررّه، فيلوّث إحصائيات تقييمات فرع تاني. نفس النمط اللي send_timeshare_survey
     تحت طبّقه بالفعل — هنا كان ناقص."""
-    from app.modules.pms.models import Booking  # noqa: PLC0415
+    from app.modules.pms.models import Booking
     booking = db.query(Booking).filter(
         Booking.id == booking_id, Booking.branch_id == branch_id,
     ).first()
     if not booking:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "الحجز غير موجود")
 
-    from app.modules.analytics.services import create_survey_token  # noqa: PLC0415
+    from app.modules.analytics.services import create_survey_token
     token = create_survey_token(branch_id=branch_id, booking_id=booking_id)
     return {"token": token, "expires_in_days": 7}
 
@@ -683,14 +716,14 @@ async def get_timeshare_survey_token(
     بالظبط، endpoint موازٍ مش تعديل على القديم (الحجز الفندقي والملكية الجزئية
     مصدرين مختلفين تمامًا، مش نفس الجدول). نفس تحقق الملكية اللي فوق —
     راجع تعليق get_survey_token."""
-    from app.modules.timeshare.models import TimeshareVisit  # noqa: PLC0415
+    from app.modules.timeshare.models import TimeshareVisit
     visit = db.query(TimeshareVisit).filter(
         TimeshareVisit.id == visit_id, TimeshareVisit.branch_id == branch_id,
     ).first()
     if not visit:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "الزيارة غير موجودة")
 
-    from app.modules.analytics.services import create_survey_token  # noqa: PLC0415
+    from app.modules.analytics.services import create_survey_token
     token = create_survey_token(branch_id=branch_id, timeshare_visit_id=visit_id)
     return {"token": token, "expires_in_days": 7}
 
@@ -712,13 +745,13 @@ async def send_timeshare_survey(
     قبل الـ endpoint ده، get_timeshare_survey_token فوق كان بيولّد الـ token
     بس من غير أي طريقة حقيقية توصّله للضيف — يعني الاستبيان (رغم إن الباك
     إند والفرونت إند شغالين بالكامل) كان عمليًا غير قابل للاستخدام."""
-    from app.modules.timeshare.models import TimeshareVisit  # noqa: PLC0415
+    from app.modules.timeshare.models import TimeshareVisit
     visit = db.query(TimeshareVisit).filter(
         TimeshareVisit.id == visit_id, TimeshareVisit.branch_id == branch_id,
     ).first()
     if not visit:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "الزيارة غير موجودة")
 
-    from app.tasks.timeshare_tasks import send_visit_survey  # noqa: PLC0415
+    from app.tasks.timeshare_tasks import send_visit_survey
     send_visit_survey.delay(visit_id, branch_id)
     return {"queued": True}
