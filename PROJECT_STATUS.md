@@ -1,31 +1,48 @@
 # حالة المشروع الحالية — El Kheima Beach Resort OS
 
-**آخر تحديث:** 2026-08-11 — REL-13 + Owner PWA hotfix منشوران ومتحققان.
-- **Production:** الإصدار الفعال `/opt/resort-os-releases/8fbda3c` من commit
-  `8fbda3c752d5f877fc17f4d7dbd5558b0461d57a`؛ Alembic
-  `c9d0e1f2a3b4 (head)`؛ PostgreSQL وRedis والخدمات سليمة.
-- **الملكية الجزئية:** الاسم الظاهر للمستخدم استُبدل في Staff/Owner/i18n
-  والأدلة؛ أسماء API والجداول والأدوار التقنية `timeshare*` بقيت ثابتة للتوافق.
-- **سلامة مالية:** تحصيلات الإيجارات والملكية الجزئية دخلت دفتر Payment
+**آخر تحديث:** 2026-08-13 — REL-14: 2FA اختياري للموظفين العاديين +
+تراكم 16 commit غير موثّق سابقًا، منشور ومتحقق فعليًا.
+- **Production:** الإصدار الفعال
+  `/opt/resort-os-releases/95c30d99fc9a07ccf8495bf555a87b5e926fefbf` من
+  commit `95c30d9`؛ Alembic `d1e2f3a4b5c6 (head)`؛ PostgreSQL وRedis
+  والخدمات سليمة. راجع
+  `docs/agent-workflow/handoffs/2026-08-13_REL-14_2fa-optional-staff-deploy_claude_handoff.md`
+  للتفاصيل الكاملة.
+- **فجوة توثيق مكتشفة ومصحَّحة**: هذا الملف كان واقف على REL-13
+  (`8fbda3c`) بينما الإنتاج الفعلي كان بالفعل على `8cd4860` (16 commit
+  متأخرًا) — الأرصدة/الـhandoffs السابقة (CX-02C→CX-02G) كانت مكتوبة
+  ومدفوعة لكن الملف ده ما اتحدّثش. handoff الأخير (CX-02G) ادّعى
+  "منشور على الإنتاج" قبل أوانه فعليًا.
+- **2FA اختياري للموظفين العاديين**: `MANDATORY_2FA_ROLES =
+  {super_admin, accountant, owner}` بس — باقي الأدوار تسجّل دخول
+  بإيميل+باسورد. `backend/scripts/disable_2fa_for_regular_staff.py`
+  موجود لكن **لم يُشغَّل بعد**، محتاج قرار Mohamed مباشر.
+- **باج إنتاج حقيقي اتكشف واتصلح أثناء هذا الـrelease**: `.env.prod`
+  الخاص بالـrelease السابق (`8cd4860`) كان `root:root` بدل
+  `resortos:resortos` — كان بيكسر `resort-os-backup.service` بصمت من
+  `2026-08-13 03:02` (آخر backup سليم قبلها كان من `2026-08-12 03:00`،
+  أكتر من 13 ساعة بدون نسخة احتياطية سليمة). اتصلح دائمًا (الملكية
+  اتصلحت على الـrelease الجديد، وكل release قادم بينسخ من السابق).
+- **الملكية الجزئية (REL-13)**: الاسم الظاهر للمستخدم استُبدل في
+  Staff/Owner/i18n والأدلة؛ أسماء API والجداول والأدوار التقنية
+  `timeshare*` بقيت ثابتة للتوافق.
+- **سلامة مالية**: تحصيلات الإيجارات والملكية الجزئية دخلت دفتر Payment
   والورديات، إلغاء السلف والعقود له عكس محاسبي وتدقيق، والاستلام الجزئي
-  للمخزون ذري، مع idempotency إلزامي للقيود.
-- **مصالحة الإنتاج:** قيدان PMS بإجمالي `250.00 EGP` وخمسة استحقاقات إيجار
-  بإجمالي `138,000.00 EGP` طُبقت ذريًا؛ dry-run الثاني أعاد صفر مقترحات.
-- **Full gates:** backend `2806` اختبارًا وصل 100% بـexit 0 وصفر failure؛
-  Staff frontend `103/103`؛ type-check/build/agent-check وPostgreSQL 16
-  upgrade/downgrade/re-upgrade وGitleaks كلها ناجحة.
-- **Live acceptance:** النطاقات الأربعة HTTP 200، health/ready وsystemd
-  healthcheck ناجحة، protected probes رجعت 401، وكل الخدمات `RestartCount=0`
-  وصفر alerts بعد الاستقرار.
-- **Console/PWA:** أضيف وسم `mobile-web-app-capable` العام وأصبح ظاهرًا في
-  HTML الحي. رسائل 401 المصورة طابقت فتح نافذة Incognito بلا cookie ومحاولة
-  دخول فاشلة تلتها محاولة ناجحة وbootstrap 200؛ لا يوجد refresh replay.
-- **Rollback:** النسخة الطازجة
-  `/var/backups/resort-os/database/resort_os_20260811_123803.dump` (1547 TOC،
-  SHA-256 `53d269039128ba78848bbf74e0176f4999a14444bda72b013696c075dfa8a37d`)،
-  وأرشيف المصدر `8fbda3c.tar.gz` مطابق محليًا وعلى الخادم.
+  للمخزون ذري، مع idempotency إلزامي للقيود. `4df8164` (هذه الدفعة) بدّل
+  `float` بـ`Decimal` في تقارير مبيعات dining وanalytics.
+- **Full gates (REL-14)**: backend `pytest -q` exit 0 (2817 اختبار
+  مجمّع، `agent-check.sh` PASS)؛ Staff frontend `103/103`؛
+  type-check/build نظيفان؛ alembic head واحد.
+- **Live acceptance**: النطاقات الأربعة HTTP 200، `resort-os-healthcheck`
+  اليدوي 14/14 ناجحة، صفر `RestartCount`، صفر error/traceback في اللوجات
+  بعد الـrelease.
+- **Rollback**: نسخة DB طازجة
+  `/opt/resort-os-releases/95c30d99fc9a07ccf8495bf555a87b5e926fefbf/backups/resort_os_20260813_163841.dump`
+  (1547 TOC entries، تحقّق فعلي بـ`pg_restore --list`)؛ صور rollback
+  محفوظة تحت
+  `/var/backups/resort-os/source-releases/95c30d99fc9a07ccf8495bf555a87b5e926fefbf-rollback-images.txt`.
 
-**السابق:** 2026-08-08 — REL-11: Owner Intelligence Cockpit Phase 1-5 نشر على `owner.elkheima.com` (commit `719a432` + `74959e4` — منشور ✅)
+**السابق:** 2026-08-11 — REL-13 + Owner PWA hotfix (commit `8fbda3c`)
 **البيئة:** Production — `elkheima.com` / VPS `191.218.161.133`
 **قائد التنفيذ والمراجع النهائي:** Codex
 

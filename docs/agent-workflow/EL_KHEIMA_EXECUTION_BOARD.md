@@ -1,6 +1,7 @@
 # لوحة التنفيذ الحية — El Kheima
 
-**آخر تحديث:** 2026-08-11 — REL-13 + Owner PWA hotfix منشوران ومتحققان
+**آخر تحديث:** 2026-08-13 — REL-14: 2FA اختياري للموظفين منشور ومتحقق
+(راجع `docs/agent-workflow/handoffs/2026-08-13_REL-14_2fa-optional-staff-deploy_claude_handoff.md`)
 **المالك:** Mohamed
 **قائد التنفيذ والمراجع النهائي:** Codex
 **المرحلة الحالية:** ACC-01 roster + UAT-01 + production burn-in
