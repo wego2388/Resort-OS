@@ -4,11 +4,11 @@
 **Branch:** `codex/rel-15-auth-ops-readiness` (مدفوع إلى origin)
 **Implementation baseline commit:**
 `6f1f6e1c703f2ecb88851691864525e22e5071d5`
-**Current runtime commit (account cleanup follow-up):**
-`85da3f8bcd7421b86f156748ad874b378b8bdc54`
+**Current runtime commit (reviewed roster follow-up):**
+`bf538382fa195d0317b84f2805785511537aedf1`
 **Production:** منشور ومتحقق فعليًا ✅
 **Active release:**
-`/opt/resort-os-releases/85da3f8bcd7421b86f156748ad874b378b8bdc54`
+`/opt/resort-os-releases/bf538382fa195d0317b84f2805785511537aedf1`
 **Alembic:** `e2f3a4b5c6d7 (head)`
 
 ## 1. قرارات Mohamed المنفذة
@@ -20,8 +20,8 @@
   صريحًا باسمه، والتحصيل له بطاقة/بنك فقط بلا cash.
 - الرواتب الحالية تشغيل داخلي، وليست ادعاء امتثال ضريبي/تأميني مصري قبل
   اعتماد متخصص.
-- البيانات الحالية تجريبية، لكن لم يحدث حذف جماعي لأن المصالحة الآمنة أصلحت
-  عضويات الفرع دون فقد معلومات، والـroster الحقيقي سيستبدل الحسابات لاحقًا.
+- الحسابات التجريبية أُرشفت دون كسر المراجع، ثم نُفذ roster الأشخاص
+  الحقيقيين بحساب مستقل لكل شخص وربط HR صريح.
 - فكرة S Pen محفوظة لتحسين لاحق: ملاحظات نصية خاصة بالمالك فقط عبر تحويل
   الكتابة اليدوية إلى نص؛ لم تُنفذ في REL-15 حتى لا تتضخم النسخة قبل UAT.
 
@@ -84,8 +84,8 @@
 ## 3. بوابات التحقق المحلي
 
 - `bash scripts/agent-check.sh --full` → PASS.
-- Backend: `2802 passed, 68 skipped` من `2870` بعد إضافة اختبار أداة
-  الأرشفة المعزول.
+- Backend: `2803 passed, 68 skipped` من `2871` بعد إضافة اختباري الأرشفة
+  وتهيئة الـroster المعزولين.
 - Staff unit: `106/106`؛ i18n `6323` key لكل لغة؛ mock responsive `8/8`.
 - Owner responsive E2E `12/12`، تشمل `320`, `390`, `768`, `1024`, `1280`
   وSamsung-class `412×915`، وعدم تغطية bottom nav للمحتوى.
@@ -169,6 +169,33 @@
 - health gate نجح؛ marketing/staff/owner/portal كلها HTTP 200، والمسار
   المحمي بلا توثيق 401؛ DB/Redis سليمان وlog scan للخدمات الثلاث نظيف.
 
+### نشر roster الموظفين الحقيقيين
+
+- `backend/scripts/provision_reviewed_staff_roster.py`: JSON runtime غير
+  committed، dry-run افتراضي، guards للأعداد/الأدوار/HR/الفرع، apply ذري،
+  Audit بلا أسرار، وملف credentials حصري mode `0600`.
+- dry-run الإنتاج: 10 entries، 9 حسابات جديدة، استعادة حساب واحد، 9 ملفات
+  HR جديدة، وإعادة استخدام ملف HR واحد. apply أعاد حساب HR القديم بنفس
+  `user_id=5` وربطه بكود `707`، وربط المحاسب الموجود بسجله `ACC-02`.
+- النتيجة: `visible_users=14`, `active_memberships=14`,
+  `linked_active_employees=10`, `roster_audits=10`, `email_collisions=0`.
+- رمز enrollment للمحاسبين والمالكين لمرة واحدة وصالح 24 ساعة
+  (`TWO_FACTOR_ENROLLMENT_TOKEN_TTL_MINUTES=1440`)؛ كود Authenticator نفسه
+  يظل معيار TOTP المتغير كل 30 ثانية.
+- أُصدرت bootstrap credentials جديدة للمالكين الاثنين دون تغيير أدوارهما،
+  وجُمعت مع الموظفين في ملف MD خاص خارج repository بصلاحية `0600`؛ النسخ
+  السرية المرحلية على VPS حُذفت بعد التحقق.
+- exact source archive SHA-256:
+  `f712a3d7c04c062c20368759688b98f7ea57b6d6d78678f3684017c45cd9a125`.
+- DB dump قبل apply، متحقق بـ`pg_restore --list`:
+  `/var/backups/resort-os/resort_os_20260814_080457.dump` (`741295` bytes).
+- rollback manifest:
+  `/var/backups/resort-os/source-releases/bf538382fa195d0317b84f2805785511537aedf1-rollback-images.txt`.
+- Backend/Worker/Beat على image
+  `sha256:c1a2ea5947aad2760cab6fd8fdbf45b03415895bee64a6066d0b367f33f03082`،
+  revision واحد، healthy و`RestartCount=0`. health gate نجح، المواقع
+  الأربعة HTTP 200، DB/Redis سليمان، وlog scan نظيف.
+
 ## 7. التسليم وUAT المتبقي
 
 - دليل القبول: `docs/UAT_REL15_OWNER_STAFF_AR.md`.
@@ -176,6 +203,7 @@
 - دليل الموظفين: `manual/02-دليل-الموظفين-والتدريب.md` وPDF المولد.
 - قالب الأسماء: `docs/templates/REL15_STAFF_ROSTER_TEMPLATE.xlsx`؛ ممنوع وضع
   password/OTP/recovery code بداخله.
+- ملف التسليم السري generated خارج Git؛ يُحذف بعد إتمام أول دخول لكل شخص.
 - القبول التقني مكتمل. لا يُعلن Go تشغيليًا حتى يجرب Mohamed مع المالك
   وممثلي accountant/cashier/HR/manager/timeshare على البيانات الحقيقية.
 

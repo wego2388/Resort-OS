@@ -4,8 +4,8 @@
 وتطبيق المالك، منشور ومتحقق فعليًا.
 
 - **Production:** الإصدار الفعال
-  `/opt/resort-os-releases/85da3f8bcd7421b86f156748ad874b378b8bdc54`
-  من commit `85da3f8` على branch
+  `/opt/resort-os-releases/bf538382fa195d0317b84f2805785511537aedf1`
+  من commit `bf53838` على branch
   `codex/rel-15-auth-ops-readiness`؛ Alembic
   `e2f3a4b5c6d7 (head)`؛ PostgreSQL وRedis والخدمات سليمة.
 - **تسجيل الدخول:** البريد أصبح case-insensitive، كلمة المرور تُعامل كسر
@@ -13,8 +13,8 @@
   والسوبر أدمن مكتملة، tabs المتزامنة لا تكسر refresh family، وحد شبكة
   الموظفين المشتركة أصبح `60/5m` مع قفل محاولات مستقل لكل حساب.
 - **الفرع الوحيد:** الحقيقة التشغيلية المثبتة هي فرع واحد باسم
-  `El Kheima Beach Resort`. الحسابات الحية الآن 4 فقط: سوبر أدمن واحد،
-  مالكان، ومدير Timeshare واحد؛ لكل حساب عضوية فعالة في الفرع الوحيد.
+  `El Kheima Beach Resort`. الحسابات الحية الآن 14: الحسابات الأربعة
+  المعتمدة سابقًا + 10 موظفين من الـroster الحقيقي؛ لكل حساب عضوية فعالة.
   أُرشف 8 حسابات تجربة وأُلغيت عضوياتها وجلساتها وحالة 2FA/PIN والصلاحيات
   وفُك ربطها من HR، مع Audit واحد؛ dry-run التالي وجد صفر أهداف.
 - **الأدوار:** عزل named-role للمالية وHR وCRM وPMS/POS والتشغيل؛ لا يرث
@@ -27,14 +27,13 @@
   الصفحة الرئيسية أصبحت decision-first، مع زمن تحديث القاهرة وتحذير
   البيانات القديمة وفلترة تواريخ صحيحة. استجابة الهاتف والتابلت والكمبيوتر
   محسنة، واختبار حي على `412×915` و`1280×800` ناجح بلا overflow أو خطأ JS.
-- **الحسابات الحالية:** لا يظهر ولا يستطيع الدخول إلا الحسابات الأربعة
-  المعتمدة. بقيت صفوف الحسابات التجريبية المؤرشفة بأرقامها الداخلية فقط
-  حتى لا تنكسر المراجع المالية والتدقيقية، بعد إخفاء الهوية ومنع الدخول.
-  قالب إدخال الموظفين الحقيقيين هو
-  `docs/templates/REL15_STAFF_ROSTER_TEMPLATE.xlsx`، وصف واحد لكل شخص،
-  بلا كلمات مرور أو أكواد 2FA.
+- **الحسابات الحالية:** 10 موظفين حقيقيين مرتبطون بملفات HR نشطة؛ 9 حسابات
+  جديدة، واستعادة حساب HR القديم بنفس ID، وإعادة استخدام سجل المحاسب
+  الموجود دون تكراره. لا يوجد email collision. المالكـان والمحاسبان لديهم
+  bootstrap لمرة واحدة صالح 24 ساعة؛ بقية الموظفين يغيرون كلمة المرور فقط.
+  صفوف الحسابات التجريبية المؤرشفة بقيت بأرقامها الداخلية لحماية المراجع.
 - **Full gates:** `agent-check.sh --full` ناجح؛ backend
-  `2802 passed, 68 skipped` من 2870؛ Staff `106/106` وmock responsive
+  `2803 passed, 68 skipped` من 2871؛ Staff `106/106` وmock responsive
   `8/8`؛ Owner responsive E2E `12/12`؛ type-check وبناء production ناجحان؛
   migration نظيفة من قاعدة فارغة إلى head.
 - **Live acceptance:** 9 حاويات Resort تعمل، كل `RestartCount=0`؛ backend
@@ -42,14 +41,14 @@
   وبوابة العميل HTTP 200؛ المسار المحمي 401؛ TLS SAN يشمل الأربعة؛
   health gate اليدوي `16/16`؛ السجلات بلا خطأ حقيقي بعد النشر.
 - **Rollback:** أرشيف المصدر SHA-256
-  `b0599b7ec6d9752ed435586d451921c2da1c6dbd44d65af1df50ebd1a9f45819`؛
+  `f712a3d7c04c062c20368759688b98f7ea57b6d6d78678f3684017c45cd9a125`؛
   dump متحقق بـ`pg_restore --list`:
-  `/var/backups/resort-os/resort_os_20260814_071442.dump` (`757959` bytes)؛
+  `/var/backups/resort-os/resort_os_20260814_080457.dump` (`741295` bytes)؛
   صور الرجوع في
-  `/var/backups/resort-os/source-releases/85da3f8bcd7421b86f156748ad874b378b8bdc54-rollback-images.txt`.
+  `/var/backups/resort-os/source-releases/bf538382fa195d0317b84f2805785511537aedf1-rollback-images.txt`.
 - **قرار التشغيل:** القبول التقني مكتمل. UAT البشري للمالك والموظفين
-  ما زال مطلوبًا حسب `docs/UAT_REL15_OWNER_STAFF_AR.md`، ثم تُستبدل
-  الحسابات الشخصية للموظفين الحقيقيين من القالب.
+  ما زال مطلوبًا حسب `docs/UAT_REL15_OWNER_STAFF_AR.md` باستخدام الحسابات
+  الشخصية التي جرى تجهيزها.
 
 **السابق:** 2026-08-13 — REL-14 (commit `95c30d9`)
 **البيئة:** Production — `elkheima.com` / VPS `191.218.161.133`
@@ -127,11 +126,11 @@
 | البند | القيمة المثبتة |
 |---|---|
 | فرع الإصدار المنشور | `codex/rel-15-auth-ops-readiness` |
-| Resort OS source release (منشور) | `85da3f8bcd7421b86f156748ad874b378b8bdc54` — REL-15 account cleanup follow-up |
-| runtime code/config commit | `85da3f8bcd7421b86f156748ad874b378b8bdc54` |
+| Resort OS source release (منشور) | `bf538382fa195d0317b84f2805785511537aedf1` — REL-15 reviewed roster provisioning |
+| runtime code/config commit | `bf538382fa195d0317b84f2805785511537aedf1` |
 | Marketing source release | `088cab4c5dc4de85953895abcf9247f7a3cb2773` — محفوظ ولم يُعد بناؤه في REL-15 |
 | `origin/main` وقت الإصدار | `2e74bce` — لم يُحرّك كجزء من النشر |
-| active Resort release | `/opt/resort-os-current -> /opt/resort-os-releases/85da3f8bcd7421b86f156748ad874b378b8bdc54` |
+| active Resort release | `/opt/resort-os-current -> /opt/resort-os-releases/bf538382fa195d0317b84f2805785511537aedf1` |
 | active Marketing release | `/opt/elkheima-marketing-releases/088cab4c5dc4de85953895abcf9247f7a3cb2773` |
 | Marketing current link | `/opt/elkheima-marketing-current -> /opt/elkheima-marketing-releases/088cab4c5dc4de85953895abcf9247f7a3cb2773` |
 | Compose project / override | `resort-os-prod` / `docker-compose.prod.domain.yml` |
