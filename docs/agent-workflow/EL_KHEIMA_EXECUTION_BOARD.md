@@ -1,10 +1,10 @@
 # لوحة التنفيذ الحية — El Kheima
 
-**آخر تحديث:** 2026-08-13 — REL-14: 2FA اختياري للموظفين منشور ومتحقق
-(راجع `docs/agent-workflow/handoffs/2026-08-13_REL-14_2fa-optional-staff-deploy_claude_handoff.md`)
+**آخر تحديث:** 2026-08-14 — REL-15: auth/roles/single-branch/Owner readiness
+منشور ومتحقق (راجع handoff REL-15 الأحدث)
 **المالك:** Mohamed
 **قائد التنفيذ والمراجع النهائي:** Codex
-**المرحلة الحالية:** ACC-01 roster + UAT-01 + production burn-in
+**المرحلة الحالية:** ACC-01 real-person roster + UAT-01
 **قرار الإطلاق:** CREDIT-0005 DEPLOYED؛ قرار Go/No-Go التشغيلي العام ما زال
 مرتبطًا بالـUAT والبيانات الحقيقية
 
@@ -20,7 +20,7 @@
   الحقيقية وGo/No-Go.
 - الإنتاج الرسمي:
   `elkheima.com` + `www.elkheima.com` للموقع،
-  و`app.elkheima.com` للموظفين.
+  و`app.elkheima.com` للموظفين، و`owner.elkheima.com` للمالك.
 - أي تغيير إنتاج جديد يحتاج backup وrollback وhealth evidence.
 - أي تغيير DNS لاحق محدد ومراجع؛ لا Reset DNS ولا AAAA دون IPv6.
 
@@ -54,7 +54,8 @@
 | REL-11 — /ops role-gate + N+1 fixes + journal-entry logging + real journal entries admin view (تفويض مباشر من Mohamed خارج دورة Codex) | COMPLETE / DEPLOYED | `92aa769` فعال؛ راجع `docs/agent-workflow/handoffs/2026-08-09_REL-11_claude_handoff.md` — لا migration | — |
 | REL-12 — PMS checkout/folio settlement fix — بتأكيد صريح من Mohamed (تفويض مباشر خارج دورة Codex) | COMPLETE / DEPLOYED | `403bbd7` فعال؛ راجع `docs/agent-workflow/handoffs/2026-08-09_REL-12_claude_handoff.md` — لا migration؛ تسوية الـcheckout بقت تشمل شحنات beach/dining على الغرفة مش سعر الغرفة بس | — |
 | REL-13 — financial integrity + fractional ownership naming + Owner PWA hotfix | COMPLETE / DEPLOYED | `8fbda3c` فعال؛ Alembic `c9d0e1f2a3b4`؛ 2806 backend + 103 frontend؛ مصالحة PMS/Leasing صفر نواقص؛ PWA meta حي؛ راجع handoff 2026-08-11 | — |
-| ACC-01 — employee/account workflow | DEPLOYED؛ ACCOUNTS PENDING | HR record ثم حساب شخصي من مركز السوبر أدمن + super-admin احتياطي | قائمة أسماء/بريد/أدوار معتمدة |
+| REL-15 — auth/role isolation + single branch + Timeshare/Owner readiness | COMPLETE / DEPLOYED | `6f1f6e1` فعال؛ Alembic `e2f3a4b5c6d7`؛ 2869 backend collected؛ Staff/Owner responsive gates؛ 9 containers؛ live browser 6/6 | — |
+| ACC-01 — employee/account workflow | CORE RECONCILED؛ REAL ROSTER PENDING | كل حساب فعلي باسم شخص + HR link + temporary credential handoff | ملف `docs/templates/REL15_STAFF_ROSTER_TEMPLATE.xlsx` بعد تعبئته |
 | OPS-01 — burn-in and alerting | BASELINE COMPLETE | مراقبة مستمرة + إرسال خارجي | اختيار قناة التنبيه |
 | UAT-01 — operational acceptance | PENDING | جهاز/دور/لغة/شبكة/مال | ممثلو التشغيل والمالية |
 | DATA-02 — approved real master data | PARTIAL — PMS ROOMS COMPLETE | الغرف الحقيقية منشورة؛ باقي master data ينتظر اعتماد العمليات | المالك والتشغيل لباقي البيانات |
@@ -112,15 +113,16 @@
 | Host/IP | `resort-os-prod` / `191.218.161.133` |
 | Public site | `https://elkheima.com` و`https://www.elkheima.com` |
 | Staff app | `https://app.elkheima.com` |
-| Containers | 8 Running؛ healthchecks ناجحة |
+| Owner app | `https://owner.elkheima.com` |
+| Containers | 9 Running؛ healthchecks ناجحة؛ كل RestartCount=0 |
 | Ports | 5436/6381/8005 loopback-only؛ 80/443 public |
-| Resort release | `/opt/resort-os-current -> .../eda6617` |
-| Marketing release | `/opt/elkheima-marketing-current -> .../79130a6` |
-| Database | Alembic `d0e1f2a3b4c5`؛ real-room marker واحد؛ 14 غرفة / نوعان / صفر rate plans |
-| TLS | Let's Encrypt SAN حتى `2026-10-28 02:21:34 UTC` |
+| Resort release | `/opt/resort-os-current -> .../6f1f6e1c703f2ecb88851691864525e22e5071d5` |
+| Marketing release | `/opt/elkheima-marketing-current -> .../088cab4c5dc4de85953895abcf9247f7a3cb2773` |
+| Database | Alembic `e2f3a4b5c6d7`؛ فرع نشط واحد؛ operational_without_membership=0 |
+| TLS | Let's Encrypt SAN للأصل/www/app/owner حتى `2026-11-05 21:32:26 UTC` |
 | DNS rollback | Hostinger snapshot `167902017` |
 | Chatbot | Active؛ live Gemini E2E passed من `elkheima.com` |
-| Accounts | `super_admin` واحد، عضوية فعالة واحدة؛ صفر سجلات/حسابات موظفين |
+| Accounts | 11 حسابًا تشغيليًا نشطًا لهم عضوية الفرع؛ 4 staff تجريبية تنتظر HR link صريح |
 | Monitoring | health/backup/certbot timers مفعلة |
 | Legacy source | محفوظ وغير مستخدم كمصدر للحاويات |
 
@@ -144,14 +146,11 @@
 
 ## آخر تسليم
 
-`docs/agent-workflow/handoffs/2026-08-08_CREDIT-0005_codex_handoff.md`
+`docs/agent-workflow/handoffs/2026-08-14_REL-15_auth-ops-owner-readiness_codex_handoff.md`
 
 ## التحديث التالي المطلوب
 
-اعتمد قائمة الموظفين (الاسم والبريد والدور والمدير). ينشئ HR سجل الموظف
-أولًا ثم ينشئ السوبر أدمن حسابه الشخصي من مركز الإدارة. يُنشأ حساب
-`super_admin` الاحتياطي عبر bootstrap من الطرفية فقط،
-ثم وزّع `manual/02-دليل-الموظفين-والتدريب.md` على رؤساء الأقسام ونفّذ سيناريوهات
-UAT بالأجهزة والأدوار. راجع بيانات العرض واعتمد بدائلها الحقيقية، واختر
-قناة alerts خارجية. بعد burn-in وretest، يسجل Mohamed قرار Go/No-Go
-التشغيلي المؤرخ.
+املأ `docs/templates/REL15_STAFF_ROSTER_TEMPLATE.xlsx` بصف واحد لكل شخص
+حقيقي (بلا كلمات مرور أو 2FA)، ثم راجع وأنشئ HR link والحساب الشخصي.
+بعدها نفّذ `docs/UAT_REL15_OWNER_STAFF_AR.md` على أجهزة المالك والموظفين،
+وسجّل Mohamed قرار Go/No-Go التشغيلي المؤرخ بعد معالجة ملاحظات الـUAT.
