@@ -8,9 +8,10 @@
  */
 import { ref } from 'vue'
 import { useOwnerShifts, useOwnerExceptions, useOwnerShiftHistory } from '../composables/useOwnerData'
-import { formatMoney } from '../composables/useFormat'
+import { formatApiDateTime, formatApiTime, formatMoney } from '../composables/useFormat'
 import ErrorState from '../components/ErrorState.vue'
 import SkeletonCards from '../components/SkeletonCards.vue'
+import DataFreshness from '../components/DataFreshness.vue'
 import type { ShiftMonitorItem } from '../api/types'
 
 const tabs = ['exceptions', 'open', 'history'] as const
@@ -18,8 +19,8 @@ type Tab = typeof tabs[number]
 const activeTab = ref<Tab>('exceptions')
 const tabLabels: Record<Tab, string> = {
   exceptions: 'التنبيهات',
-  open:       'مفتوحة',
-  history:    'تاريخ',
+  open:       'الآن',
+  history:    'آخر ٧ أيام',
 }
 
 const { data: shiftsData,  loading: shiftsLoading,  error: shiftsError,  reload: shiftsReload  } = useOwnerShifts()
@@ -50,15 +51,28 @@ const varianceTierStyle: Record<ShiftMonitorItem['variance_tier'], string> = {
   normal:    'text-owner-green',
 }
 
+const exceptionCategoryLabel: Record<string, string> = {
+  fraud: 'نشاط غير معتاد',
+  shift_variance: 'فرق كاش',
+  expense_variance: 'تغيّر مصروفات',
+  b2b_overdue: 'تحصيل B2B',
+  supplier_concentration: 'تركيز موردين',
+  pr_po_variance: 'فرق شراء',
+  long_open_shift: 'وردية طويلة',
+}
+
+const exceptionStatusLabel: Record<string, string> = {
+  realized: 'فعلي',
+  projected: 'متوقع',
+  potential: 'يحتاج تحقق',
+}
+
 function formatTime(iso: string) {
-  return new Date(iso).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })
+  return formatApiTime(iso)
 }
 
 function formatDateTime(iso: string) {
-  return new Date(iso).toLocaleString('ar-EG', {
-    month: 'short', day: 'numeric',
-    hour: '2-digit', minute: '2-digit',
-  })
+  return formatApiDateTime(iso)
 }
 </script>
 
@@ -124,21 +138,19 @@ function formatDateTime(iso: string) {
                 <div class="text-xs font-bold mb-0.5">{{ tierLabel[exc.tier] ?? exc.tier }}</div>
                 <div class="text-sm font-bold text-owner-text">{{ exc.title }}</div>
               </div>
-              <div class="text-right shrink-0">
+              <div v-if="Math.abs(parseFloat(exc.impact)) > 0" class="text-right shrink-0">
                 <div class="font-mono font-bold text-sm">{{ formatMoney(exc.impact) }}</div>
-                <div class="text-xs text-owner-muted">تأثير</div>
+                <div class="text-xs text-owner-muted">أثر مالي</div>
               </div>
             </div>
             <div class="text-xs text-owner-muted mb-2">{{ exc.detail }}</div>
             <div class="flex gap-3 text-xs text-owner-muted">
               <span v-if="exc.entity_name">{{ exc.entity_name }}</span>
-              <span>{{ exc.category }}</span>
-              <span>{{ exc.status }}</span>
+              <span>{{ exceptionCategoryLabel[exc.category] ?? exc.category }}</span>
+              <span>{{ exceptionStatusLabel[exc.status] ?? exc.status }}</span>
             </div>
           </div>
-          <div class="text-center text-xs text-owner-muted py-2">
-            محسوب: {{ new Date(excData.computed_at).toLocaleTimeString('ar-EG') }}
-          </div>
+          <DataFreshness :at="excData.computed_at" :refresh="excReload" />
         </template>
       </template>
 
@@ -164,7 +176,7 @@ function formatDateTime(iso: string) {
                 <div class="font-mono font-bold text-sm" :class="varianceTierStyle[shift.variance_tier]">
                   {{ formatMoney(shift.expected_cash) }}
                 </div>
-                <div class="text-xs text-owner-muted">{{ shift.invoice_count }} فاتورة</div>
+                <div class="text-xs text-owner-muted">نقدية متوقعة · {{ shift.invoice_count }} فاتورة</div>
               </div>
             </button>
             <div v-if="expandedShifts.has(shift.shift_id)" class="mt-3 pt-3 border-t border-owner-border space-y-2">
@@ -195,9 +207,7 @@ function formatDateTime(iso: string) {
               </div>
             </div>
           </div>
-          <div class="text-center text-xs text-owner-muted py-2">
-            محسوب: {{ new Date(shiftsData.computed_at).toLocaleTimeString('ar-EG') }}
-          </div>
+          <DataFreshness :at="shiftsData.computed_at" :refresh="shiftsReload" />
         </template>
       </template>
 
@@ -248,9 +258,7 @@ function formatDateTime(iso: string) {
               </div>
             </div>
           </div>
-          <div class="text-center text-xs text-owner-muted py-2">
-            محسوب: {{ new Date(historyData.computed_at).toLocaleTimeString('ar-EG') }}
-          </div>
+          <DataFreshness :at="historyData.computed_at" :refresh="historyReload" />
         </template>
       </template>
 

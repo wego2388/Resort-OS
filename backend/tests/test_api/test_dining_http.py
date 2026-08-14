@@ -853,7 +853,12 @@ class TestSplitBillHTTP:
 
         # Gate 4A: كل tender مباشر بيتعمله Payment منسوب للكاشير/الوردية.
         from app.modules.finance.models import Payment
-        payments = db.query(Payment).filter(Payment.ref_order_id == order["id"]).all()
+        # ref_order_id is shared by legacy restaurant/cafe and unified dining
+        # sources; scope the polymorphic reference before counting tenders.
+        payments = db.query(Payment).filter(
+            Payment.ref_order_id == order["id"],
+            Payment.source == "dining",
+        ).all()
         assert len(payments) == 2
         assert {p.method for p in payments} == {"cash", "card"}
         assert all(p.shift_id is not None and p.source == "dining" for p in payments)

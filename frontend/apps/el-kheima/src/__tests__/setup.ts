@@ -7,6 +7,11 @@
  */
 import { afterEach, beforeEach } from 'vitest'
 
+// Vue Router restores scroll positions after navigation. jsdom deliberately
+// leaves this browser API unimplemented, so provide the inert browser contract
+// once instead of emitting misleading errors from every router test.
+window.scrollTo = () => undefined
+
 function reset() {
   localStorage.clear()
   document.documentElement.removeAttribute('dir')

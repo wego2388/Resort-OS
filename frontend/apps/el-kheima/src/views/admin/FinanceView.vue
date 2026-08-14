@@ -1068,7 +1068,7 @@ async function saveExchangeRate() {
         <button @click="loadShifts()" class="ms-auto px-3 py-1 rounded-lg text-xs font-semibold border border-stone-200 dark:border-border bg-white dark:bg-surface text-gray-500 dark:text-gray-400 hover:bg-stone-50 dark:bg-gray-800/60 transition-all">🔄 {{ t('backoffice.finance.refresh') }}</button>
       </div>
       <div class="overflow-x-auto rounded-xl border border-stone-200 dark:border-border">
-        <table class="w-full min-w-[1100px] text-sm">
+        <table class="responsive-card-table w-full min-w-[1100px] text-sm">
           <thead class="bg-stone-50 dark:bg-gray-800/60 text-xs text-gray-500 dark:text-gray-400 uppercase">
             <tr>
               <th class="px-4 py-3 text-start">#</th>
@@ -1088,15 +1088,15 @@ async function saveExchangeRate() {
               class="hover:bg-stone-50 dark:bg-gray-800/60 transition-colors cursor-pointer"
               @click="openShiftDetail(s)"
             >
-              <td class="px-4 py-3 font-mono text-gray-500 dark:text-gray-400">#{{ s.id }}</td>
-              <td class="px-4 py-3 font-semibold">{{ s.cashier_id }}</td>
-              <td class="px-4 py-3 text-gray-600 dark:text-gray-400 text-xs">
+              <td data-primary class="px-4 py-3 font-mono text-gray-500 dark:text-gray-400">#{{ s.id }}</td>
+              <td :data-label="t('backoffice.finance.cashier')" class="px-4 py-3 font-semibold">{{ s.cashier_id }}</td>
+              <td :data-label="t('backoffice.finance.opened')" class="px-4 py-3 text-gray-600 dark:text-gray-400 text-xs">
                 {{ fmtDateTimeFn(s.opened_at) }}
               </td>
-              <td class="px-4 py-3 text-gray-500 dark:text-gray-400 text-xs">
+              <td :data-label="t('backoffice.finance.closed')" class="px-4 py-3 text-gray-500 dark:text-gray-400 text-xs">
                 {{ s.closed_at ? fmtDateTimeFn(s.closed_at) : '—' }}
               </td>
-              <td class="px-4 py-3">
+              <td :data-label="t('backoffice.finance.statusCol')" class="px-4 py-3">
                 <span :class="['px-2 py-0.5 rounded-full text-xs font-bold',
                   s.status === 'open'
                     ? 'bg-green-100 text-green-700 dark:bg-green-950/50 dark:text-green-300'
@@ -1106,12 +1106,12 @@ async function saveExchangeRate() {
                 <span v-if="s.reconciliation_warning" class="ms-1 text-red-500 cursor-help"
                   :title="s.reconciliation_warning">⚠️</span>
               </td>
-              <td class="px-4 py-3 text-gray-700 dark:text-gray-300">{{ s.expected_cash?.toFixed(2) ?? '—' }}</td>
-              <td class="px-4 py-3 text-gray-700 dark:text-gray-300">{{ s.counted_cash?.toFixed(2) ?? '—' }}</td>
-              <td class="px-4 py-3" :class="shiftVarianceClass(s.variance)">
+              <td :data-label="t('backoffice.finance.expected')" class="px-4 py-3 text-gray-700 dark:text-gray-300">{{ s.expected_cash?.toFixed(2) ?? '—' }}</td>
+              <td :data-label="t('backoffice.finance.counted')" class="px-4 py-3 text-gray-700 dark:text-gray-300">{{ s.counted_cash?.toFixed(2) ?? '—' }}</td>
+              <td :data-label="t('backoffice.finance.variance')" class="px-4 py-3" :class="shiftVarianceClass(s.variance)">
                 {{ s.variance != null ? (s.variance > 0 ? '+' : '') + s.variance.toFixed(2) : '—' }}
               </td>
-              <td class="px-4 py-3">
+              <td data-actions class="px-4 py-3">
                 <a v-if="s.status === 'closed'"
                   :href="ENDPOINTS.finance.shiftReportPdf(s.id)"
                   target="_blank"
@@ -1121,7 +1121,7 @@ async function saveExchangeRate() {
               </td>
             </tr>
             <tr v-if="!filteredShifts.length">
-              <td colspan="9" class="px-4 py-12 text-center text-gray-400 dark:text-gray-400">{{ t('backoffice.finance.noShifts') }}</td>
+              <td data-empty colspan="9" class="px-4 py-12 text-center text-gray-400 dark:text-gray-400">{{ t('backoffice.finance.noShifts') }}</td>
             </tr>
           </tbody>
         </table>

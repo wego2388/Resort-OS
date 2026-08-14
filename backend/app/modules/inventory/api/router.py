@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
 
 from app.core.deps import (
-    DbDep, get_current_active_user, get_employee_user, get_manager_user, require_permission,
+    DbDep, get_employee_user, get_manager_user, require_permission,
 )
 from app.modules.core import services as core_services
 from app.modules.finance.services import FinancialConfigurationError
@@ -36,7 +36,7 @@ def _assert_inventory_branch(db, user, branch_id: int, action_desc: str) -> None
 
 
 @router.get("/inventory/warehouses", response_model=list[WarehouseRead])
-def list_warehouses(db: DbDep, user=Depends(get_current_active_user), branch_id: int = Query(...)):
+def list_warehouses(db: DbDep, user=Depends(get_employee_user), branch_id: int = Query(...)):
     _assert_inventory_branch(db, user, branch_id, "عرض المخازن")
     return crud.list_warehouses(db, branch_id)
 
@@ -49,7 +49,7 @@ def create_warehouse(data: WarehouseCreate, db: DbDep, user=Depends(get_manager_
 
 
 @router.get("/inventory/categories", response_model=list[CategoryRead])
-def list_categories(db: DbDep, user=Depends(get_current_active_user), branch_id: int = Query(...)):
+def list_categories(db: DbDep, user=Depends(get_employee_user), branch_id: int = Query(...)):
     _assert_inventory_branch(db, user, branch_id, "عرض فئات المخزون")
     return crud.list_categories(db, branch_id)
 
@@ -63,7 +63,7 @@ def create_category(data: CategoryCreate, db: DbDep, user=Depends(get_manager_us
 
 @router.get("/inventory/products", response_model=PaginatedResponse)
 def list_products(
-    db: DbDep, user=Depends(get_current_active_user),
+    db: DbDep, user=Depends(get_employee_user),
     branch_id: int = Query(...),
     category_id: Optional[int] = Query(None),
     low_stock_only: bool = Query(False),
@@ -110,7 +110,7 @@ def download_barcode_labels_pdf(
 
 
 @router.get("/inventory/products/{product_id}", response_model=ProductRead)
-def get_product(product_id: int, db: DbDep, user=Depends(get_current_active_user)):
+def get_product(product_id: int, db: DbDep, user=Depends(get_employee_user)):
     p = crud.get_product(db, product_id)
     if not p:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "الصنف غير موجود")
@@ -132,7 +132,7 @@ def update_product(product_id: int, data: ProductUpdate, db: DbDep, user=Depends
 
 @router.get("/inventory/movements", response_model=PaginatedResponse)
 def list_movements(
-    db: DbDep, user=Depends(get_current_active_user),
+    db: DbDep, user=Depends(get_employee_user),
     branch_id: int = Query(...),
     product_id: Optional[int] = Query(None),
     movement_type: Optional[str] = Query(None),
@@ -161,7 +161,7 @@ def record_movement(data: StockMovementCreate, db: DbDep, user=Depends(get_manag
 
 @router.get("/inventory/suppliers", response_model=PaginatedResponse)
 def list_suppliers(
-    db: DbDep, user=Depends(get_current_active_user),
+    db: DbDep, user=Depends(get_employee_user),
     branch_id: int = Query(...),
     active_only: bool = Query(True),
     search: Optional[str] = Query(None),
@@ -182,7 +182,7 @@ def create_supplier(data: SupplierCreate, db: DbDep, user=Depends(get_manager_us
 
 
 @router.get("/inventory/suppliers/{supplier_id}", response_model=SupplierRead)
-def get_supplier(supplier_id: int, db: DbDep, user=Depends(get_current_active_user)):
+def get_supplier(supplier_id: int, db: DbDep, user=Depends(get_employee_user)):
     supplier = crud.get_supplier(db, supplier_id)
     if not supplier:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "المورد غير موجود")
@@ -257,7 +257,7 @@ def receive_purchase_order(po_id: int, req: ReceiveItemsRequest, db: DbDep,
 @router.post("/inventory/purchase-requests", response_model=PurchaseRequestRead,
              status_code=status.HTTP_201_CREATED)
 def create_purchase_request(data: PurchaseRequestCreate, db: DbDep,
-                             user=Depends(get_current_active_user)):
+                             user=Depends(get_employee_user)):
     _assert_inventory_branch(db, user, data.branch_id, "إنشاء طلب شراء")
     try:
         return services.create_purchase_request(db, data)
@@ -267,7 +267,7 @@ def create_purchase_request(data: PurchaseRequestCreate, db: DbDep,
 
 @router.get("/inventory/purchase-requests", response_model=PaginatedResponse)
 def list_purchase_requests(
-    db: DbDep, user=Depends(get_current_active_user),
+    db: DbDep, user=Depends(get_employee_user),
     branch_id: int = Query(...),
     pr_status: Optional[str] = Query(None, alias="status"),
     page: int = Query(1, ge=1), size: int = Query(20, ge=1, le=100),
@@ -280,7 +280,7 @@ def list_purchase_requests(
 
 
 @router.get("/inventory/purchase-requests/{request_id}", response_model=PurchaseRequestRead)
-def get_purchase_request(request_id: int, db: DbDep, user=Depends(get_current_active_user)):
+def get_purchase_request(request_id: int, db: DbDep, user=Depends(get_employee_user)):
     pr = crud.get_purchase_request(db, request_id)
     if not pr:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "طلب الشراء غير موجود")
@@ -383,7 +383,7 @@ def submit_stock_count(count_id: int, req: SubmitStockCountRequest, db: DbDep,
 @router.patch("/inventory/stock-counts/{count_id}/approve",
               response_model=StockCountRead,
               dependencies=[Depends(require_permission("inventory.approve_stock_count", "approve", min_role_level=60))])
-def approve_stock_count(count_id: int, db: DbDep, user=Depends(get_current_active_user)):
+def approve_stock_count(count_id: int, db: DbDep, user=Depends(get_employee_user)):
     # اعتماد الجرد وظيفة محاسبية (2026-07-13، Operations & Control Layer —
     # قرار محمد صراحةً: "الموافقة على الجرد المحاسب") — مقصود أضيق من
     # require_permission فوق (اللي بيسمح لأي مدير+ بمستوى 60): هنا حصرًا

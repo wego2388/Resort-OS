@@ -3,7 +3,7 @@
 **Current model:** immutable releases with domain TLS on the VPS
 **Current host:** `191.218.161.133`
 **Public origins:** `elkheima.com`, `www.elkheima.com`,
-`app.elkheima.com`
+`app.elkheima.com`, `owner.elkheima.com`
 **SSH alias:** `resort-os-vps`
 **Compose project:** `resort-os-prod`
 
@@ -49,6 +49,9 @@ from the domain override without an explicit reviewed rollback.
 - Do not enable root/password SSH or weaken UFW/Fail2ban.
 - Never print `backend/.env.prod` or Docker container environment values.
 - Do not clean, reset, pull, or rebuild inside `/opt/resort-os`.
+- `scripts/deploy.sh`, `scripts/sync-deploy.sh`, and
+  `scripts/switch-to-domain.sh` are retired fail-closed entry points; do not
+  bypass their stop guard. Follow this runbook only.
 - Every release needs a reviewed commit, archive SHA-256, DB backup, previous
   image tags, migration compatibility check, and external smoke tests.
 - Never run `app.seed` in production.
@@ -66,6 +69,7 @@ curl -fsS http://127.0.0.1:8005/health
 curl -fsSI https://elkheima.com/
 curl -fsSI https://www.elkheima.com/
 curl -fsS https://app.elkheima.com/health
+curl -fsSI https://owner.elkheima.com/
 
 systemctl --failed
 systemctl status resort-os-backup.timer --no-pager
@@ -93,7 +97,7 @@ journalctl -u resort-os-healthcheck.service --since today --no-pager
 sudo systemctl start resort-os-healthcheck.service
 ```
 
-It checks backend/DB/Redis health, both HTTPS applications, all eight
+It checks backend/DB/Redis health, all three HTTPS applications, all nine
 containers, daily-backup freshness, at least 48 hours of certificate validity,
 and root-disk usage below 85%. A failed check exits non-zero and is retained in
 the systemd journal. External delivery still requires a separately approved
@@ -156,8 +160,10 @@ cd backend
 
 cd ../frontend
 pnpm --filter el-kheima test:frontend
+pnpm --filter el-kheima test:e2e:mock
+pnpm --filter owner test:e2e
 pnpm run type-check:all
-pnpm run build:all
+VITE_PUBLIC_SITE_URL=https://elkheima.com pnpm run build:all
 ```
 
 The release commit must be pushed to its explicit branch. Do not move `main`
@@ -189,6 +195,7 @@ resort-os-rollback/backend:pre-<commit>
 resort-os-rollback/celery-worker:pre-<commit>
 resort-os-rollback/celery-beat:pre-<commit>
 resort-os-rollback/el-kheima:pre-<commit>
+resort-os-rollback/owner:pre-<commit>
 resort-os-rollback/marketing-site:pre-<commit>
 resort-os-rollback/nginx:pre-<commit>
 ```
@@ -211,7 +218,7 @@ With `RESORT_COMPOSE` configured for the new release:
 
 ```bash
 export RESORT_RELEASE_SHA="$(git rev-parse HEAD)"
-"${RESORT_COMPOSE[@]}" build --parallel backend el_kheima marketing_site
+"${RESORT_COMPOSE[@]}" build --parallel backend el_kheima owner
 
 # celery_worker and celery_beat deliberately consume the exact backend image;
 # they have no independent build context or tag.
@@ -233,13 +240,26 @@ Replace in dependency order and wait for health after each stage:
 ```bash
 "${RESORT_COMPOSE[@]}" up -d --no-deps backend
 "${RESORT_COMPOSE[@]}" up -d --no-deps celery_worker celery_beat
-"${RESORT_COMPOSE[@]}" up -d --no-deps el_kheima marketing_site
+"${RESORT_COMPOSE[@]}" up -d --no-deps el_kheima owner
 "${RESORT_COMPOSE[@]}" up -d --no-deps --force-recreate nginx
 ```
 
 Do not recreate PostgreSQL or Redis for an application-only release. Do not
 rebuild Marketing when its independent source commit is outside the release
 scope.
+
+If the reviewed release changes the health gate, install the exact released
+script and unit before running acceptance:
+
+```bash
+sudo install -d -m 0755 /usr/local/lib/resort-os
+sudo install -m 0755 scripts/check_prod_health.sh \
+  /usr/local/lib/resort-os/check-prod-health.sh
+sudo install -m 0644 deploy/systemd/resort-os-healthcheck.service \
+  /etc/systemd/system/resort-os-healthcheck.service
+sudo systemctl daemon-reload
+sudo systemctl start resort-os-healthcheck.service
+```
 
 ## 6. Post-release acceptance
 
@@ -255,6 +275,7 @@ docker inspect resort-os-prod-backend-1 resort-os-prod-celery_worker-1 \
 curl -fsSI https://elkheima.com/
 curl -fsSI https://www.elkheima.com/
 curl -fsSI https://app.elkheima.com/
+curl -fsSI https://owner.elkheima.com/
 curl -fsS https://app.elkheima.com/health
 
 docker exec resort-os-prod-backend-1 alembic current
@@ -268,9 +289,9 @@ Also verify:
 - Backend, Celery worker, and Celery beat have one identical full image ID and
   `org.opencontainers.image.revision` equals the release commit; `RestartCount=0`;
 - updated containers use the new release `working_dir` label;
-- staff and marketing titles render from outside the VPS;
+- staff, owner, and marketing titles render from outside the VPS;
 - TLS SAN contains `elkheima.com`, `www.elkheima.com`, and
-  `app.elkheima.com`;
+  `app.elkheima.com`, and `owner.elkheima.com`;
 - DB/Redis ports remain loopback-only;
 - backend/Celery/Nginx logs contain no new traceback, critical, fatal, or
   emergency event;
@@ -285,7 +306,7 @@ regression requires it.
 
 1. Read the exact rollback manifest for the active release.
 2. Retag the preserved rollback images to the normal Compose image names.
-3. Recreate backend, Celery, El Kheima, and Nginx in the same controlled order.
+3. Recreate backend, Celery, El Kheima, Owner, and Nginx in the same controlled order.
 4. Re-run every health, TLS, DB, listener, and log check.
 
 The current cutover tags and provider DNS snapshot are recorded in
@@ -312,7 +333,7 @@ See `docs/agent-workflow/handoffs/2026-07-29_DR-01_codex_handoff.md`.
 ## 9. TLS
 
 The public certificate is the `elkheima.com` SAN certificate and includes
-the apex, `www`, and `app`.
+the apex, `www`, `app`, and `owner`.
 
 ```bash
 sudo certbot certificates

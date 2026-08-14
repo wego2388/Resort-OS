@@ -15,7 +15,7 @@ import hashlib
 import json
 import logging
 import secrets
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import TYPE_CHECKING, Optional
 
@@ -745,13 +745,17 @@ def force_reset_2fa(
     db: Session, user_id: int, reset_by: int, reason: str,
     step_up_public_reference: Optional[str] = None,
     assurance_method: Optional[str] = None,
-) -> "User":
-    """يمسح ربط 2FA الحالي (secret/آخر خطوة TOTP/أكواد الاسترجاع) لموظف
-    فقد جهازه، من غير ما يلمس كلمة السر أو أي بيانات هوية تانية — الحساب
-    يفضل نشط، وبيدخل بكلمة سره الحالية. two_factor_bootstrap_required
-    يفضل False عمدًا فالموظف بيعيد التسجيل عبر /2fa/setup العادي
-    (current_password، مش enrollment token الـCLI-only)."""
+) -> dict:
+    """Reset a lost 2FA device without stranding the account.
+
+    Roles whose 2FA is mandatory receive a fresh, short-lived enrollment
+    token returned once to the super-admin. Optional roles have every stale
+    bootstrap marker cleared and can continue with their existing password.
+    Password/identity/active state are deliberately preserved.
+    """
     from app.core.deps import revoke_user_tokens  # noqa: PLC0415
+    from app.core.deps import MANDATORY_2FA_ROLES  # noqa: PLC0415
+    from app.core.kernel.auth.repository import delete_refresh_tokens_for_user  # noqa: PLC0415
     from app.core.kernel.models.user import TwoFactorRecoveryCode  # noqa: PLC0415
 
     user = crud.lock_user_for_update(db, user_id)
@@ -761,9 +765,24 @@ def force_reset_2fa(
     user.two_factor_enabled = False
     user.two_factor_secret = None
     user.two_factor_last_used_step = None
+    requires_enrollment = user.role in MANDATORY_2FA_ROLES
+    enrollment_token = secrets.token_urlsafe(32) if requires_enrollment else None
+    enrollment_expires_at = (
+        datetime.now(timezone.utc) + timedelta(
+            minutes=settings.TWO_FACTOR_ENROLLMENT_TOKEN_TTL_MINUTES,
+        )
+        if requires_enrollment else None
+    )
+    user.two_factor_bootstrap_required = requires_enrollment
+    user.two_factor_enrollment_token_hash = (
+        hashlib.sha256(enrollment_token.encode()).hexdigest()
+        if enrollment_token else None
+    )
+    user.two_factor_enrollment_expires_at = enrollment_expires_at
     db.query(TwoFactorRecoveryCode).filter(
         TwoFactorRecoveryCode.user_id == user.id,
     ).delete(synchronize_session=False)
+    delete_refresh_tokens_for_user(db, user.id)
 
     from app.modules.core.crud import create_audit_log  # noqa: PLC0415
     from app.modules.core.schemas import AuditLogCreate  # noqa: PLC0415
@@ -771,6 +790,10 @@ def force_reset_2fa(
         user_id=reset_by, branch_id=None, action="force_reset_2fa",
         entity_type="user", entity_id=user.id,
         new_data=json.dumps({
+            "requires_2fa_enrollment": requires_enrollment,
+            "enrollment_expires_at": (
+                enrollment_expires_at.isoformat() if enrollment_expires_at else None
+            ),
             **_step_up_audit_context(
                 reason=reason,
                 step_up_public_reference=step_up_public_reference,
@@ -783,7 +806,11 @@ def force_reset_2fa(
     # تغيير role/is_active (راجع update_user_role فوق).
     revoke_user_tokens(user.id)
     db.refresh(user)
-    return user
+    return {
+        "user": user,
+        "enrollment_token": enrollment_token,
+        "enrollment_expires_at": enrollment_expires_at,
+    }
 
 
 # ─────────────────────── Settings ────────────────────────────────────

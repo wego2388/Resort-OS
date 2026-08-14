@@ -11,9 +11,12 @@ const emit = defineEmits<{
   (e: 'change', value: { date_from: string; date_to: string }): void
 }>()
 
-/** تنسيق تاريخ → YYYY-MM-DD */
+/** تنسيق التاريخ المحلي → YYYY-MM-DD بدون تحويل UTC يغيّر يوم القاهرة. */
 function toISO(d: Date): string {
-  return d.toISOString().slice(0, 10)
+  const year = d.getFullYear()
+  const month = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
 }
 
 function today(): Date { return new Date() }
@@ -88,6 +91,12 @@ applyPreset('month')
 
 <template>
   <div class="owner-card space-y-3" role="group" aria-label="فلتر الفترة الزمنية">
+    <div class="flex items-center justify-between gap-3">
+      <span class="section-label !mb-0">الفترة</span>
+      <span v-if="customFrom && customTo" class="text-[11px] text-owner-muted" dir="ltr">
+        {{ customFrom }} — {{ customTo }}
+      </span>
+    </div>
     <!-- أزرار الـ presets -->
     <div class="flex gap-2 flex-wrap">
       <button

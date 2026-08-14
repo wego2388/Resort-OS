@@ -74,7 +74,8 @@ from app.modules.timeshare.schemas import (
     TimeshareContractCreate, TimeshareContractRead, TimeshareContractUpdate,
     TimeshareOwnerContractRead, TimeshareOwnerVerifyConfirm, TimeshareOwnerVerifyRequest,
     TimeshareOwnerPortalToken,
-    TimeshareStaffCreate, TimeshareStaffProvisioned, TimeshareStaffRead, TimeshareStaffStatusUpdate,
+    TimeshareEligibleEmployeeRead, TimeshareStaffCreate, TimeshareStaffProvisioned,
+    TimeshareStaffRead, TimeshareStaffStatusUpdate,
     TimeshareSupportTicketCreate, TimeshareSupportTicketRead,
     TimeshareTicketReplyCreate, TimeshareTicketStatusUpdate,
     TimeshareUnitCreate, TimeshareUnitPairCreate, TimeshareUnitPairRead,
@@ -84,6 +85,7 @@ from app.modules.timeshare.schemas import (
     TimeshareVisitRequestReject, TimeshareVisitRequestRead,
     WaitlistCreate, WaitlistRead, WaitlistStatusUpdate,
     ImportContractsResponse,
+    TIMESHARE_BOOKING_RULES_VERSION, TIMESHARE_TERMS_VERSION,
 )
 from app.modules.core import services as core_services
 from app.modules.core.schemas import PaginatedResponse
@@ -423,7 +425,7 @@ def list_waitlist(db: DbDep, user=Depends(get_timeshare_user), branch_id: int = 
 
 @router.post("/timeshare/waitlist", response_model=WaitlistRead,
              status_code=status.HTTP_201_CREATED,
-             dependencies=[Depends(require_permission("timeshare.waitlist", "create", min_role_level=40))])
+             dependencies=[Depends(require_permission("timeshare.waitlist", "create", min_role_level=25))])
 def add_to_waitlist(data: WaitlistCreate, db: DbDep, user=Depends(get_timeshare_user)):
     _assert_timeshare_branch(db, user, data.branch_id, "إضافة لقائمة الانتظار")
     try:
@@ -581,7 +583,7 @@ def list_visits(
 
 @router.post("/timeshare/visits", response_model=TimeshareVisitRead,
              status_code=status.HTTP_201_CREATED,
-             dependencies=[Depends(require_permission("timeshare.visits", "create", min_role_level=40))])
+             dependencies=[Depends(require_permission("timeshare.visits", "create", min_role_level=25))])
 def create_visit(data: TimeshareVisitCreate, db: DbDep, user=Depends(get_timeshare_user)):
     _assert_timeshare_branch(db, user, data.branch_id, "إنشاء زيارة ملكية جزئية")
     try:
@@ -705,6 +707,16 @@ def _resolve_owner_token(x_owner_token: str) -> int:
         return services.verify_owner_portal_token(x_owner_token)
     except services.OwnerVerificationError as exc:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, str(exc))
+
+
+@router.get("/timeshare/public/portal-config", response_model=None)
+def owner_portal_config():
+    """Public non-secret versions required for an explicit valid consent."""
+    return {
+        "resort_name": "El Kheima Beach Resort",
+        "terms_version": TIMESHARE_TERMS_VERSION,
+        "booking_rules_version": TIMESHARE_BOOKING_RULES_VERSION,
+    }
 
 
 @router.post("/timeshare/public/verify-request", response_model=None)
@@ -954,11 +966,25 @@ def create_timeshare_staff(data: TimeshareStaffCreate, db: DbDep, user=Depends(g
     try:
         return services.provision_timeshare_agent(
             db, email=data.email, full_name=data.full_name, phone=data.phone,
-            branch_id=data.branch_id, created_by=user.id,
+            employee_id=data.employee_id, branch_id=data.branch_id, created_by=user.id,
             preferred_language=data.preferred_language,
         )
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+@router.get(
+    "/timeshare/staff/eligible-employees",
+    response_model=list[TimeshareEligibleEmployeeRead],
+)
+def list_eligible_timeshare_employees(
+    db: DbDep,
+    user=Depends(get_timeshare_admin_user),
+    branch_id: int = Query(...),
+):
+    """Minimal HR picker: only active, unlinked staff in the active branch."""
+    _assert_timeshare_branch(db, user, branch_id, "عرض الموظفين المتاحين للربط")
+    return services.list_eligible_timeshare_employees(db, branch_id)
 
 
 @router.get("/timeshare/staff", response_model=list[TimeshareStaffRead])

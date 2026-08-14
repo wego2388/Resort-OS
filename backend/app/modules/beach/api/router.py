@@ -13,7 +13,7 @@ from fastapi.responses import Response
 from app.core.config import settings
 from app.core.deps import (
     DbDep, get_admin_user, get_cashier_user,
-    get_current_active_user, get_manager_user, get_websocket_user, require_permission,
+    get_manager_user, get_websocket_user, require_permission,
     user_level,
 )
 from app.modules.beach import crud, services
@@ -90,7 +90,14 @@ async def beach_map_websocket(ws: WebSocket, branch_id: int, db: DbDep):
     كاشير فرع A كان يقدر يشترك في بث خريطة فرع B ويشوف بيانات الضيوف الحية
     (تشيك-إن/أوت + أماكنهم) بمجرد تغيير الرقم في الـ URL. نفس فئة الباج
     اللي اتصلح في alerts WS وأُضيف صراحةً في guest_alerts_websocket."""
-    user = await get_websocket_user(ws, db, min_level=40)
+    user = await get_websocket_user(
+        ws,
+        db,
+        min_level=40,
+        allowed_roles={
+            "cashier", "receptionist", "supervisor", "manager", "admin", "super_admin",
+        },
+    )
     if not user:
         return
     try:
@@ -126,7 +133,7 @@ def _business_today() -> date:
 @router.get("/beach/inventory", response_model=BeachInventoryRead)
 def get_inventory(
     db: DbDep,
-    user=Depends(get_current_active_user),
+    user=Depends(get_cashier_user),
     branch_id: int  = Query(...),
     inv_date:  date = Query(default_factory=_business_today),
 ):
@@ -278,7 +285,7 @@ def download_ticket(tx_id: int, db: DbDep, user=Depends(get_cashier_user)):
 @router.post("/beach/transactions/{tx_id}/void",
              dependencies=[Depends(require_permission("beach.void_transaction", "execute", min_role_level=60))],
              response_model=BeachTransactionRead)
-def void_transaction(tx_id: int, data: VoidTransactionRequest, db: DbDep, user=Depends(get_current_active_user)):
+def void_transaction(tx_id: int, data: VoidTransactionRequest, db: DbDep, user=Depends(get_cashier_user)):
     tx = _get_transaction_or_404(db, tx_id)
     _assert_beach_branch(db, user, tx.branch_id, "إلغاء معاملة شاطئ")
     try:
@@ -362,7 +369,7 @@ def list_contracts(db: DbDep, user=Depends(get_manager_user),
 
 @router.get("/beach/b2b-contracts/status", response_model=None)
 def get_b2b_quota_status(
-    db: DbDep, user=Depends(get_current_active_user),
+    db: DbDep, user=Depends(get_cashier_user),
     branch_id: int = Query(...), day: Optional[date] = Query(None),
 ):
     """حالة حصة كل فندق B2B اليوم — بيظهر quota_warning (≤5 متبقين) لعرضه
@@ -375,7 +382,7 @@ def get_b2b_quota_status(
 
 @router.get("/beach/live-dashboard", response_model=None)
 def get_live_dashboard(
-    db: DbDep, user=Depends(get_current_active_user),
+    db: DbDep, user=Depends(get_cashier_user),
     branch_id: int = Query(...),
 ):
     """السعة الحالية + حصص فنادق B2B + تنبيهات — للوحة حيّة (polling كل شوية)."""

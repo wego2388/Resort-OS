@@ -954,8 +954,10 @@ class TestUserUnlockAndForce2FAReset:
         assert resp.json()["detail"]["error_code"] == "STEP_UP_REQUIRED"
 
     def test_force_2fa_reset_clears_2fa_and_revokes_tokens(self, client: TestClient, db):
+        from datetime import datetime, timedelta, timezone
+
         from app.core.kernel.auth.service import AuthService
-        from app.core.kernel.models.user import TwoFactorRecoveryCode, User
+        from app.core.kernel.models.user import RefreshToken, TwoFactorRecoveryCode, User
 
         sa_id, sa_headers, sa_secret = _fresh_super_admin("2fareset-ok")
         target_id = _create_test_user(f"target-{uuid.uuid4().hex[:6]}@test.local", "accountant")
@@ -965,6 +967,13 @@ class TestUserUnlockAndForce2FAReset:
         target.two_factor_last_used_step = 12345
         db.add(TwoFactorRecoveryCode(
             user_id=target_id, code_hash=AuthService._recovery_code_hash("some-recovery-code"),
+        ))
+        db.add(RefreshToken(
+            user_id=target_id,
+            token_hash="a" * 64,
+            expires_at=datetime.now(timezone.utc) + timedelta(days=1),
+            family_id=uuid.uuid4().hex,
+            family_public_id=uuid.uuid4().hex,
         ))
         db.commit()
 
@@ -979,16 +988,61 @@ class TestUserUnlockAndForce2FAReset:
             headers={**sa_headers, "X-Step-Up-Token": token},
         )
         assert resp.status_code == 200, resp.text
-        assert resp.json()["two_factor_enabled"] is False
+        body = resp.json()
+        assert body["user"]["two_factor_enabled"] is False
+        assert body["enrollment_token"]
+        assert body["enrollment_expires_at"]
 
         db.refresh(target)
         assert target.two_factor_enabled is False
         assert target.two_factor_secret is None
         assert target.two_factor_last_used_step is None
+        assert target.two_factor_bootstrap_required is True
+        assert target.two_factor_enrollment_token_hash is not None
         remaining_codes = db.query(TwoFactorRecoveryCode).filter(
             TwoFactorRecoveryCode.user_id == target_id,
         ).count()
         assert remaining_codes == 0
+        assert db.query(RefreshToken).filter(RefreshToken.user_id == target_id).count() == 0
+
+    def test_force_2fa_reset_clears_stale_bootstrap_for_optional_role(
+        self, client: TestClient, db,
+    ):
+        from datetime import datetime, timedelta, timezone
+
+        from app.core.kernel.models.user import User
+
+        _, sa_headers, sa_secret = _fresh_super_admin("2fareset-optional")
+        target_id = _create_test_user(
+            f"optional-{uuid.uuid4().hex[:6]}@test.local", "cashier",
+        )
+        target = db.query(User).filter(User.id == target_id).one()
+        target.two_factor_bootstrap_required = True
+        target.two_factor_enrollment_token_hash = "b" * 64
+        target.two_factor_enrollment_expires_at = (
+            datetime.now(timezone.utc) - timedelta(days=1)
+        )
+        db.commit()
+
+        reason = "إزالة حالة تفعيل قديمة من حساب كاشير"
+        token = _issue_step_up(
+            client,
+            sa_headers,
+            purpose="user_force_2fa_reset",
+            intent={"user_id": target_id, "reason": reason},
+            totp_secret=sa_secret,
+        )
+        response = client.post(
+            f"/api/v1/users/{target_id}/force-2fa-reset",
+            json={"reason": reason},
+            headers={**sa_headers, "X-Step-Up-Token": token},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["enrollment_token"] is None
+        db.refresh(target)
+        assert target.two_factor_bootstrap_required is False
+        assert target.two_factor_enrollment_token_hash is None
+        assert target.two_factor_enrollment_expires_at is None
 
     def test_force_2fa_reset_404_for_missing_user(self, client: TestClient):
         sa_id, sa_headers, sa_secret = _fresh_super_admin("2fareset-404")

@@ -195,7 +195,13 @@ def get_current_user(request: Request, db: DbDep):
     return user
 
 
-async def get_websocket_user(websocket, db: Session, min_level: int = 0):
+async def get_websocket_user(
+    websocket,
+    db: Session,
+    min_level: int = 0,
+    *,
+    allowed_roles: set[str] | None = None,
+):
     """بوابة تحقق موحّدة لكل WebSocket endpoint في المشروع (راجع A-01 في
     wagdy.md — كانت الاتصالات دي كلها بتتقبل من غير أي تحقق هوية خالص).
     التوكن بيوصل كـ query param (`?token=...`) مش header. بترجع الـ user
@@ -220,6 +226,15 @@ async def get_websocket_user(websocket, db: Session, min_level: int = 0):
         return None
 
     if user_level(user) < min_level:
+        await websocket.close(code=4403)
+        return None
+
+    # Numeric role levels are useful for the legacy hierarchy, but specialist
+    # identities can deliberately sit between operational levels (for example
+    # timeshare_admin=55 and hr_manager/accountant=70).  A WebSocket carrying
+    # live operational or financial signals must therefore be able to enforce
+    # the same named role boundary as its HTTP workspace.
+    if allowed_roles is not None and user.role not in allowed_roles:
         await websocket.close(code=4403)
         return None
 
@@ -274,8 +289,16 @@ def get_current_active_user(request: Request, user=Depends(get_current_user)):
 
 
 def get_manager_user(user=Depends(get_current_active_user)):
-    if user_level(user) < 60:
+    """General resort operations manager, excluding specialist roles."""
+    if user.role not in {"manager", "admin", "super_admin"}:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "يتطلب صلاحية مدير")
+    return user
+
+
+def get_finance_user(user=Depends(get_current_active_user)):
+    """Finance workspace, including accountants without operations access."""
+    if user.role not in {"accountant", "manager", "admin", "super_admin"}:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "يتطلب صلاحية مالية")
     return user
 
 
@@ -295,6 +318,22 @@ def get_hr_manager_user(user=Depends(get_current_active_user)):
     return user
 
 
+def get_hr_reader_user(user=Depends(get_current_active_user)):
+    """Named HR workspace access.
+
+    Accountant and HR manager intentionally share a numeric level, so the
+    generic manager threshold would expose personnel and payroll details to
+    accountants.  Keep general managers' oversight while making the module
+    boundary explicit.
+    """
+    if user.role not in {"manager", "hr_manager", "admin", "super_admin"}:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "يتطلب صلاحية الموارد البشرية أو الإدارة",
+        )
+    return user
+
+
 def get_admin_user(user=Depends(get_current_active_user)):
     if user_level(user) < 80:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "يتطلب صلاحية admin")
@@ -308,8 +347,56 @@ def get_super_admin_user(user=Depends(get_current_active_user)):
 
 
 def get_cashier_user(user=Depends(get_current_active_user)):
-    if user_level(user) < 40:
+    if user.role not in {
+        "cashier", "receptionist", "supervisor", "manager", "admin", "super_admin",
+    }:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "يتطلب صلاحية كاشير")
+    return user
+
+
+def get_pos_customer_user(user=Depends(get_current_active_user)):
+    """Minimal customer lookup/service surface used by POS operators.
+
+    Named roles prevent accountant/HR/timeshare identities from inheriting
+    customer access merely because their numeric level is high enough.
+    """
+    if user.role not in {
+        "waiter", "cashier", "receptionist", "supervisor",
+        "manager", "admin", "super_admin",
+    }:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "يتطلب صلاحية خدمة عميل أو نقطة بيع")
+    return user
+
+
+def get_crm_user(user=Depends(get_current_active_user)):
+    """Full CRM workspace, aligned with the frontend route allow-list."""
+    if user.role not in {"manager", "admin", "super_admin"}:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "يتطلب صلاحية إدارة علاقات العملاء")
+    return user
+
+
+def get_booking_operator_user(user=Depends(get_current_active_user)):
+    """Named booking/POS operators; excludes isolated and specialist roles."""
+    if user.role not in {
+        "cashier", "receptionist", "supervisor", "manager", "admin", "super_admin",
+    }:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "يتطلب صلاحية حجز أو كاشير")
+    return user
+
+
+def get_pms_user(user=Depends(get_current_active_user)):
+    """PMS outer role boundary, including narrowly granted employees.
+
+    Fine-grained ``pms.*`` permissions remain authoritative for each action.
+    This named outer gate permits the generic employee role for deliberately
+    narrow grants (for example housekeeping-only) while excluding specialist
+    roles whose numeric level would otherwise grant PMS access accidentally.
+    """
+    if user.role not in {
+        "employee", "cashier", "receptionist", "supervisor",
+        "manager", "admin", "super_admin",
+    }:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "يتطلب صلاحية تشغيل الغرف والحجوزات")
     return user
 
 
@@ -380,7 +467,10 @@ def get_owner_reader(user=Depends(get_current_active_user)):
 
 
 def get_waiter_user(user=Depends(get_current_active_user)):
-    if user_level(user) < 30:
+    if user.role not in {
+        "waiter", "cashier", "receptionist", "supervisor",
+        "manager", "admin", "super_admin",
+    }:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "يتطلب صلاحية نادل")
     return user
 
@@ -389,8 +479,23 @@ def get_employee_user(user=Depends(get_current_active_user)):
     """أي موظف حقيقي (level >= 20) — يستثني customer/guest (level 0).
     للـ endpoints الداخلية التشغيلية (زي تعديل أمر صيانة) اللي المفروض
     تبقى مقفولة على الموظفين، مش أي حساب مسجّل من الموقع العام."""
-    if user_level(user) < 20:
+    if user.role in {"timeshare_admin", "timeshare_agent", "owner"} or user_level(user) < 20:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "يتطلب صلاحية موظف")
+    return user
+
+
+def get_operations_admin_user(user=Depends(get_current_active_user)):
+    """Back-office operations modules shown to supervisor/manager/admin only.
+
+    This prevents specialist identities (finance, HR, timeshare and owner)
+    from inheriting maintenance/leasing/site-management access through a
+    numeric role level or a direct API URL.
+    """
+    if user.role not in {"supervisor", "manager", "admin", "super_admin"}:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "يتطلب صلاحية إشراف تشغيلي أو إدارة",
+        )
     return user
 
 

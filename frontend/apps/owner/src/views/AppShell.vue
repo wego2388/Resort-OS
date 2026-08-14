@@ -16,6 +16,7 @@ const router = useRouter()
 const auth   = useAuthStore()
 
 const searchOpen = ref(false)
+const activeTitle = computed(() => String(route.meta.title || 'نظرة المالك'))
 
 const navItems = [
   { name: 'now',         label: 'الآن',       icon: '⚡' },
@@ -49,10 +50,13 @@ function vibrate(ms = 6) {
 <template>
   <div class="flex flex-col h-dvh bg-owner-bg" style="padding-top: env(safe-area-inset-top)">
     <!-- Header -->
-    <header class="flex items-center justify-between px-4 py-3 bg-owner-card border-b border-owner-border shrink-0">
-      <h1 class="text-sm font-bold text-owner-text">المالك</h1>
+    <header class="owner-header flex items-center justify-between gap-3 px-4 py-2 bg-owner-card border-b border-owner-border shrink-0">
+      <div class="min-w-0">
+        <div class="truncate text-[10px] font-semibold tracking-wide text-owner-green">El Kheima Beach Resort</div>
+        <h1 class="truncate text-sm font-bold text-owner-text">{{ activeTitle }}</h1>
+      </div>
       <div class="flex items-center gap-3">
-        <div class="text-xs text-owner-muted hidden xs:block">
+        <div class="text-xs text-owner-muted hidden sm:block">
           {{ new Date().toLocaleDateString('ar-EG', { weekday: 'long', day: 'numeric', month: 'short' }) }}
         </div>
         <!-- بحث عام — يشوف أي صنف/منتج/مورد/مصروف/موظف -->
@@ -82,7 +86,7 @@ function vibrate(ms = 6) {
     <SearchOverlay :open="searchOpen" @close="searchOpen = false" />
 
     <!-- Main content -->
-    <main class="flex-1 flex flex-col overflow-hidden">
+    <main class="owner-main flex-1 flex flex-col overflow-hidden">
       <RouterView />
     </main>
 

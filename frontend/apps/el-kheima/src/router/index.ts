@@ -55,8 +55,9 @@ export function homeRouteFor(role: string): string {
     case 'manager':
     case 'admin':
     case 'super_admin':
-    case 'accountant':
       return '/admin/dashboard'
+    case 'accountant':
+      return '/admin/finance'
     case 'hr_manager':
       // hr_manager clears the same manager-level (60+) threshold as
       // accountant per backend ROLE_LEVELS — lands on their own module
@@ -95,6 +96,12 @@ const routes: RouteRecordRaw[] = [
   // no backend changes needed for either.
   { path: '/forgot-password', name: 'forgot-password', component: () => import('../views/account/ForgotPasswordView.vue'), meta: { titleKey: 'backoffice.forgotPassword.title' } },
   { path: '/reset-password', name: 'reset-password', component: () => import('../views/account/ResetPasswordView.vue'), meta: { titleKey: 'backoffice.resetPassword.title' } },
+  {
+    path: '/timeshare-portal',
+    name: 'timeshare-owner-portal',
+    component: () => import('../views/public/TimeshareOwnerPortalView.vue'),
+    meta: { title: 'بوابة عملاء الملكية الجزئية' },
+  },
 
   {
     path: '/change-temporary-password',
@@ -253,14 +260,14 @@ const routes: RouteRecordRaw[] = [
       { path: 'maintenance', name: 'admin-maintenance', component: () => import('../views/admin/MaintenanceView.vue'), meta: { requiredRoles: ['manager', 'supervisor', 'admin', 'super_admin'], titleKey: 'backoffice.nav.maintenance' } },
       { path: 'leasing', name: 'admin-leasing', component: () => import('../views/admin/LeasingView.vue'), meta: { requiredRoles: ['manager', 'supervisor', 'admin', 'super_admin'], titleKey: 'backoffice.nav.leasing' } },
       { path: 'settings',    name: 'admin-settings',    component: () => import('../views/admin/SettingsView.vue'),    meta: { requiredRole: 'admin', titleKey: 'backoffice.nav.settings' } },
-      { path: 'qr',          name: 'admin-qr',          component: () => import('../views/admin/QRGeneratorView.vue'),        meta: { titleKey: 'backoffice.nav.qrCodes' } },
+      { path: 'qr',          name: 'admin-qr',          component: () => import('../views/admin/QRGeneratorView.vue'),        meta: { requiredRoles: ['manager', 'supervisor', 'admin', 'super_admin'], titleKey: 'backoffice.nav.qrCodes' } },
       // DINING_CUTOVER_PLAN.md Batch 4 — dining-menu هو الافتراضي دلوقتي،
       // بيغطي منافذ/فئات/أصناف/مجموعات إضافات/طاولات المطعم والكافيه معًا
       // (راجع DiningMenuView.vue). menu/cafe-menu/tables القدام باقيين كـ
       // redirect — cafe-sales (تقرير مبيعات cafe.reports/sales) اتحول لـ
       // /admin/analytics لحد ما يتعمل شاشة تقرير مبيعات dining مخصصة (فجوة
       // موثّقة، راجع تقرير الـ cutover).
-      { path: 'dining-menu', name: 'admin-dining-menu', component: () => import('../views/admin/DiningMenuView.vue'),        meta: { titleKey: 'backoffice.nav.diningMenu' } },
+      { path: 'dining-menu', name: 'admin-dining-menu', component: () => import('../views/admin/DiningMenuView.vue'),        meta: { requiredRoles: ['manager', 'supervisor', 'admin', 'super_admin'], titleKey: 'backoffice.nav.diningMenu' } },
       { path: 'menu',        redirect: '/admin/dining-menu' },
       { path: 'cafe-menu',   redirect: '/admin/dining-menu' },
       { path: 'tables',      redirect: '/admin/dining-menu' },
@@ -274,7 +281,7 @@ const routes: RouteRecordRaw[] = [
         path: '/admin/super-admin', query: { ...to.query, tab: 'users' },
       }), meta: { requiredRole: 'super_admin', titleKey: 'backoffice.accounts.title' } },
       { path: 'super-admin', name: 'admin-super-admin', component: () => import('../views/admin/SuperAdminView.vue'), meta: { requiredRole: 'super_admin', titleKey: 'backoffice.superAdmin.title' } },
-      { path: 'hub', name: 'admin-hub', component: () => import('../views/admin/HubManagementView.vue'), meta: { titleKey: 'backoffice.hub.title' } },
+      { path: 'hub', name: 'admin-hub', component: () => import('../views/admin/HubManagementView.vue'), meta: { requiredRoles: ['manager', 'supervisor', 'admin', 'super_admin'], titleKey: 'backoffice.hub.title' } },
     ],
   },
 
@@ -367,7 +374,8 @@ router.beforeEach((to) => {
   }
 
   // 4. Branch gate — operational screens never mount with a guessed/default
-  // branch. The selector itself and account recovery screens stay reachable.
+  // branch. /select-branch auto-binds the sole membership and otherwise shows
+  // a fail-closed configuration error; it never exposes a branch switcher.
   if (auth.isAuthenticated && to.meta.requiresBranch && auth.branchId == null) {
     return '/select-branch'
   }

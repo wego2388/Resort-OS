@@ -268,7 +268,11 @@ class StaffUserCreate(BaseModel):
     email: str = Field(..., min_length=3, max_length=320)
     full_name: str = Field(..., min_length=3, max_length=255)
     phone: Optional[str] = Field(None, max_length=50)
-    employee_id: Optional[int] = Field(None, gt=0)
+    # Every web-provisioned staff identity must belong to an HR employee.
+    # Owner/super-admin identities are provisioned out-of-band and are not
+    # accepted by this schema, so an optional value only creates orphaned
+    # operational accounts that cannot use employee self-service safely.
+    employee_id: int = Field(..., gt=0)
     role: Literal[
         "admin", "accountant", "hr_manager", "manager", "supervisor",
         "receptionist", "cashier", "waiter", "chef", "kitchen",
@@ -365,6 +369,14 @@ class ForceTwoFactorResetRequest(BaseModel):
     @classmethod
     def _reason_must_be_real_text(cls, v: str) -> str:
         return _validate_reason(v)
+
+
+class TwoFactorResetResult(BaseModel):
+    """Role-aware recovery result; the enrollment token is shown once."""
+
+    user: UserRead
+    enrollment_token: Optional[str] = None
+    enrollment_expires_at: Optional[datetime] = None
 
 
 # ─────────────────────── UserPermission ──────────────────────────────

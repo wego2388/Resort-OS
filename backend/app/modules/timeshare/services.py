@@ -2091,7 +2091,8 @@ def update_ticket_status(db: Session, ticket_id: int, new_status: str) -> Timesh
 
 def provision_timeshare_agent(
     db: Session, *, email: str, full_name: str, phone: Optional[str],
-    branch_id: int, created_by: int, preferred_language: str = "ar",
+    employee_id: int, branch_id: int, created_by: int,
+    preferred_language: str = "ar",
 ) -> dict:
     """⚠️ باج توثيقي حقيقي اتصلح هنا: deps.py's get_timeshare_user كان
     بيدّعي إن timeshare_agent "بيحصل على UserPermission صريح على
@@ -2106,6 +2107,7 @@ def provision_timeshare_agent(
     from app.core.kernel.models.user import User  # noqa: PLC0415
     from app.core.kernel.security import get_password_hash, validate_email_format  # noqa: PLC0415
     from app.modules.core.models import AuditLog, Branch, UserBranchMembership, UserPermission  # noqa: PLC0415
+    from app.modules.hr.models import Employee  # noqa: PLC0415
 
     normalized_email = (email or "").strip().casefold()
     normalized_name = (full_name or "").strip()
@@ -2121,6 +2123,17 @@ def provision_timeshare_agent(
     branch = db.query(Branch).filter(Branch.id == branch_id, Branch.is_active.is_(True)).first()
     if branch is None:
         raise ValueError("الفرع غير موجود أو غير نشط")
+
+    employee = db.query(Employee).filter(
+        Employee.id == employee_id,
+        Employee.branch_id == branch_id,
+    ).with_for_update().first()
+    if employee is None:
+        raise ValueError("ملف الموظف غير موجود في فرع التشغيل")
+    if employee.user_id is not None:
+        raise ValueError("ملف الموظف مرتبط بحساب دخول بالفعل")
+    if employee.status == "terminated":
+        raise ValueError("لا يمكن إنشاء حساب لموظف منتهي الخدمة")
 
     existing = db.query(User).filter(func.lower(User.email) == normalized_email).first()
     if existing is not None:
@@ -2143,6 +2156,7 @@ def provision_timeshare_agent(
     )
     db.add(user)
     db.flush()
+    employee.user_id = user.id
     db.add(UserBranchMembership(
         user_id=user.id, branch_id=branch_id, is_default=True, is_active=True, created_by=created_by,
     ))
@@ -2153,14 +2167,35 @@ def provision_timeshare_agent(
     db.add(AuditLog(
         user_id=created_by, branch_id=branch_id, action="timeshare_agent_provisioned",
         entity_type="user", entity_id=user.id, old_data=None,
-        new_data=json.dumps({"email": normalized_email, "full_name": normalized_name}, ensure_ascii=False),
+        new_data=json.dumps({
+            "email": normalized_email,
+            "full_name": normalized_name,
+            "employee_id": employee_id,
+        }, ensure_ascii=False),
     ))
     db.commit()
     db.refresh(user)
     return {
-        "id": user.id, "email": user.email, "full_name": user.full_name,
+        "id": user.id, "employee_id": employee_id,
+        "email": user.email, "full_name": user.full_name,
         "temporary_password": temporary_password, "must_change_password": True,
     }
+
+
+def list_eligible_timeshare_employees(db: Session, branch_id: int) -> list:
+    """Return only the non-sensitive HR fields needed by the account picker."""
+    from app.modules.hr.models import Employee  # noqa: PLC0415
+
+    return (
+        db.query(Employee)
+        .filter(
+            Employee.branch_id == branch_id,
+            Employee.user_id.is_(None),
+            Employee.status != "terminated",
+        )
+        .order_by(Employee.full_name, Employee.id)
+        .all()
+    )
 
 
 def list_timeshare_staff(db: Session, branch_id: int) -> list:

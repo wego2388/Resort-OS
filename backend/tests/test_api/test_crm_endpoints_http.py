@@ -62,19 +62,19 @@ class TestGuestProfileEndpoints:
     باج 'الموديل موجود، الـ API صفر'. اتوصل بـ pms.services.checkout_booking
     (تكامل حقيقي مُختبَر في test_pms_http.py) + endpoints قراءة هنا."""
 
-    def test_list_and_get_by_phone_empty(self, client: TestClient, db, waiter_headers):
+    def test_list_and_get_by_phone_empty(self, client: TestClient, db, manager_headers):
         branch = make_branch_committed(db)
-        resp = client.get("/api/v1/crm/guest-profiles", params={"branch_id": branch.id}, headers=waiter_headers)
+        resp = client.get("/api/v1/crm/guest-profiles", params={"branch_id": branch.id}, headers=manager_headers)
         assert resp.status_code == 200
         assert resp.json() == []
 
         missing = client.get(
             "/api/v1/crm/guest-profiles/by-phone/01000000000",
-            params={"branch_id": branch.id}, headers=waiter_headers,
+            params={"branch_id": branch.id}, headers=manager_headers,
         )
         assert missing.status_code == 404
 
-    def test_get_by_phone_returns_seeded_profile(self, client: TestClient, db, waiter_headers):
+    def test_get_by_phone_returns_seeded_profile(self, client: TestClient, db, manager_headers):
         from app.modules.crm.models import GuestProfile
         from decimal import Decimal
         branch = make_branch_committed(db)
@@ -87,7 +87,7 @@ class TestGuestProfileEndpoints:
 
         resp = client.get(
             "/api/v1/crm/guest-profiles/by-phone/01011112222",
-            params={"branch_id": branch.id}, headers=waiter_headers,
+            params={"branch_id": branch.id}, headers=manager_headers,
         )
         assert resp.status_code == 200, resp.text
         body = resp.json()
@@ -342,7 +342,7 @@ class TestInteractionsEndpoints:
 
 
 class TestOpportunitiesEndpoints:
-    def test_create_and_list(self, client: TestClient, db, waiter_headers):
+    def test_create_and_list(self, client: TestClient, db, waiter_headers, manager_headers):
         branch = make_branch_committed(db)
         customer = create_customer(client, branch.id, waiter_headers)
 
@@ -352,15 +352,15 @@ class TestOpportunitiesEndpoints:
                 "branch_id": branch.id, "customer_id": customer["id"], "title": "بيع وحدة ملكية جزئية",
                 "product_type": "timeshare", "expected_value": "50000.00",
             },
-            headers=waiter_headers,
+            headers=manager_headers,
         )
         assert create_resp.status_code == 201, create_resp.text
         opp = create_resp.json()
 
-        list_resp = client.get("/api/v1/crm/opportunities", params={"branch_id": branch.id}, headers=waiter_headers)
+        list_resp = client.get("/api/v1/crm/opportunities", params={"branch_id": branch.id}, headers=manager_headers)
         assert any(o["id"] == opp["id"] for o in list_resp.json()["items"])
 
-    def test_filter_by_stage(self, client: TestClient, db, waiter_headers):
+    def test_filter_by_stage(self, client: TestClient, db, waiter_headers, manager_headers):
         branch = make_branch_committed(db)
         customer = create_customer(client, branch.id, waiter_headers)
         client.post(
@@ -369,17 +369,17 @@ class TestOpportunitiesEndpoints:
                 "branch_id": branch.id, "customer_id": customer["id"], "title": "فرصة 1",
                 "product_type": "leasing", "expected_value": "1000",
             },
-            headers=waiter_headers,
+            headers=manager_headers,
         )
         resp = client.get(
-            "/api/v1/crm/opportunities", params={"branch_id": branch.id, "stage": "won"}, headers=waiter_headers,
+            "/api/v1/crm/opportunities", params={"branch_id": branch.id, "stage": "won"}, headers=manager_headers,
         )
         assert resp.status_code == 200
         assert resp.json()["total"] == 0  # لسه في lead، مش won
 
 
 class TestActivitiesEndpoints:
-    def test_create_and_list(self, client: TestClient, db, waiter_headers):
+    def test_create_and_list(self, client: TestClient, db, waiter_headers, manager_headers):
         branch = make_branch_committed(db)
         customer = create_customer(client, branch.id, waiter_headers)
 
@@ -389,18 +389,18 @@ class TestActivitiesEndpoints:
                 "branch_id": branch.id, "customer_id": customer["id"], "activity_type": "follow_up",
                 "title": "متابعة بعد أسبوع", "due_date": str(date.today() + timedelta(days=7)),
             },
-            headers=waiter_headers,
+            headers=manager_headers,
         )
         assert create_resp.status_code == 201, create_resp.text
         activity = create_resp.json()
 
         list_resp = client.get(
             "/api/v1/crm/activities", params={"branch_id": branch.id, "customer_id": customer["id"]},
-            headers=waiter_headers,
+            headers=manager_headers,
         )
         assert any(a["id"] == activity["id"] for a in list_resp.json()["items"])
 
-    def test_filter_by_due_before(self, client: TestClient, db, waiter_headers):
+    def test_filter_by_due_before(self, client: TestClient, db, waiter_headers, manager_headers):
         branch = make_branch_committed(db)
         customer = create_customer(client, branch.id, waiter_headers)
         client.post(
@@ -409,12 +409,12 @@ class TestActivitiesEndpoints:
                 "branch_id": branch.id, "customer_id": customer["id"], "activity_type": "meeting",
                 "title": "اجتماع بعيد", "due_date": str(date.today() + timedelta(days=60)),
             },
-            headers=waiter_headers,
+            headers=manager_headers,
         )
         resp = client.get(
             "/api/v1/crm/activities",
             params={"branch_id": branch.id, "due_before": str(date.today() + timedelta(days=10))},
-            headers=waiter_headers,
+            headers=manager_headers,
         )
         assert resp.status_code == 200
         assert resp.json()["total"] == 0

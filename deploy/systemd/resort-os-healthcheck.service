@@ -12,6 +12,7 @@ ExecStart=/usr/local/lib/resort-os/check-prod-health.sh
 Environment=RESORT_PUBLIC_IP=191.218.161.133
 Environment=RESORT_STAFF_URL=https://app.elkheima.com/
 Environment=RESORT_MARKETING_URL=https://elkheima.com/
+Environment=RESORT_OWNER_URL=https://owner.elkheima.com/
 Environment=RESORT_TLS_HOST=elkheima.com
 Environment=RESORT_TLS_PORT=443
 Environment=RESORT_BACKUP_DIR=/var/backups/resort-os

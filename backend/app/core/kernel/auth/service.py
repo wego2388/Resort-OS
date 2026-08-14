@@ -70,12 +70,14 @@ _RECOVERY_CODE_COUNT = 8
 STAFF_PROVISIONABLE_ROLES = frozenset({
     "admin", "accountant", "hr_manager", "manager", "supervisor",
     "receptionist", "cashier", "waiter", "chef", "kitchen", "employee",
+    "timeshare_admin", "timeshare_agent",
 })
 
 # روائح مقصودة برّه STAFF_PROVISIONABLE_ROLES عمدًا (super_admin وowner) —
 # نفس منطق provision_account_bootstrap: التحكم الوحيد فيها هو الـCLI
 # المحلي، مش أي endpoint HTTP، حتى لو جلسة سوبر أدمن على الويب اتخترقت.
 BOOTSTRAP_CREATABLE_ROLES = frozenset({"super_admin", "owner"})
+EXPECTED_OPERATING_BRANCH_NAME = "El Kheima Beach Resort"
 
 
 class BaseService:
@@ -119,6 +121,7 @@ class AuthService(BaseService):
     # ── Registration ──────────────────────────────────────────────────────
 
     def register(self, email: str, password: str, full_name: str, phone: Optional[str] = None):
+        email = (email or "").strip().casefold()
         if not validate_email_format(email):
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid email format")
         if self.repo.get_by_email(email):
@@ -384,9 +387,10 @@ class AuthService(BaseService):
         max_attempts = getattr(self.settings, "MAX_LOGIN_ATTEMPTS", 5)
         lockout_minutes = getattr(self.settings, "LOCKOUT_MINUTES", 30)
 
-        # trim whitespace — يمنع فشل الـ login بسبب space زيادة من autofill أو paste
-        email = email.strip()
-        password = password.strip()
+        # Email identifiers are canonical and case-insensitive. Passwords are
+        # opaque secrets: trimming here would make a valid password created by
+        # the change/reset flows impossible to use.
+        email = (email or "").strip().casefold()
 
         user = self.repo.get_by_email(email)
         if not user:
@@ -414,7 +418,14 @@ class AuthService(BaseService):
                 self.db.commit()
                 raise HTTPException(
                     status.HTTP_423_LOCKED,
-                    f"Account locked after too many failed attempts. Try again in {remaining} minutes.",
+                    {
+                        "code": "ACCOUNT_LOCKED",
+                        "message": (
+                            "Account locked after too many failed attempts. "
+                            f"Try again in {remaining} minutes."
+                        ),
+                        "retry_after_minutes": remaining,
+                    },
                 )
             user.account_locked_until = None
             user.failed_login_attempts = 0
@@ -423,7 +434,10 @@ class AuthService(BaseService):
         if not user.is_active:
             self._add_auth_audit(user, "login_blocked_inactive", bounded=True)
             self.db.commit()
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Inactive account")
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                {"code": "ACCOUNT_INACTIVE", "message": "Inactive account"},
+            )
 
         if not verify_password(password, user.password_hash):
             attempts = (user.failed_login_attempts or 0) + 1
@@ -436,7 +450,14 @@ class AuthService(BaseService):
                 self.db.commit()
                 raise HTTPException(
                     status.HTTP_423_LOCKED,
-                    f"Account locked after {max_attempts} failed attempts. Try again in {lockout_minutes} minutes.",
+                    {
+                        "code": "ACCOUNT_LOCKED",
+                        "message": (
+                            f"Account locked after {max_attempts} failed attempts. "
+                            f"Try again in {lockout_minutes} minutes."
+                        ),
+                        "retry_after_minutes": lockout_minutes,
+                    },
                 )
             self._add_auth_audit(user, "login_failed", bounded=True)
             self.db.commit()
@@ -464,6 +485,27 @@ class AuthService(BaseService):
             if recovery_code and not otp_code:
                 recovery_code_used = self._consume_recovery_code(user.id, recovery_code)
             if not valid_totp and not recovery_code_used:
+                attempts = (user.failed_login_attempts or 0) + 1
+                user.failed_login_attempts = attempts
+                if attempts >= max_attempts:
+                    user.account_locked_until = (
+                        datetime.now(timezone.utc) + timedelta(minutes=lockout_minutes)
+                    )
+                    self._add_auth_audit(
+                        user, "login_locked_out", details={"factor": "2fa"},
+                    )
+                    self.db.commit()
+                    raise HTTPException(
+                        status.HTTP_423_LOCKED,
+                        {
+                            "code": "ACCOUNT_LOCKED",
+                            "message": (
+                                f"Account locked after {max_attempts} failed attempts. "
+                                f"Try again in {lockout_minutes} minutes."
+                            ),
+                            "retry_after_minutes": lockout_minutes,
+                        },
+                    )
                 self._add_auth_audit(
                     user, "login_failed", details={"factor": "2fa"}, bounded=True,
                 )
@@ -1535,7 +1577,11 @@ class AuthService(BaseService):
             RefreshToken,
             TwoFactorRecoveryCode,
         )
-        from app.modules.core.models import AuditLog  # noqa: PLC0415
+        from app.modules.core.models import (  # noqa: PLC0415
+            AuditLog,
+            Branch,
+            UserBranchMembership,
+        )
 
         normalized_email = (email or "").strip().casefold()
         normalized_name = (full_name or "").strip()
@@ -1589,6 +1635,52 @@ class AuthService(BaseService):
         user.two_factor_enrollment_token_hash = self._hash_token(enrollment_token)
         user.two_factor_enrollment_expires_at = expires_at
 
+        # Resort OS is deployed for one named operating branch. An owner
+        # account without membership can authenticate but every owner API then
+        # fails with NO_ACTIVE_BRANCH, so bind it atomically during both create
+        # and recovery. Fail closed if the deployment is not actually in the
+        # agreed single-active-branch shape.
+        owner_branch_id = None
+        if user.role == "owner":
+            active_branches = (
+                self.db.query(Branch)
+                .filter(
+                    Branch.is_active.is_(True),
+                    Branch.name == EXPECTED_OPERATING_BRANCH_NAME,
+                )
+                .order_by(Branch.id)
+                .with_for_update()
+                .all()
+            )
+            if len(active_branches) != 1:
+                raise ValueError(
+                    "Owner bootstrap requires exactly one active "
+                    f"'{EXPECTED_OPERATING_BRANCH_NAME}' branch"
+                )
+            owner_branch_id = active_branches[0].id
+            membership = (
+                self.db.query(UserBranchMembership)
+                .filter(
+                    UserBranchMembership.user_id == user.id,
+                    UserBranchMembership.branch_id == owner_branch_id,
+                )
+                .with_for_update()
+                .first()
+            )
+            if membership is None:
+                self.db.add(UserBranchMembership(
+                    user_id=user.id,
+                    branch_id=owner_branch_id,
+                    is_default=True,
+                    is_active=True,
+                    created_by=None,
+                ))
+            else:
+                membership.is_active = True
+                membership.is_default = True
+                membership.revoked_at = None
+                membership.revoked_by = None
+
         self.db.query(RefreshToken).filter(RefreshToken.user_id == user.id).delete(
             synchronize_session=False,
         )
@@ -1607,6 +1699,7 @@ class AuthService(BaseService):
                     "email": normalized_email,
                     "full_name": user.full_name,
                     "role": user.role,
+                    "branch_id": owner_branch_id,
                     "enrollment_expires_at": expires_at.isoformat(),
                     "requires_password_change": True,
                 },

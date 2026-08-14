@@ -7,7 +7,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.core.deps import (
-    DbDep, get_admin_user, get_current_active_user,
+    DbDep, get_admin_user,
     get_employee_user, get_manager_user,
 )
 from app.modules.maintenance import crud, services
@@ -36,7 +36,7 @@ def _assert_maintenance_branch(db, user, branch_id: int, action_desc: str) -> No
 @router.get("/maintenance/assets", response_model=PaginatedResponse)
 def list_assets(
     db: DbDep,
-    user=Depends(get_current_active_user),
+    user=Depends(get_employee_user),
     branch_id: int = Query(...),
     category: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
@@ -68,7 +68,7 @@ def _get_asset_or_404(db, asset_id: int):
 
 
 @router.get("/maintenance/assets/{asset_id}", response_model=AssetRead)
-def get_asset(asset_id: int, db: DbDep, user=Depends(get_current_active_user)):
+def get_asset(asset_id: int, db: DbDep, user=Depends(get_employee_user)):
     asset = _get_asset_or_404(db, asset_id)
     _assert_maintenance_branch(db, user, asset.branch_id, "عرض أصل")
     return AssetRead.model_validate(asset)
@@ -100,7 +100,7 @@ def dispose_asset(asset_id: int, db: DbDep, user=Depends(get_admin_user)):
 @router.get("/maintenance/work-orders", response_model=PaginatedResponse)
 def list_work_orders(
     db: DbDep,
-    user=Depends(get_current_active_user),
+    user=Depends(get_employee_user),
     branch_id: int = Query(...),
     status: Optional[str] = Query(None),
     priority: Optional[str] = Query(None),
@@ -120,7 +120,7 @@ def list_work_orders(
 
 @router.post("/maintenance/work-orders", response_model=WorkOrderRead,
              status_code=status.HTTP_201_CREATED)
-def create_work_order(data: WorkOrderCreate, db: DbDep, user=Depends(get_current_active_user)):
+def create_work_order(data: WorkOrderCreate, db: DbDep, user=Depends(get_employee_user)):
     """wagdy.md #7: أمر صيانة priority=critical كان بينسجّل من غير أي إشعار
     واتساب فوري رغم إن الـ Celery task (notify_overdue_work_orders) والبنية
     التحتية (send_whatsapp_message/notify_admin) موجودين بالفعل — كانوا بس
@@ -146,7 +146,7 @@ def _get_work_order_or_404(db, order_id: int):
 
 
 @router.get("/maintenance/work-orders/{order_id}", response_model=WorkOrderRead)
-def get_work_order(order_id: int, db: DbDep, user=Depends(get_current_active_user)):
+def get_work_order(order_id: int, db: DbDep, user=Depends(get_employee_user)):
     wo = _get_work_order_or_404(db, order_id)
     _assert_maintenance_branch(db, user, wo.branch_id, "عرض أمر صيانة")
     return WorkOrderRead.model_validate(wo)
@@ -192,7 +192,7 @@ def add_part(order_id: int, data: WorkOrderPartCreate, db: DbDep, user=Depends(g
 @router.get("/maintenance/preventive-schedules", response_model=PaginatedResponse)
 def list_schedules(
     db: DbDep,
-    user=Depends(get_current_active_user),
+    user=Depends(get_employee_user),
     branch_id: int = Query(...),
     active_only: bool = Query(True),
     due_before: Optional[date] = Query(None),

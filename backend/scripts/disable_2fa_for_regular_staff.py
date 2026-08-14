@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""
+"""DEPRECATED — do not use for account recovery or reconciliation.
+
 Script لتعطيل 2FA للموظفين العاديين (اللي مش في MANDATORY_2FA_ROLES).
 
 الموظفين اللي عملوا حسابات قبل التعديل كانوا مجبرين يفعّلوا 2FA.
@@ -21,6 +22,11 @@ from app.core.database import SessionLocal
 
 def disable_2fa_for_regular_staff():
     """عطّل 2FA للموظفين العاديين (اللي مش في MANDATORY_2FA_ROLES)."""
+    raise SystemExit(
+        "This legacy script is disabled: it does not revoke sessions, delete "
+        "recovery codes, or write an audit trail. Use the Super Admin recovery "
+        "controls and scripts/reconcile_single_branch_accounts.py instead."
+    )
     db = SessionLocal()
     try:
         # اجلب كل الموظفين اللي فعّلوا 2FA ومش من الأدوار المميزة

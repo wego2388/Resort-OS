@@ -121,6 +121,12 @@ body {
 /*
  * Bottom navigation
  */
+.owner-main {
+  /* The fixed navigation does not participate in layout. Reserve its full
+   * height here once for every screen, including the iPhone safe area. */
+  padding-bottom: calc(56px + env(safe-area-inset-bottom));
+}
+
 .bottom-nav {
   position: fixed;
   bottom: 0;
@@ -160,6 +166,38 @@ body {
   letter-spacing: 0.03em;
 }
 
+/* Desktop/tablet landscape: keep the same six destinations but present them
+ * as a side rail, leaving the bottom edge free for long reports and dialogs. */
+@media (min-width: 1024px) {
+  .owner-header {
+    padding-inline-end: 8rem;
+  }
+
+  .owner-main {
+    margin-inline-end: 7rem;
+    padding-bottom: 0;
+  }
+
+  .bottom-nav {
+    top: calc(61px + env(safe-area-inset-top));
+    bottom: 0;
+    left: auto;
+    right: auto;
+    inset-inline-end: 0;
+    width: 7rem;
+    padding-bottom: env(safe-area-inset-bottom);
+    flex-direction: column;
+    border-top: 0;
+    border-inline-start: 1px solid #2C2B2A;
+  }
+
+  .bottom-nav-item {
+    flex: 0 0 5.25rem;
+    width: 100%;
+    border-bottom: 1px solid #2C2B2A;
+  }
+}
+
 /*
  * Pull-to-refresh indicator
  */
@@ -189,6 +227,32 @@ body {
   text-transform: uppercase;
   color: #A8A29E;
   margin-bottom: 0.75rem;
+}
+
+.screen-section-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin: 0.25rem 0 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: #F5F5F4;
+}
+
+.screen-section-title small {
+  color: #A8A29E;
+  font-size: 0.6875rem;
+  font-weight: 500;
+}
+
+.data-freshness {
+  display: flex;
+  min-height: 3rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  font-size: 0.6875rem;
 }
 
 /*

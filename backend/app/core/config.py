@@ -163,11 +163,11 @@ class Settings(CoreSettings):
     CHAT_OUTPUT_USD_PER_MILLION_TOKENS: float = Field(7.50, gt=0)
 
     # ── Rate Limiting (login) ──────────────────────────────────────────
-    # الافتراضي (5 محاولات/300 ثانية) هو المعتمد أمنيًا للإنتاج (§15 CLAUDE.md)
-    # — ما اتغيّرش هنا. قابل للتوسيع في `.env` المحلي بس (مش القيمة الافتراضية
-    # دي) وقت التطوير/الاختبار، لما محتاج تبدّل حسابات تجريبية كتير بسرعة
-    # (كل حساب = محاولة تسجيل دخول منفصلة على نفس الـ IP).
-    LOGIN_RATE_LIMIT_MAX: int = 5
+    # Coarse IP protection only. Resort staff share one office/NAT address,
+    # so a five-request bucket locked out legitimate colleagues (a 2FA login
+    # can itself take two requests). Per-account password and 2FA failures are
+    # still capped by MAX_LOGIN_ATTEMPTS below the middleware.
+    LOGIN_RATE_LIMIT_MAX: int = 60
     LOGIN_RATE_LIMIT_WINDOW_SECONDS: int = 300
     AUTH_REFRESH_RATE_LIMIT_MAX: int = 60
     AUTH_REFRESH_RATE_LIMIT_WINDOW_SECONDS: int = 60
@@ -288,6 +288,11 @@ class Settings(CoreSettings):
                 "FIELD_ENCRYPTION_KEY must be a valid Fernet key outside "
                 "development/test/testing."
             ) from exc
+        if self.LOGIN_RATE_LIMIT_MAX < 60:
+            raise ValueError(
+                "LOGIN_RATE_LIMIT_MAX must be at least 60 outside "
+                "development/test/testing because resort staff share one NAT address."
+            )
         return self
 
 

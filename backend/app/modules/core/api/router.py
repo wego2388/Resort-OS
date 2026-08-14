@@ -92,6 +92,7 @@ from app.modules.core.schemas import (
     UserRead,
     UserRoleUpdate,
     ForceTwoFactorResetRequest,
+    TwoFactorResetResult,
 )
 
 router = APIRouter(tags=["core"])
@@ -183,7 +184,15 @@ async def guest_alerts_websocket(ws: WebSocket, branch_id: int, db: DbDep):
     محتاج ?token= JWT صالح بمستوى نادل+، وبقى (Gate 1 containment، جولة
     تصحيح ثانية) بيتحقق كمان إن الفرع ده فرع المستخدم نفسه — نفس باج
     GET/PATCH /alerts الأصلي، كان أي نادل يقدر يشترك في بث فرع تاني تمامًا."""
-    user = await get_websocket_user(ws, db, min_level=30)
+    user = await get_websocket_user(
+        ws,
+        db,
+        min_level=30,
+        allowed_roles={
+            "waiter", "cashier", "receptionist", "supervisor",
+            "manager", "admin", "super_admin",
+        },
+    )
     if not user:
         return
     try:
@@ -637,13 +646,14 @@ def unlock_user_account(
 
 @router.post(
     "/users/{user_id}/force-2fa-reset",
-    response_model=UserRead,
+    response_model=TwoFactorResetResult,
 )
 def force_reset_2fa(
     user_id: int,
     data: ForceTwoFactorResetRequest,
     db: DbDep,
     request: Request,
+    response: Response,
     user=Depends(get_super_admin_user),
     x_step_up_token: Optional[str] = Header(default=None, alias="X-Step-Up-Token"),
 ):
@@ -658,12 +668,18 @@ def force_reset_2fa(
         purpose="user_force_2fa_reset", scope_hash=scope_hash, x_step_up_token=x_step_up_token,
     )
     try:
-        updated = services.force_reset_2fa(
+        result = services.force_reset_2fa(
             db, user_id, reset_by=user.id, reason=data.reason,
             step_up_public_reference=step_up["public_reference"],
             assurance_method=step_up["assurance_method"],
         )
-        return UserRead.model_validate(updated)
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Pragma"] = "no-cache"
+        return TwoFactorResetResult(
+            user=UserRead.model_validate(result["user"]),
+            enrollment_token=result["enrollment_token"],
+            enrollment_expires_at=result["enrollment_expires_at"],
+        )
     except services.UserNotFoundError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
 

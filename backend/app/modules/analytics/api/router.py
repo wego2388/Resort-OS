@@ -30,6 +30,7 @@ from app.core.deps import (
     get_websocket_user,
 )
 from app.modules.analytics import services
+from app.modules.core import services as core_services
 from app.modules.analytics.schemas import (
     CRMSummary,
     DailyStatsRead,
@@ -465,7 +466,18 @@ async def kpi_websocket(websocket: WebSocket, branch_id: int, db: DbDep):
     """WebSocket يُرسل KPIs كل 10 ثوانٍ للـ frontend. بيانات مالية حسّاسة —
     محتاج ?token= JWT صالح بمستوى مدير+ (نفس مستوى /analytics/reviews
     وباقي endpoints الموديول)."""
-    if not await get_websocket_user(websocket, db, min_level=60):
+    user = await get_websocket_user(
+        websocket,
+        db,
+        min_level=60,
+        allowed_roles={"manager", "admin", "super_admin"},
+    )
+    if not user:
+        return
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "متابعة مؤشرات الإدارة")
+    except PermissionError:
+        await websocket.close(code=4403)
         return
     await websocket.accept()
     try:

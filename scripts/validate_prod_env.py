@@ -75,6 +75,16 @@ def validate(path: Path, repository_root: Path) -> list[str]:
 
     _strong_secret(values, "SECRET_KEY", issues)
     _strong_secret(values, "SURVEY_TOKEN_SECRET", issues)
+    _strong_secret(values, "TIMESHARE_PORTAL_TOKEN_SECRET", issues)
+
+    try:
+        login_rate_limit = int(values.get("LOGIN_RATE_LIMIT_MAX", ""))
+    except ValueError:
+        login_rate_limit = 0
+    if login_rate_limit < 60:
+        issues.append(
+            "LOGIN_RATE_LIMIT_MAX must be at least 60 for the shared resort network"
+        )
 
     encryption_key = values.get("FIELD_ENCRYPTION_KEY", "")
     try:

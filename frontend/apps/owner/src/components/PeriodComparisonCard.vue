@@ -23,7 +23,7 @@ const showBreakdown = ref(false)
       <h3 class="text-sm font-bold text-owner-text">{{ title }}</h3>
       <div class="flex gap-2 text-xs text-owner-muted">
         <span>{{ comparison.current.label }}</span>
-        <span>vs</span>
+        <span>مقابل</span>
         <span>{{ comparison.prior.label }}</span>
       </div>
     </div>
@@ -44,6 +44,9 @@ const showBreakdown = ref(false)
             <div class="text-sm font-bold text-owner-text">
               {{ formatMoney(comparison.current.total_revenue) }}
             </div>
+            <div class="text-[11px] text-owner-muted">
+              السابق {{ formatMoney(comparison.prior.total_revenue) }}
+            </div>
             <div
               class="text-xs font-semibold flex items-center gap-1 justify-end"
               :class="deltaClass(comparison.revenue_delta)"
@@ -60,6 +63,9 @@ const showBreakdown = ref(false)
           <div class="text-right">
             <div class="text-sm font-bold text-owner-text">
               {{ formatMoney(comparison.current.total_expense) }}
+            </div>
+            <div class="text-[11px] text-owner-muted">
+              السابق {{ formatMoney(comparison.prior.total_expense) }}
             </div>
             <div
               class="text-xs font-semibold flex items-center gap-1 justify-end"
@@ -86,6 +92,9 @@ const showBreakdown = ref(false)
               }"
             >
               {{ formatMoney(comparison.current.net_income) }}
+            </div>
+            <div class="text-[11px] text-owner-muted">
+              السابق {{ formatMoney(comparison.prior.net_income) }}
             </div>
             <div
               class="text-xs font-semibold flex items-center gap-1 justify-end"

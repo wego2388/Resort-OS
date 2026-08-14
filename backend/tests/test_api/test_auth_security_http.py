@@ -57,6 +57,23 @@ def _svc() -> AuthService:
 # ── 1 + 2: user enumeration (message + timing) ─────────────────────────────
 
 class TestLoginEnumeration:
+    def test_login_email_is_case_insensitive(self, setup_db):
+        email = f"mixed-{uuid.uuid4().hex}@test.local"
+        _mk_user(email)
+
+        result = _svc().login(email.upper(), "Correct@12345")
+
+        assert result["access_token"]
+
+    def test_login_preserves_password_edge_whitespace(self, setup_db):
+        email = f"space-{uuid.uuid4().hex}@test.local"
+        password = " Correct@12345 "
+        _mk_user(email, password=password)
+
+        result = _svc().login(email, password)
+
+        assert result["access_token"]
+
     def test_unknown_email_and_wrong_password_return_identical_message(self, setup_db):
         _mk_user("enum-real@test.local")
         auth = _svc()
@@ -104,11 +121,27 @@ class TestLockout:
                 auth.login(email, "Wrong@12345")
             last = exc.value
         assert last.status_code == 423  # HTTP_423_LOCKED on the final attempt
+        assert last.detail["code"] == "ACCOUNT_LOCKED"
+        assert last.detail["retry_after_minutes"] == settings.LOCKOUT_MINUTES
         # further attempts stay locked even with the *correct* password
         auth = _svc()
         with pytest.raises(Exception) as exc:
             auth.login(email, "Correct@12345")
         assert exc.value.status_code == 423
+        assert exc.value.detail["code"] == "ACCOUNT_LOCKED"
+
+    def test_inactive_account_returns_actionable_code(self, setup_db):
+        email = f"inactive-{uuid.uuid4().hex}@test.local"
+        _mk_user(email, is_active=False)
+
+        with pytest.raises(Exception) as exc:
+            _svc().login(email, "Correct@12345")
+
+        assert exc.value.status_code == 400
+        assert exc.value.detail == {
+            "code": "ACCOUNT_INACTIVE",
+            "message": "Inactive account",
+        }
 
 
 # ── 4: TOTP secret encrypted at rest ───────────────────────────────────────
@@ -140,6 +173,21 @@ class TestTotpSecretAtRest:
 # ── 5: login-time 2FA is a real second factor when enforced ────────────────
 
 class TestLoginTime2FA:
+    def test_invalid_codes_lock_the_account(self, setup_db, monkeypatch):
+        email = f"l2fa-lock-{uuid.uuid4().hex}@test.local"
+        secret = pyotp.random_base32()
+        _mk_user(email, role="manager", two_factor_enabled=True, two_factor_secret=secret)
+        monkeypatch.setattr(settings, "LOGIN_2FA_ENFORCED", True)
+
+        last = None
+        for _ in range(settings.MAX_LOGIN_ATTEMPTS):
+            with pytest.raises(Exception) as exc:
+                _svc().login(email, "Correct@12345", otp_code="000000")
+            last = exc.value
+
+        assert last.status_code == 423
+        assert last.detail["code"] == "ACCOUNT_LOCKED"
+
     def test_enforced_requires_valid_code(self, setup_db, monkeypatch):
         email = f"l2fa-{uuid.uuid4().hex}@test.local"
         secret = pyotp.random_base32()
@@ -502,6 +550,22 @@ class TestProductionAuthenticationValidation:
                 FIELD_ENCRYPTION_KEY="not-a-fernet-key",
             )
 
+    def test_production_rejects_shared_ip_login_bucket_below_sixty(self):
+        from pydantic import ValidationError
+        from app.core.config import Settings
+
+        with pytest.raises(ValidationError, match="LOGIN_RATE_LIMIT_MAX"):
+            Settings(
+                ENVIRONMENT="production",
+                SECRET_KEY=_STRONG_SECRET,
+                SURVEY_TOKEN_SECRET=_STRONG_SURVEY_SECRET,
+                TIMESHARE_PORTAL_TOKEN_SECRET=_STRONG_TIMESHARE_SECRET,
+                DATABASE_URL="sqlite://",
+                LOGIN_2FA_ENFORCED=True,
+                FIELD_ENCRYPTION_KEY=_FERNET_KEY,
+                LOGIN_RATE_LIMIT_MAX=59,
+            )
+
     def test_production_accepts_enforced_totp_and_valid_encryption(self):
         from app.core.config import Settings
 
@@ -545,6 +609,11 @@ class TestProductionAuthenticationValidation:
 # ── 8: login stays wired to the IP rate limiter ────────────────────────────
 
 class TestRateLimitWiring:
+    def test_shared_office_default_allows_multiple_staff_logins(self):
+        from app.core.config import Settings
+
+        assert Settings.model_fields["LOGIN_RATE_LIMIT_MAX"].default >= 60
+
     def test_login_and_register_are_rate_limited(self):
         """max_req/window بيتحققوا من settings.LOGIN_RATE_LIMIT_* مش أرقام
         حرفية — القيمة قابلة للتعديل عمدًا لكل بيئة (راجع .env.example)،

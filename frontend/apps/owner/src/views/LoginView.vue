@@ -13,9 +13,13 @@ const REMEMBERED_EMAIL_KEY = 'el-kheima:remembered-username'
 const email    = ref(localStorage.getItem(REMEMBERED_EMAIL_KEY) ?? '')
 const password = ref('')
 const otp      = ref('')
+const recoveryCode = ref('')
+const enrollmentToken = ref('')
 const error    = ref('')
 const loading  = ref(false)
 const needsOtp = ref(false)
+const useRecoveryCode = ref(false)
+const needsEnrollmentToken = ref(false)
 const showPassword = ref(false)
 const rememberMe = ref(false)
 const capsLockOn = ref(false)
@@ -51,6 +55,11 @@ watch(needsOtp, async (isNeeded) => {
   } else {
     _stopOtpCountdown()
   }
+})
+
+watch(useRecoveryCode, (enabled) => {
+  if (enabled) _stopOtpCountdown()
+  else if (needsOtp.value) _startOtpCountdown()
 })
 
 onBeforeUnmount(() => {
@@ -91,11 +100,35 @@ const otpProgressPercent = computed(() => (otpSecondsRemaining.value / 30) * 100
 
 async function submit() {
   error.value = ''
+  if (needsOtp.value) {
+    if (useRecoveryCode.value && recoveryCode.value.replace(/[^a-z0-9]/gi, '').length !== 24) {
+      error.value = 'أدخل كود الاسترداد الكامل'
+      return
+    }
+    if (!useRecoveryCode.value && otp.value.trim().length !== 6) {
+      error.value = 'أدخل رمز التحقق المكوّن من 6 أرقام'
+      return
+    }
+  }
+  if (needsEnrollmentToken.value && enrollmentToken.value.trim().length < 20) {
+    error.value = 'أدخل رمز التهيئة الذي سلّمه لك المسؤول'
+    return
+  }
   loading.value = true
   try {
-    await auth.login(email.value, password.value, otp.value || undefined, undefined, undefined, rememberMe.value)
+    await auth.login(
+      email.value,
+      password.value,
+      !useRecoveryCode.value ? otp.value.trim() || undefined : undefined,
+      useRecoveryCode.value ? recoveryCode.value.trim() || undefined : undefined,
+      enrollmentToken.value.trim() || undefined,
+      rememberMe.value,
+    )
     localStorage.setItem(REMEMBERED_EMAIL_KEY, email.value.trim())
-    router.replace('/')
+    await nextTick()
+    if (auth.needsPasswordChange) router.replace('/change-temporary-password')
+    else if (auth.needsTwoFactorSetup) router.replace('/2fa-setup')
+    else router.replace('/')
   } catch (e: unknown) {
     triggerShake()
     const detail = (e as { response?: { data?: { detail?: { code?: string } | string } } })
@@ -106,7 +139,25 @@ async function submit() {
       error.value = 'أدخل رمز التحقق من تطبيق المصادقة'
     } else if (code === '2FA_CODE_INVALID') {
       needsOtp.value = true
-      error.value = 'رمز التحقق غير صحيح أو انتهت صلاحيته'
+      error.value = useRecoveryCode.value
+        ? 'كود الاسترداد غير صحيح أو تم استخدامه من قبل'
+        : 'رمز التحقق غير صحيح أو انتهت صلاحيته'
+    } else if (
+      code === '2FA_ENROLLMENT_TOKEN_REQUIRED'
+      || code === '2FA_ENROLLMENT_TOKEN_INVALID'
+      || code === '2FA_ENROLLMENT_TOKEN_EXPIRED'
+      || code === '2FA_ENROLLMENT_NOT_PROVISIONED'
+    ) {
+      needsEnrollmentToken.value = true
+      error.value = code === '2FA_ENROLLMENT_NOT_PROVISIONED'
+        ? 'الحساب يحتاج رمز تهيئة جديد من السوبر أدمن'
+        : 'رمز التهيئة مفقود أو غير صحيح أو انتهت صلاحيته'
+    } else if (code === 'ACCOUNT_LOCKED' || (e as { response?: { status?: number } }).response?.status === 423) {
+      error.value = 'الحساب مقفول مؤقتًا بعد محاولات فاشلة. انتظر المدة الموضحة أو اطلب من السوبر أدمن فك القفل.'
+    } else if ((e as { response?: { status?: number } }).response?.status === 429) {
+      error.value = 'محاولات دخول كثيرة من شبكة المنتجع. انتظر قليلًا ثم أعد المحاولة.'
+    } else if (code === 'ACCOUNT_INACTIVE' || detail === 'Inactive account') {
+      error.value = 'الحساب غير نشط. تواصل مع السوبر أدمن.'
     } else {
       error.value = typeof detail === 'string' ? detail : 'بيانات الدخول غير صحيحة'
     }
@@ -215,12 +266,13 @@ async function submit() {
       <!-- OTP — يظهر فقط لو احتاج -->
       <div v-if="needsOtp">
         <div class="flex items-center justify-between mb-1">
-          <label class="block text-xs font-semibold text-owner-muted" for="otp">
-            رمز التحقق (2FA)
+          <label class="block text-xs font-semibold text-owner-muted" :for="useRecoveryCode ? 'recovery-code' : 'otp'">
+            {{ useRecoveryCode ? 'كود الاسترداد' : 'رمز التحقق (2FA)' }}
           </label>
-          <span class="text-xs text-owner-muted tabular-nums">يتجدد خلال {{ otpSecondsRemaining }} ث</span>
+          <span v-if="!useRecoveryCode" class="text-xs text-owner-muted tabular-nums">يتجدد خلال {{ otpSecondsRemaining }} ث</span>
         </div>
         <input
+          v-if="!useRecoveryCode"
           id="otp"
           ref="otpInputRef"
           v-model="otp"
@@ -233,13 +285,42 @@ async function submit() {
           :disabled="loading"
           @paste="handleOtpPaste"
         />
-        <div class="mt-1.5 h-1 w-full rounded-full bg-owner-border overflow-hidden" aria-hidden="true">
+        <input
+          v-else
+          id="recovery-code"
+          v-model="recoveryCode"
+          type="text"
+          autocomplete="one-time-code"
+          dir="ltr"
+          class="w-full bg-owner-bg border border-owner-border rounded-xl px-4 py-3 text-owner-text text-sm text-center tracking-wider font-mono outline-none focus:border-owner-green transition-colors"
+          :disabled="loading"
+        />
+        <div v-if="!useRecoveryCode" class="mt-1.5 h-1 w-full rounded-full bg-owner-border overflow-hidden" aria-hidden="true">
           <div
             class="h-full rounded-full bg-owner-green transition-[width] duration-1000 ease-linear"
             :class="{ 'bg-owner-red': otpSecondsRemaining <= 5 }"
             :style="{ width: `${otpProgressPercent}%` }"
           />
         </div>
+        <button type="button" class="mt-2 text-xs text-owner-green underline" @click="useRecoveryCode = !useRecoveryCode">
+          {{ useRecoveryCode ? 'استخدام تطبيق المصادقة' : 'استخدام كود استرداد بدلًا منه' }}
+        </button>
+      </div>
+
+      <div v-if="needsEnrollmentToken">
+        <label class="block text-xs font-semibold text-owner-muted mb-1" for="enrollment-token">
+          رمز التهيئة الآمن
+        </label>
+        <input
+          id="enrollment-token"
+          v-model="enrollmentToken"
+          type="password"
+          autocomplete="off"
+          dir="ltr"
+          class="w-full bg-owner-bg border border-owner-border rounded-xl px-4 py-3 text-owner-text text-sm font-mono outline-none focus:border-owner-green transition-colors"
+          :disabled="loading"
+        />
+        <p class="mt-1 text-[11px] text-owner-muted">رمز منفصل يظهر للمسؤول مرة واحدة، وليس كلمة المرور.</p>
       </div>
 
       <!-- Error -->

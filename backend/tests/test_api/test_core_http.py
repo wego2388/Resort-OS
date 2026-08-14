@@ -672,17 +672,46 @@ class TestCreateUserEndpoint:
         resp = client.post("/api/v1/users", json=payload, headers=manager_headers)
         assert resp.status_code == 403
 
+    def test_rejects_operational_account_without_employee_link(
+        self, client: TestClient, super_admin_headers,
+    ):
+        response = client.post(
+            "/api/v1/users",
+            json={
+                "email": f"orphan-{uuid.uuid4().hex[:6]}@test.local",
+                "full_name": "موظف بدون ملف",
+                "role": "cashier",
+                "reason": "اختبار منع الحسابات اليتيمة",
+            },
+            headers=super_admin_headers,
+        )
+        assert response.status_code == 422
+
     def test_creates_staff_account_with_must_change_password(
         self, client: TestClient, super_admin_headers, db
     ):
+        from datetime import date
+        from decimal import Decimal
+
         from tests.conftest import _fresh_super_admin, _issue_step_up
         from app.modules.core.models import Branch, UserBranchMembership
+        from app.modules.hr.models import Employee
         branch = Branch(
             name="Basic Staff Branch",
             code=f"BS-{uuid.uuid4().hex[:8].upper()}",
             is_active=True,
         )
         db.add(branch)
+        db.commit()
+        employee = Employee(
+            branch_id=branch.id,
+            employee_code=f"BSC-{uuid.uuid4().hex[:8].upper()}",
+            full_name="كاشير اختبار",
+            position="Cashier",
+            basic_salary=Decimal("5000"),
+            hire_date=date.today(),
+        )
+        db.add(employee)
         db.commit()
         _sa_id, sa_headers, sa_secret = _fresh_super_admin(
             "create-staff-basic", branch_id=branch.id,
@@ -691,6 +720,7 @@ class TestCreateUserEndpoint:
         payload = {
             "email": email,
             "full_name": "كاشير اختبار",
+            "employee_id": employee.id,
             "role": "cashier",
             "preferred_language": "ar",
             "reason": "تعيين موظف جديد في الاختبار",
@@ -774,6 +804,61 @@ class TestCreateUserEndpoint:
         assert len(payload["enrollment_token"]) >= 20
         assert payload["enrollment_expires_at"] is not None
 
+    def test_super_admin_can_provision_first_timeshare_admin(self, client: TestClient, db):
+        """The control plane must be able to bootstrap the first unit admin."""
+        from datetime import date
+        from decimal import Decimal
+
+        from app.modules.core.models import Branch
+        from app.modules.hr.models import Employee
+        from tests.conftest import _fresh_super_admin, _issue_step_up
+
+        branch = Branch(
+            name="Timeshare Admin Branch",
+            code=f"TSA-{uuid.uuid4().hex[:8].upper()}",
+            is_active=True,
+        )
+        db.add(branch)
+        db.commit()
+        employee = Employee(
+            branch_id=branch.id,
+            employee_code=f"TSA-{uuid.uuid4().hex[:8].upper()}",
+            full_name="Timeshare Unit Admin",
+            position="Timeshare Admin",
+            basic_salary=Decimal("8000"),
+            hire_date=date.today(),
+        )
+        db.add(employee)
+        db.commit()
+
+        _, headers, secret = _fresh_super_admin(
+            "first-timeshare-admin", branch_id=branch.id,
+        )
+        body = {
+            "email": f"timeshare-admin-{uuid.uuid4().hex}@test.local",
+            "full_name": employee.full_name,
+            "employee_id": employee.id,
+            "role": "timeshare_admin",
+            "preferred_language": "ar",
+            "reason": "تعيين أول مدير للملكية الجزئية",
+        }
+        step_up = _issue_step_up(
+            client,
+            headers,
+            purpose="user_provision",
+            intent=body,
+            totp_secret=secret,
+        )
+        response = client.post(
+            "/api/v1/users",
+            json=body,
+            headers={**headers, "X-Step-Up-Token": step_up},
+        )
+        assert response.status_code == 201, response.text
+        assert response.json()["user"]["role"] == "timeshare_admin"
+        db.expire(employee)
+        assert db.get(Employee, employee.id).user_id == response.json()["user"]["id"]
+
     def test_rejects_duplicate_email(self, client: TestClient, super_admin_headers):
         """الـ provision endpoint يرفض إيميل مكرر بـ 409.
         ملاحظة: الـ second call لازم يستنى دورة TOTP جديدة (30 ث) — skip في
@@ -802,8 +887,12 @@ class TestCreateUserEndpoint:
         assert resp.status_code == 422
 
     def test_list_users_supports_search_filter(self, client: TestClient, super_admin_headers, db):
+        from datetime import date
+        from decimal import Decimal
+
         from tests.conftest import _fresh_super_admin, _issue_step_up
         from app.modules.core.models import Branch
+        from app.modules.hr.models import Employee
         branch = Branch(
             name="Search Staff Branch",
             code=f"SS-{uuid.uuid4().hex[:8].upper()}",
@@ -816,14 +905,26 @@ class TestCreateUserEndpoint:
         )
         unique = uuid.uuid4().hex[:8]
         email = f"searchable-{unique}@test.local"
+        employee = Employee(
+            branch_id=branch.id,
+            employee_code=f"SEA-{unique.upper()}",
+            full_name=f"موظف {unique}",
+            position="Employee",
+            basic_salary=Decimal("5000"),
+            hire_date=date.today(),
+        )
+        db.add(employee)
+        db.commit()
         payload = {
             "email": email, "full_name": f"موظف {unique}",
-            "role": "employee", "preferred_language": "ar", "reason": "اختبار بحث",
+            "employee_id": employee.id, "role": "employee",
+            "preferred_language": "ar", "reason": "اختبار بحث",
         }
         token = _issue_step_up(client, sa_headers, purpose="user_provision",
                                intent=payload, totp_secret=sa_secret)
-        client.post("/api/v1/users", json=payload,
-                    headers={**sa_headers, "X-Step-Up-Token": token})
+        created = client.post("/api/v1/users", json=payload,
+                              headers={**sa_headers, "X-Step-Up-Token": token})
+        assert created.status_code == 201, created.text
 
         resp = client.get(f"/api/v1/users?search={unique}", headers=super_admin_headers)
         assert resp.status_code == 200

@@ -1035,7 +1035,7 @@ onMounted(fetchEmployees)
       </div>
       <AppCard v-else :title="t('backoffice.hr.employeesCount', { count: employees.length })" padding="none">
         <div class="overflow-x-auto">
-          <table class="w-full min-w-[900px]">
+          <table class="responsive-card-table w-full min-w-[900px]">
             <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
                 <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.hr.name') }}</th>
@@ -1049,7 +1049,7 @@ onMounted(fetchEmployees)
             </thead>
             <tbody>
               <tr v-for="emp in employees" :key="emp.id" class="border-t border-stone-100 dark:border-border/50 hover:bg-stone-50 dark:bg-gray-800/60">
-                <td class="px-4 py-3">
+                <td data-primary class="px-4 py-3">
                   <div class="flex items-center gap-3">
                     <div class="flex h-8 w-8 items-center justify-center rounded-full bg-blue-100 text-sm font-bold text-blue-700 dark:bg-blue-950/50 dark:text-blue-300">
                       {{ emp.full_name.charAt(0) }}
@@ -1060,13 +1060,13 @@ onMounted(fetchEmployees)
                     </div>
                   </div>
                 </td>
-                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ emp.position }}</td>
-                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ emp.department ?? '—' }}</td>
-                <td class="px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-100">{{ formatNumber(emp.basic_salary ?? 0) }} {{ t('backoffice.hr.egp') }}</td>
-                <td class="px-4 py-3">
+                <td :data-label="t('backoffice.hr.position')" class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ emp.position }}</td>
+                <td :data-label="t('backoffice.hr.department')" class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ emp.department ?? '—' }}</td>
+                <td :data-label="t('backoffice.hr.salary')" class="px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-100">{{ formatNumber(emp.basic_salary ?? 0) }} {{ t('backoffice.hr.egp') }}</td>
+                <td :data-label="t('backoffice.hr.statusCol')" class="px-4 py-3">
                   <AppBadge size="sm" :variant="statusVariant[emp.status] ?? 'neutral'">{{ statusLabel(emp.status) }}</AppBadge>
                 </td>
-                <td class="px-4 py-3">
+                <td :data-label="t('backoffice.hr.accountStatus')" class="px-4 py-3">
                   <AppBadge v-if="emp.user_id" size="sm" variant="success">{{ t('backoffice.hr.accountLinked') }}</AppBadge>
                   <button v-else-if="auth.role === 'super_admin'" class="text-xs font-bold text-primary-700 hover:underline dark:text-primary-300"
                     @click="openAccountProvisioning(emp)">
@@ -1074,7 +1074,7 @@ onMounted(fetchEmployees)
                   </button>
                   <AppBadge v-else size="sm" variant="warning">{{ t('backoffice.hr.accountPending') }}</AppBadge>
                 </td>
-                <td class="px-4 py-3">
+                <td data-actions class="px-4 py-3">
                   <div class="flex flex-wrap items-center gap-x-3 gap-y-2 whitespace-nowrap">
                     <button @click="openProfileModal(emp)" class="text-xs font-semibold text-sky-700 hover:text-sky-900 dark:text-sky-300 dark:hover:text-sky-100">👤 {{ t('backoffice.hr.profileShort') }}</button>
                     <button v-if="canManageEmployeeRecords" @click="openEditModal(emp)" class="text-xs font-semibold text-indigo-600 hover:text-indigo-800 dark:text-indigo-300 dark:hover:text-indigo-200">✏️ {{ t('backoffice.hr.editShort') }}</button>
@@ -1105,7 +1105,7 @@ onMounted(fetchEmployees)
                 </td>
               </tr>
               <tr v-if="employees.length === 0">
-                <td colspan="7" class="px-4 py-12 text-center text-gray-400 dark:text-gray-400">{{ t('backoffice.hr.noEmployees') }}</td>
+                <td data-empty colspan="7" class="px-4 py-12 text-center text-gray-400 dark:text-gray-400">{{ t('backoffice.hr.noEmployees') }}</td>
               </tr>
             </tbody>
           </table>

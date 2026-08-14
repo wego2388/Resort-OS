@@ -230,7 +230,15 @@ dining_manager = ConnectionManager()
 
 @router.websocket("/dining/ws/kds/{branch_id}")
 async def kds_websocket(ws: WebSocket, branch_id: int, db: DbDep):
-    user = await get_websocket_user(ws, db)
+    user = await get_websocket_user(
+        ws,
+        db,
+        min_level=30,
+        allowed_roles={
+            "waiter", "chef", "kitchen", "cashier", "receptionist",
+            "supervisor", "manager", "admin", "super_admin",
+        },
+    )
     if not user:
         return
     try:
@@ -249,7 +257,15 @@ async def kds_websocket(ws: WebSocket, branch_id: int, db: DbDep):
 
 @router.websocket("/dining/ws/tables/{branch_id}")
 async def tables_websocket(ws: WebSocket, branch_id: int, db: DbDep):
-    user = await get_websocket_user(ws, db)
+    user = await get_websocket_user(
+        ws,
+        db,
+        min_level=30,
+        allowed_roles={
+            "waiter", "cashier", "receptionist", "supervisor",
+            "manager", "admin", "super_admin",
+        },
+    )
     if not user:
         return
     try:

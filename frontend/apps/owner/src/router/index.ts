@@ -21,7 +21,12 @@ const router = createRouter({
     {
       path: '/2fa-setup',
       component: () => import('../views/TwoFactorSetupView.vue'),
-      meta: { public: true },
+      meta: { requiresAuth: true },
+    },
+    {
+      path: '/change-temporary-password',
+      component: () => import('../views/ForcePasswordChangeView.vue'),
+      meta: { requiresAuth: true },
     },
     {
       path: '/',
@@ -78,29 +83,32 @@ const router = createRouter({
 router.beforeEach(async (to) => {
   const auth = useAuthStore()
 
-  // routes عامة — لا تحقق
-  if (to.meta.public) {
-    // لو متسجّل دخول بالفعل → الرئيسية
-    if (auth.isAuthenticated && ALLOWED_ROLES.has(auth.role)) {
-      return '/'
-    }
-    return true
-  }
-
-  // غير متسجّل → /login
   if (!auth.isAuthenticated || !auth.user) {
+    if (to.meta.public) return true
     return '/login'
-  }
-
-  // 2FA مطلوب → /2fa-setup
-  if (auth.needsTwoFactorSetup) {
-    return '/2fa-setup'
   }
 
   // تحقق Role — fail-closed: فقط owner أو super_admin
   if (!ALLOWED_ROLES.has(auth.role)) {
+    if (to.path === '/login') return true
     return '/login'
   }
+
+  // Temporary credentials must be replaced before any other route.
+  if (auth.needsPasswordChange && to.path !== '/change-temporary-password') {
+    return '/change-temporary-password'
+  }
+
+  // Mandatory 2FA comes after the temporary password has been replaced.
+  if (!auth.needsPasswordChange && auth.needsTwoFactorSetup && to.path !== '/2fa-setup') {
+    return '/2fa-setup'
+  }
+
+  if (to.path === '/login') return '/'
+  if (to.path === '/change-temporary-password' && !auth.needsPasswordChange) {
+    return auth.needsTwoFactorSetup ? '/2fa-setup' : '/'
+  }
+  if (to.path === '/2fa-setup' && !auth.needsTwoFactorSetup) return '/'
 
   return true
 })

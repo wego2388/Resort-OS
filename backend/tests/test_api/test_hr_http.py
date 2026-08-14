@@ -252,6 +252,17 @@ class TestHRPermissions:
         )
         assert resp.status_code == 403
 
+    def test_accountant_cannot_list_employee_personnel_data(
+        self, client: TestClient, db, accountant_headers,
+    ):
+        branch = make_branch_committed(db)
+        resp = client.get(
+            "/api/v1/hr/employees",
+            params={"branch_id": branch.id},
+            headers=accountant_headers,
+        )
+        assert resp.status_code == 403
+
     def test_list_employees_requires_manager(self, client: TestClient, db, cashier_headers):
         """cashier (40) must not list employees — manager (60) required."""
         branch = make_branch_committed(db)

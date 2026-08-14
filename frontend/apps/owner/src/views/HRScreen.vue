@@ -12,6 +12,7 @@ import { useOwnerHRSummary } from '../composables/useOwnerData'
 import { formatMoney } from '../composables/useFormat'
 import ErrorState from '../components/ErrorState.vue'
 import SkeletonCards from '../components/SkeletonCards.vue'
+import DataFreshness from '../components/DataFreshness.vue'
 import type { HREmployeeRow } from '../api/types'
 
 const { data, loading, error, reload } = useOwnerHRSummary()
@@ -62,18 +63,18 @@ function formatHireDate(d: string) {
 <template>
   <div class="flex-1 flex flex-col overflow-hidden">
     <!-- Header summary bar -->
-    <div v-if="data" class="flex gap-3 px-4 py-3 bg-owner-card border-b border-owner-border text-xs">
-      <div class="text-center flex-1">
+    <div v-if="data" class="grid grid-cols-2 gap-3 px-4 py-3 bg-owner-card border-b border-owner-border text-xs sm:grid-cols-3">
+      <div class="text-center">
         <div class="font-bold text-owner-green text-base">{{ data.active_count }}</div>
         <div class="text-owner-muted">نشط</div>
       </div>
-      <div class="text-center flex-1">
+      <div class="text-center">
         <div class="font-bold text-owner-amber text-base">{{ data.on_leave_count }}</div>
         <div class="text-owner-muted">إجازة</div>
       </div>
-      <div class="text-center flex-1">
+      <div class="col-span-2 border-t border-owner-border pt-2 text-center sm:col-span-1 sm:border-0 sm:pt-0">
         <div class="font-bold text-owner-text text-base">{{ formatMoney(data.total_net_payroll) }}</div>
-        <div class="text-owner-muted">إجمالي الرواتب</div>
+        <div class="text-owner-muted">صافي الرواتب · ملخص داخلي</div>
       </div>
     </div>
 
@@ -84,15 +85,15 @@ function formatHireDate(d: string) {
           v-model="searchQuery"
           type="search"
           placeholder="ابحث باسم الموظف أو الوظيفة..."
-          class="w-full bg-owner-card border border-owner-border rounded-xl px-4 py-2.5 text-sm text-owner-text outline-none focus:border-owner-green"
+          class="min-h-12 w-full bg-owner-card border border-owner-border rounded-xl px-4 py-2.5 text-sm text-owner-text outline-none focus:border-owner-green"
           dir="rtl"
         />
         <!-- Status filter chips -->
-        <div class="flex gap-2">
+        <div class="flex flex-wrap gap-2">
           <button
             v-for="s in ['all', 'active', 'on_leave', 'terminated'] as const"
             :key="s"
-            class="px-3 py-1 rounded-lg text-xs font-semibold transition-colors"
+            class="min-h-11 px-3 py-1 rounded-lg text-xs font-semibold transition-colors"
             :class="filterStatus === s
               ? 'bg-owner-green text-black'
               : 'bg-owner-bg text-owner-muted border border-owner-border'"
@@ -119,7 +120,7 @@ function formatHireDate(d: string) {
         >
           <!-- رأس البطاقة -->
           <button
-            class="w-full flex items-center justify-between gap-2"
+            class="min-h-12 w-full flex items-center justify-between gap-2"
             @click="toggleEmployee(emp.employee_id)"
           >
             <div class="text-right flex-1 min-w-0">
@@ -192,9 +193,7 @@ function formatHireDate(d: string) {
           </div>
         </div>
 
-        <div class="text-center text-xs text-owner-muted py-2">
-          محسوب: {{ new Date(data.computed_at).toLocaleTimeString('ar-EG') }}
-        </div>
+        <DataFreshness :at="data.computed_at" :refresh="reload" />
       </div>
     </div>
   </div>

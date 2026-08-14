@@ -444,7 +444,7 @@ PERMISSION_CATALOG: list[PermissionCatalogEntry] = [
         "label_ar": "جدولة زيارة ملكية جزئية",
         "label_en": "Schedule a fractional ownership visit",
         "module": "timeshare",
-        "min_role_level": 40,
+        "min_role_level": 25,
         "endpoint": "POST /timeshare/visits",
     },
     {

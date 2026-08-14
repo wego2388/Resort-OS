@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.deps import (
     DbDep, get_admin_user, get_cashier_user,
-    get_current_active_user, get_db, get_manager_user, get_websocket_user,
+    get_current_active_user, get_db, get_finance_user, get_websocket_user,
     rate_limit_dep, require_permission, user_level,
 )
 from app.modules.finance import crud, services
@@ -114,7 +114,18 @@ async def shifts_websocket(ws: WebSocket, branch_id: int, db: DbDep):
     مفيش بيانات مالية بتتبعت في رسالة الـ WS نفسها، القراءة الحقيقية لسه
     عبر GET /finance/shifts/{id}/report العادي (نفس فلسفة KDS: WS = إشارة
     تحديث، مش قناة نقل بيانات)."""
-    if not await get_websocket_user(ws, db, min_level=60):
+    user = await get_websocket_user(
+        ws,
+        db,
+        min_level=60,
+        allowed_roles={"accountant", "manager", "admin", "super_admin"},
+    )
+    if not user:
+        return
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "متابعة الورديات المالية")
+    except PermissionError:
+        await ws.close(code=4403)
         return
     await shift_manager.connect(ws, str(branch_id))
     try:
@@ -130,7 +141,7 @@ async def shifts_websocket(ws: WebSocket, branch_id: int, db: DbDep):
 @router.get("/finance/folios", response_model=PaginatedResponse)
 def list_folios(
     db: DbDep,
-    _=Depends(get_manager_user),
+    _=Depends(get_finance_user),
     branch_id: int = Query(...),
     status: Optional[str] = Query(None),
     date_from: Optional[date] = Query(None),
@@ -221,7 +232,7 @@ async def add_payment(folio_id: int, data: PaymentCreate, db: DbDep, user=Depend
              dependencies=[Depends(require_permission("finance.void_payment", "execute", min_role_level=60))])
 def void_payment(
     payment_id: int, data: VoidPaymentRequest, db: DbDep, request: Request,
-    user=Depends(get_manager_user),
+    user=Depends(get_finance_user),
     x_step_up_token: Optional[str] = Header(default=None, alias="X-Step-Up-Token"),
 ):
     """Gate 4 (جولة مراجعة Codex الأولى — M5a): عكس دفعة اتسجّلت بالفعل في
@@ -273,7 +284,7 @@ def download_folio_statement_pdf(folio_id: int, db: DbDep, user=Depends(get_cash
 
 @router.get("/finance/folios/report/export", response_model=None)
 def download_folios_report_excel(
-    db: DbDep, _=Depends(get_manager_user),
+    db: DbDep, _=Depends(get_finance_user),
     branch_id: int = Query(...),
     date_from: Optional[date] = Query(None),
     date_to: Optional[date] = Query(None),
@@ -344,7 +355,7 @@ def get_current_shift(db: DbDep, user=Depends(get_cashier_user), branch_id: int 
 @router.get("/finance/shifts/active", response_model=ActiveShiftsResponse)
 def get_active_shifts(
     db: DbDep,
-    user=Depends(get_manager_user),
+    user=Depends(get_finance_user),
     branch_id: int = Query(...),
 ):
     """كل الورديات المفتوحة في الفرع مع ملخص مبيعاتها اللحظي — مدير+ فقط.
@@ -359,7 +370,7 @@ def get_active_shifts(
 
 @router.get("/finance/shifts", response_model=PaginatedResponse)
 def list_shifts(
-    db: DbDep, user=Depends(get_manager_user),
+    db: DbDep, user=Depends(get_finance_user),
     branch_id: int = Query(...),
     cashier_id: Optional[int] = Query(None),
     status_filter: Optional[str] = Query(None, alias="status"),
@@ -521,7 +532,7 @@ def create_cash_movement(shift_id: int, data: CashMovementCreate, db: DbDep, use
 
 
 @router.get("/finance/shifts/{shift_id}/cash-movements", response_model=list[CashMovementRead])
-def list_cash_movements(shift_id: int, db: DbDep, user=Depends(get_manager_user)):
+def list_cash_movements(shift_id: int, db: DbDep, user=Depends(get_finance_user)):
     """سجل حركات الكاش اليدوية على وردية — مدير+ فقط (نفس مستوى `/audit-logs`،
     ده تفصيل من سجل التدقيق يخص مين نفّذ/وافق على إيه، مش بيانات معاملة
     عادية يشوفها الكاشير عن نفسه).
@@ -547,7 +558,7 @@ def list_cash_movements(shift_id: int, db: DbDep, user=Depends(get_manager_user)
 @router.get("/finance/discounts", response_model=PaginatedResponse)
 def list_discounts(
     db: DbDep,
-    _=Depends(get_manager_user),
+    _=Depends(get_finance_user),
     branch_id: int = Query(...),
     active_only: bool = Query(True),
     page: int = Query(1, ge=1),
@@ -617,7 +628,7 @@ def calculate_discount_endpoint(
 @router.get("/finance/accounts", response_model=PaginatedResponse)
 def list_accounts(
     db: DbDep,
-    _=Depends(get_manager_user),
+    _=Depends(get_finance_user),
     branch_id: int = Query(...),
     active_only: bool = Query(True),
     as_of: Optional[date] = Query(None, description="تاريخ حساب الرصيد — افتراضيًا اليوم"),
@@ -645,7 +656,7 @@ def list_accounts(
 
 @router.post("/finance/accounts", response_model=AccountRead,
              status_code=status.HTTP_201_CREATED)
-def create_account(data: AccountCreate, db: DbDep, _=Depends(get_manager_user)):
+def create_account(data: AccountCreate, db: DbDep, _=Depends(get_finance_user)):
     try:
         account = crud.create_account(db, data)
         db.commit()
@@ -670,7 +681,7 @@ def create_account(data: AccountCreate, db: DbDep, _=Depends(get_manager_user)):
 def post_journal_entry(
     data: JournalEntryCreate,
     db: DbDep,
-    user=Depends(get_manager_user),
+    user=Depends(get_finance_user),
 ):
     try:
         entry = services.post_journal_entry(db, data, user_id=user.id)
@@ -682,7 +693,7 @@ def post_journal_entry(
 @router.get("/finance/journal-entries", response_model=PaginatedResponse)
 def list_journal_entries(
     db: DbDep,
-    _=Depends(get_manager_user),
+    _=Depends(get_finance_user),
     branch_id: int = Query(...),
     date_from: Optional[date] = Query(None),
     date_to: Optional[date] = Query(None),
@@ -699,7 +710,7 @@ def list_journal_entries(
 
 
 @router.get("/finance/journal-entries/{entry_id}", response_model=JournalEntryRead)
-def get_journal_entry(entry_id: int, db: DbDep, _=Depends(get_manager_user)):
+def get_journal_entry(entry_id: int, db: DbDep, _=Depends(get_finance_user)):
     entry = crud.get_journal_entry(db, entry_id)
     if not entry:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Journal entry {entry_id} not found")
@@ -714,7 +725,7 @@ def get_journal_entry(entry_id: int, db: DbDep, _=Depends(get_manager_user)):
 @router.get("/finance/revenue-audit-logs", response_model=list[RevenueAuditLogRead])
 def list_revenue_audit_logs(
     db: DbDep,
-    _=Depends(get_manager_user),
+    _=Depends(get_finance_user),
     branch_id: int = Query(...),
     entity_type: Optional[str] = Query(None, pattern=r"^(booking|folio|invoice|payment)$"),
     entity_id: Optional[int] = Query(None),
@@ -728,7 +739,7 @@ def list_revenue_audit_logs(
 @router.get("/finance/periods", response_model=PaginatedResponse)
 def list_periods(
     db: DbDep,
-    _=Depends(get_manager_user),
+    _=Depends(get_finance_user),
     branch_id: int = Query(...),
     page: int = Query(1, ge=1),
     size: int = Query(50, ge=1, le=200),
@@ -761,7 +772,7 @@ def close_period(
 # endpoints دي على get_current_active_user (أي موظف مسجّل دخول، حتى مستوى
 # waiter/kitchen=20/30) بينما باقي كل endpoint مالي حساس في نفس الملف
 # (folios/accounts/journal-entries/periods) على get_cashier_user (40+) أو
-# get_manager_user (60+) — باج صلاحيات حقيقي: أي موظف كان يقدر يسجّل شيك
+# get_finance_user (60+) — باج صلاحيات حقيقي: أي موظف كان يقدر يسجّل شيك
 # جديد أو ينقله received→deposited→cleared/bounced (قرار محاسبي/بنكي).
 
 @router.get("/finance/checks", response_model=list[CheckRead])
@@ -789,7 +800,7 @@ def move_check_status_endpoint(
     check_id: int,
     body: CheckMoveStatus,
     db: Session = Depends(get_db),
-    current_user=Depends(get_manager_user),
+    current_user=Depends(get_finance_user),
 ):
     try:
         updated = services.move_check_status(db, check_id, body.to_status, current_user.id, body.notes)
@@ -803,7 +814,7 @@ def move_check_status_endpoint(
 # ── Cost Centers ─────────────────────────────────────────────────────
 
 @router.get("/finance/cost-centers", response_model=list[CostCenterRead])
-def list_cost_centers(db: DbDep, _=Depends(get_manager_user),
+def list_cost_centers(db: DbDep, _=Depends(get_finance_user),
                       branch_id: int = Query(...), active_only: bool = Query(True)):
     return [CostCenterRead.model_validate(c)
             for c in crud.list_cost_centers(db, branch_id, active_only)]
@@ -819,7 +830,7 @@ def create_cost_center(data: CostCenterCreate, db: DbDep, _=Depends(get_admin_us
 
 @router.get("/finance/cost-centers/report", response_model=CostCenterReport)
 def cost_center_report(
-    db: DbDep, _=Depends(get_manager_user),
+    db: DbDep, _=Depends(get_finance_user),
     branch_id: int = Query(...),
     date_from: date = Query(...), date_to: date = Query(...),
 ):
@@ -843,7 +854,7 @@ def list_exchange_rates(
 
 @router.post("/finance/exchange-rates", response_model=ExchangeRateRead,
              status_code=status.HTTP_201_CREATED)
-def create_exchange_rate(data: ExchangeRateCreate, db: DbDep, user=Depends(get_manager_user)):
+def create_exchange_rate(data: ExchangeRateCreate, db: DbDep, user=Depends(get_finance_user)):
     try:
         obj = services.create_exchange_rate(db, data, created_by=user.id)
     except ValueError as exc:
@@ -855,7 +866,7 @@ def create_exchange_rate(data: ExchangeRateCreate, db: DbDep, user=Depends(get_m
 
 @router.get("/finance/reports/trial-balance", response_model=TrialBalanceReport)
 def trial_balance_report(
-    db: DbDep, _=Depends(get_manager_user),
+    db: DbDep, _=Depends(get_finance_user),
     branch_id: int = Query(...),
     as_of: date = Query(...),
     group_by_parent: bool = Query(False, description="جمّع الحسابات تحت رؤوس المجموعات (Account.parent_id) بدل سطر لكل حساب فردي"),
@@ -867,7 +878,7 @@ def trial_balance_report(
 
 @router.get("/finance/reports/income-statement", response_model=IncomeStatementReport)
 def income_statement_report(
-    db: DbDep, _=Depends(get_manager_user),
+    db: DbDep, _=Depends(get_finance_user),
     branch_id: int = Query(...),
     date_from: date = Query(...),
     date_to: date = Query(...),
@@ -878,7 +889,7 @@ def income_statement_report(
 
 @router.get("/finance/reports/balance-sheet", response_model=BalanceSheetReport)
 def balance_sheet_report(
-    db: DbDep, _=Depends(get_manager_user),
+    db: DbDep, _=Depends(get_finance_user),
     branch_id: int = Query(...),
     as_of: date = Query(...),
 ):
@@ -900,7 +911,7 @@ def balance_sheet_report(
 async def submit_eta_invoice(
     data: ETAInvoiceSubmitRequest,
     db: DbDep,
-    _user=Depends(get_manager_user),
+    _user=Depends(get_finance_user),
 ):
     try:
         invoice = await services.submit_eta_invoice(db, settings, data)
@@ -914,7 +925,7 @@ async def submit_eta_invoice(
     response_model=PaginatedResponse,
 )
 def list_eta_invoices(
-    db: DbDep, _user=Depends(get_manager_user),
+    db: DbDep, _user=Depends(get_finance_user),
     branch_id: int = Query(...),
     status_filter: Optional[str] = Query(None, alias="status"),
     page: int = Query(1, ge=1), size: int = Query(20, ge=1, le=100),
@@ -928,7 +939,7 @@ def list_eta_invoices(
     "/finance/eta/invoices/{invoice_id}",
     response_model=ETAInvoiceRead,
 )
-def get_eta_invoice(invoice_id: int, db: DbDep, _user=Depends(get_manager_user)):
+def get_eta_invoice(invoice_id: int, db: DbDep, _user=Depends(get_finance_user)):
     invoice = crud.get_eta_invoice(db, invoice_id)
     if not invoice:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"الفاتورة {invoice_id} غير موجودة")
@@ -938,7 +949,7 @@ def get_eta_invoice(invoice_id: int, db: DbDep, _user=Depends(get_manager_user))
 # ── Fixed-Asset Depreciation ─────────────────────────────────────────
 
 @router.post("/finance/depreciation/run", response_model=DepreciationRunResult)
-def run_depreciation(data: DepreciationRunRequest, db: DbDep, user=Depends(get_manager_user)):
+def run_depreciation(data: DepreciationRunRequest, db: DbDep, user=Depends(get_finance_user)):
     """يشغّل دورة إهلاك خطي شهرية لكل الأصول المؤهّلة في الفرع — آمن لإعادة
     التشغيل (أي أصل اتّرحّل له نفس الشهر قبل كده بيتخطّى تلقائيًا)."""
     try:
@@ -949,7 +960,7 @@ def run_depreciation(data: DepreciationRunRequest, db: DbDep, user=Depends(get_m
 
 @router.get("/finance/depreciation/entries", response_model=PaginatedResponse)
 def list_depreciation_entries(
-    db: DbDep, _=Depends(get_manager_user),
+    db: DbDep, _=Depends(get_finance_user),
     branch_id: int = Query(...),
     asset_id: Optional[int] = Query(None),
     page: int = Query(1, ge=1),
@@ -964,7 +975,7 @@ def list_depreciation_entries(
 
 @router.post("/finance/bank-accounts", response_model=BankAccountRead,
              status_code=status.HTTP_201_CREATED)
-def create_bank_account(data: BankAccountCreate, db: DbDep, _=Depends(get_manager_user)):
+def create_bank_account(data: BankAccountCreate, db: DbDep, _=Depends(get_finance_user)):
     try:
         return services.create_bank_account(db, data)
     except IntegrityError:
@@ -980,7 +991,7 @@ def create_bank_account(data: BankAccountCreate, db: DbDep, _=Depends(get_manage
 
 @router.get("/finance/bank-accounts", response_model=list[BankAccountRead])
 def list_bank_accounts(
-    db: DbDep, _=Depends(get_manager_user),
+    db: DbDep, _=Depends(get_finance_user),
     branch_id: int = Query(...),
     active_only: bool = Query(True),
 ):
@@ -988,7 +999,7 @@ def list_bank_accounts(
 
 
 @router.patch("/finance/bank-accounts/{bank_account_id}", response_model=BankAccountRead)
-def update_bank_account(bank_account_id: int, data: BankAccountUpdate, db: DbDep, _=Depends(get_manager_user)):
+def update_bank_account(bank_account_id: int, data: BankAccountUpdate, db: DbDep, _=Depends(get_finance_user)):
     try:
         return services.update_bank_account(db, bank_account_id, data)
     except ValueError as exc:
@@ -1003,7 +1014,7 @@ def update_bank_account(bank_account_id: int, data: BankAccountUpdate, db: DbDep
     status_code=status.HTTP_201_CREATED,
 )
 def import_bank_statement_lines(
-    bank_account_id: int, data: BankStatementImportRequest, db: DbDep, user=Depends(get_manager_user),
+    bank_account_id: int, data: BankStatementImportRequest, db: DbDep, user=Depends(get_finance_user),
 ):
     """استيراد سطور كشف حساب بنكي (يدوي/من ملف اتحوّل JSON على الفرونت
     إند) — كل سطر بيدخل الحالة unmatched لحد ما يتطابق (أوتوماتيك أو يدوي)."""
@@ -1021,7 +1032,7 @@ def import_bank_statement_lines(
     response_model=PaginatedResponse,
 )
 def list_bank_statement_lines(
-    bank_account_id: int, db: DbDep, _=Depends(get_manager_user),
+    bank_account_id: int, db: DbDep, _=Depends(get_finance_user),
     status_filter: Optional[str] = Query(None, alias="status"),
     page: int = Query(1, ge=1), size: int = Query(20, ge=1, le=100),
 ):
@@ -1033,7 +1044,7 @@ def list_bank_statement_lines(
 
 
 @router.post("/finance/bank-accounts/{bank_account_id}/statement-lines/auto-match", response_model=AutoMatchResponse)
-def auto_match_bank_statement_lines(bank_account_id: int, db: DbDep, user=Depends(get_manager_user)):
+def auto_match_bank_statement_lines(bank_account_id: int, db: DbDep, user=Depends(get_finance_user)):
     """مطابقة أوتوماتيكية محافظة — بس لو مرشح دفعة واحد بالظبط لكل سطر،
     غير كده بيسيبه للمطابقة اليدوية. يرجّع عدد السطور اللي اتطابقت."""
     try:
@@ -1049,7 +1060,7 @@ def auto_match_bank_statement_lines(bank_account_id: int, db: DbDep, user=Depend
 )
 def match_bank_statement_line(
     bank_account_id: int, line_id: int, data: BankStatementMatchRequest, db: DbDep,
-    user=Depends(get_manager_user),
+    user=Depends(get_finance_user),
 ):
     try:
         return services.match_bank_statement_line(db, bank_account_id, line_id, data.payment_id, user.id)
@@ -1061,7 +1072,7 @@ def match_bank_statement_line(
     "/finance/bank-accounts/{bank_account_id}/statement-lines/{line_id}/unmatch",
     response_model=BankStatementLineRead,
 )
-def unmatch_bank_statement_line(bank_account_id: int, line_id: int, db: DbDep, _=Depends(get_manager_user)):
+def unmatch_bank_statement_line(bank_account_id: int, line_id: int, db: DbDep, _=Depends(get_finance_user)):
     try:
         return services.unmatch_bank_statement_line(db, bank_account_id, line_id)
     except ValueError as exc:
@@ -1073,7 +1084,7 @@ def unmatch_bank_statement_line(bank_account_id: int, line_id: int, db: DbDep, _
     response_model=BankReconciliationSummary,
 )
 def get_bank_reconciliation_summary(
-    bank_account_id: int, db: DbDep, _=Depends(get_manager_user),
+    bank_account_id: int, db: DbDep, _=Depends(get_finance_user),
     as_of: date = Query(...),
 ):
     try:

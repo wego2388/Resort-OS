@@ -9,9 +9,7 @@ from fastapi import (
     status,
 )
 
-from app.core.deps import (
-    DbDep, get_current_active_user, get_websocket_user, require_permission,
-)
+from app.core.deps import DbDep, get_pms_user, get_websocket_user, require_permission
 from app.modules.pms import crud, services
 from app.modules.core import services as core_services
 from app.modules.finance.services import FinancialConfigurationError
@@ -100,7 +98,14 @@ async def pms_rooms_websocket(ws: WebSocket, branch_id: int, db: DbDep):
     فيها كمان تغيير مركّب مش سهل تمثيله في رسالة واحدة). بيرد بـ pong
     كـ heartbeat فقط، زي KDS وخريطة الشاطئ. محتاج ?token= JWT صالح بمستوى
     كاشير+ (نفس مستوى create_booking تحت)."""
-    user = await get_websocket_user(ws, db, min_level=40)
+    user = await get_websocket_user(
+        ws,
+        db,
+        min_level=40,
+        allowed_roles={
+            "cashier", "receptionist", "supervisor", "manager", "admin", "super_admin",
+        },
+    )
     if not user:
         return
     try:
@@ -127,7 +132,7 @@ async def pms_rooms_websocket(ws: WebSocket, branch_id: int, db: DbDep):
 def list_room_types(
     db: DbDep,
     branch_id: int = Query(...),
-    user=Depends(get_current_active_user),
+    user=Depends(get_pms_user),
 ):
     _assert_pms_branch(db, user, branch_id, "عرض أنواع غرف")
     return [RoomTypeRead.model_validate(rt) for rt in crud.list_room_types(db, branch_id)]
@@ -142,7 +147,7 @@ def list_room_types(
 def create_room_type(
     data: RoomTypeCreate,
     db: DbDep,
-    user=Depends(get_current_active_user),
+    user=Depends(get_pms_user),
 ):
     _assert_pms_branch(db, user, data.branch_id, "إنشاء نوع غرفة")
     obj = crud.create_room_type(db, data)
@@ -183,7 +188,7 @@ def list_rooms(
     branch_id:    int           = Query(...),
     status_filter: Optional[str] = Query(None, alias="status"),
     room_type_id:  Optional[int] = Query(None),
-    user=Depends(get_current_active_user),
+    user=Depends(get_pms_user),
 ):
     _assert_pms_branch(db, user, branch_id, "عرض الغرف")
     return [RoomRead.model_validate(r) for r in crud.list_rooms(db, branch_id, status_filter, room_type_id)]
@@ -200,7 +205,7 @@ def available_rooms(
     check_in:     date          = Query(...),
     check_out:    date          = Query(...),
     room_type_id: Optional[int] = Query(None),
-    user=Depends(get_current_active_user),
+    user=Depends(get_pms_user),
 ):
     _assert_pms_branch(db, user, branch_id, "عرض إتاحة الغرف")
     return [RoomRead.model_validate(r)
@@ -216,7 +221,7 @@ def available_rooms(
 def create_room(
     data: RoomCreate,
     db: DbDep,
-    user=Depends(get_current_active_user),
+    user=Depends(get_pms_user),
 ):
     _assert_pms_branch(db, user, data.branch_id, "إنشاء غرفة")
     room_type = crud.get_room_type(db, data.room_type_id)
@@ -239,7 +244,7 @@ async def update_room_status(
     room_id: int,
     data: RoomStatusUpdate,
     db: DbDep,
-    user=Depends(get_current_active_user),
+    user=Depends(get_pms_user),
 ):
     room = crud.get_room(db, room_id)
     if not room:
@@ -266,7 +271,7 @@ def list_bookings(
     check_in_to:   Optional[date] = Query(None),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
-    user=Depends(get_current_active_user),
+    user=Depends(get_pms_user),
 ):
     _assert_pms_branch(db, user, branch_id, "عرض حجوزات")
     items, total = crud.list_bookings(db, branch_id, status_filter,
@@ -285,7 +290,7 @@ def list_bookings(
 async def create_booking(
     data: BookingCreate,
     db: DbDep,
-    user=Depends(get_current_active_user),
+    user=Depends(get_pms_user),
 ):
     # ⚠️ باج صلاحيات حقيقي اتكشف حي (2026-07-06، اختبار استقبال كامل):
     # إنشاء حجز/تسجيل دخول/تسجيل خروج كانوا الثلاثة محتاجين get_manager_user
@@ -316,7 +321,7 @@ def list_room_bundles(
     db: DbDep,
     branch_id: int = Query(...),
     active_only: bool = Query(True),
-    user=Depends(get_current_active_user),
+    user=Depends(get_pms_user),
 ):
     _assert_pms_branch(db, user, branch_id, "عرض باقات الحجز")
     bundles = crud.list_room_bundles(db, branch_id, active_only)
@@ -332,7 +337,7 @@ def list_room_bundles(
 async def create_bundle_booking(
     data: BundleBookingCreate,
     db: DbDep,
-    user=Depends(get_current_active_user),
+    user=Depends(get_pms_user),
 ):
     """حجز باقة Family Compound 6P — راجع services.create_bundle_booking
     للمنطق الذري الكامل (نفس مستوى صلاحية الحجز العادي، pms.bookings/create)."""
@@ -355,7 +360,7 @@ async def create_bundle_booking(
 def get_booking(
     booking_id: int,
     db: DbDep,
-    user=Depends(get_current_active_user),
+    user=Depends(get_pms_user),
 ):
     b = _booking_for_access(db, user, booking_id, "عرض حجز")
     return BookingRead.model_validate(b)
@@ -370,7 +375,7 @@ async def checkin(
     booking_id: int,
     db: DbDep,
     body: Optional[CheckinRequest] = None,
-    user=Depends(get_current_active_user),
+    user=Depends(get_pms_user),
 ):
     _booking_for_access(db, user, booking_id, "تسجيل وصول حجز")
     try:
@@ -393,7 +398,7 @@ async def checkin(
 async def checkout(
     booking_id: int,
     db: DbDep,
-    user=Depends(get_current_active_user),
+    user=Depends(get_pms_user),
 ):
     _booking_for_access(db, user, booking_id, "تسجيل مغادرة حجز")
     try:
@@ -411,7 +416,7 @@ async def checkout(
 @router.post("/pms/bookings/{booking_id}/cancel",
              dependencies=[Depends(require_permission("pms.cancel_booking", "execute", min_role_level=60))],
              response_model=BookingRead)
-async def cancel_booking(booking_id: int, db: DbDep, user=Depends(get_current_active_user)):
+async def cancel_booking(booking_id: int, db: DbDep, user=Depends(get_pms_user)):
     _booking_for_access(db, user, booking_id, "إلغاء حجز")
     try:
         booking = services.cancel_booking(db, booking_id, cancelled_by=user.id)
@@ -431,7 +436,7 @@ async def cancel_booking(booking_id: int, db: DbDep, user=Depends(get_current_ac
 def request_early_late(
     booking_id: int, data: EarlyLateRequest,
     db: DbDep,
-    user=Depends(get_current_active_user),
+    user=Depends(get_pms_user),
 ):
     """يسجّل وصول مبكر و/أو مغادرة متأخرة على الحجز.
     لو charge > 0 بيضيف FolioCharge تلقائياً على حساب الضيف.
@@ -463,7 +468,7 @@ def list_housekeeping_tasks(
     branch_id: int = Query(...),
     status_filter: Optional[str] = Query(None, alias="status"),
     room_id: Optional[int] = Query(None),
-    user=Depends(get_current_active_user),
+    user=Depends(get_pms_user),
 ):
     _assert_pms_branch(db, user, branch_id, "عرض مهام التنظيف")
     return [HousekeepingTaskRead.model_validate(t)
@@ -477,7 +482,7 @@ def list_housekeeping_tasks(
 )
 async def update_housekeeping_task_status(
     task_id: int, data: HousekeepingTaskStatusUpdate, db: DbDep,
-    user=Depends(get_current_active_user),
+    user=Depends(get_pms_user),
 ):
     task_for_access = crud.get_housekeeping_task(db, task_id)
     if not task_for_access:
@@ -517,7 +522,7 @@ def list_rate_plans(
     branch_id:    int           = Query(...),
     room_type_id: Optional[int] = Query(None),
     active_only:  bool          = Query(True),
-    user=Depends(get_current_active_user),
+    user=Depends(get_pms_user),
 ):
     _assert_pms_branch(db, user, branch_id, "عرض خطط الأسعار")
     return [RatePlanRead.model_validate(p)
@@ -532,7 +537,7 @@ def list_rate_plans(
 def get_rate_plan(
     plan_id: int,
     db: DbDep,
-    user=Depends(get_current_active_user),
+    user=Depends(get_pms_user),
 ):
     plan = _rate_plan_for_access(db, user, plan_id, "عرض خطة أسعار")
     return RatePlanRead.model_validate(plan)
@@ -547,7 +552,7 @@ def get_rate_plan(
 def create_rate_plan(
     data: RatePlanCreate,
     db: DbDep,
-    user=Depends(get_current_active_user),
+    user=Depends(get_pms_user),
 ):
     _assert_pms_branch(db, user, data.branch_id, "إنشاء خطة أسعار")
     try:
@@ -566,7 +571,7 @@ def update_rate_plan(
     plan_id: int,
     data: RatePlanUpdate,
     db: DbDep,
-    user=Depends(get_current_active_user),
+    user=Depends(get_pms_user),
 ):
     """تعديل خطة أسعار موجودة — بما فيها إلغاء تفعيلها (`is_active=false`)،
     مفيش endpoint حذف منفصل (زي باقي المشروع: خطة قديمة بتتعطّل مش بتتشال،
@@ -591,7 +596,7 @@ def list_night_audits(
     db: DbDep,
     branch_id: int = Query(...),
     page: int = Query(1, ge=1), size: int = Query(30, ge=1, le=90),
-    user=Depends(get_current_active_user),
+    user=Depends(get_pms_user),
 ):
     _assert_pms_branch(db, user, branch_id, "عرض المراجعة الليلية")
     return [NightAuditLogRead.model_validate(log)
@@ -607,7 +612,7 @@ def run_night_audit(
     db: DbDep,
     branch_id:  int  = Query(...),
     audit_date: date = Query(...),
-    user=Depends(get_current_active_user),
+    user=Depends(get_pms_user),
 ):
     _assert_pms_branch(db, user, branch_id, "تشغيل المراجعة الليلية")
     try:

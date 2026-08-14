@@ -10,6 +10,7 @@ import { useOwnerPerformance } from '../composables/useOwnerData'
 import PeriodComparisonCard from '../components/PeriodComparisonCard.vue'
 import ErrorState from '../components/ErrorState.vue'
 import SkeletonCards from '../components/SkeletonCards.vue'
+import DataFreshness from '../components/DataFreshness.vue'
 
 const { data, loading, error, reload } = useOwnerPerformance()
 
@@ -90,10 +91,7 @@ const currentTitle = computed(() => {
           ← اسحب للتنقل →
         </div>
 
-        <!-- computed_at -->
-        <div v-if="data" class="text-center text-xs text-owner-muted mt-2">
-          محسوب: {{ new Date(data.computed_at).toLocaleTimeString('ar-EG') }}
-        </div>
+        <DataFreshness v-if="data" :at="data.computed_at" :refresh="reload" />
       </div>
     </div>
   </div>

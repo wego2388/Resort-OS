@@ -40,15 +40,78 @@ export function registerAuthClearHandler(fn: () => void | Promise<void>) {
 // لو access_token انتهت صلاحيته أثناء الاستخدام (30 دقيقة)، نجدده من
 // httpOnly cookie مرة واحدة ثم نعيد الـ request. لو فشل → /login.
 //
-// _isRefreshing: يمنع parallel refresh (لو 3 requests فشلوا بـ 401 في نفس
-// الوقت، نعمل refresh واحدة بس). _queue: الـ requests المنتظرة تتحل بعده.
+// A module-scoped promise deduplicates requests inside one tab. Web Locks (or
+// the bounded localStorage lease fallback) serializes refresh-cookie rotation
+// across tabs as well: the cookie is shared, and concurrent rotations used to
+// look like token replay and revoke the whole session family.
+let _refreshPromise: Promise<string> | null = null
+const REFRESH_LOCK_NAME = 'resort-os:refresh-cookie-rotation'
+const REFRESH_LEASE_KEY = 'resort-os:refresh-cookie-lease'
+const REFRESH_LEASE_MS = 35_000
 
-let _isRefreshing = false
-let _queue: Array<{ resolve: (token: string) => void; reject: (err: unknown) => void }> = []
+function wait(ms: number): Promise<void> {
+  return new Promise(resolve => window.setTimeout(resolve, ms))
+}
 
-function _processQueue(err: unknown, token: string | null) {
-  _queue.forEach((p) => (err ? p.reject(err) : p.resolve(token!)))
-  _queue = []
+async function withStorageLease<T>(operation: () => Promise<T>): Promise<T> {
+  const owner = globalThis.crypto?.randomUUID?.()
+    ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`
+  const deadline = Date.now() + REFRESH_LEASE_MS
+
+  try {
+    while (Date.now() < deadline) {
+      const now = Date.now()
+      let current: { owner?: string; expiresAt?: number } = {}
+      try {
+        current = JSON.parse(localStorage.getItem(REFRESH_LEASE_KEY) ?? '{}')
+      } catch { /* expired/corrupt lease is replaceable */ }
+
+      if (!current.owner || (current.expiresAt ?? 0) <= now) {
+        localStorage.setItem(REFRESH_LEASE_KEY, JSON.stringify({
+          owner,
+          expiresAt: now + REFRESH_LEASE_MS,
+        }))
+        // Let a simultaneous contender finish its write, then confirm the
+        // winner. This avoids both tabs believing they acquired the lease.
+        await wait(45 + Math.floor(Math.random() * 35))
+        const confirmed = JSON.parse(localStorage.getItem(REFRESH_LEASE_KEY) ?? '{}')
+        if (confirmed.owner === owner) {
+          try {
+            return await operation()
+          } finally {
+            const latest = JSON.parse(localStorage.getItem(REFRESH_LEASE_KEY) ?? '{}')
+            if (latest.owner === owner) localStorage.removeItem(REFRESH_LEASE_KEY)
+          }
+        }
+      }
+      await wait(80 + Math.floor(Math.random() * 70))
+    }
+  } catch {
+    // Storage can be unavailable in privacy modes. The in-tab promise still
+    // protects this page; execute rather than making login impossible.
+    return operation()
+  }
+  throw new Error('Timed out waiting for the authentication refresh lock')
+}
+
+async function withCrossTabRefreshLock<T>(operation: () => Promise<T>): Promise<T> {
+  if (typeof navigator !== 'undefined' && navigator.locks?.request) {
+    return navigator.locks.request(REFRESH_LOCK_NAME, { mode: 'exclusive' }, operation)
+  }
+  return withStorageLease(operation)
+}
+
+export function refreshAccessToken(): Promise<string> {
+  if (_refreshPromise) return _refreshPromise
+  _refreshPromise = withCrossTabRefreshLock(async () => {
+    const res = await api.post(ENDPOINTS.auth.refresh, {}, { withCredentials: true })
+    const newToken: string = res.data.access_token
+    setApiToken(newToken)
+    return newToken
+  }).finally(() => {
+    _refreshPromise = null
+  })
+  return _refreshPromise
 }
 
 async function _clearAuthAndRedirect() {
@@ -69,34 +132,15 @@ api.interceptors.response.use(
 
     // ── 401 على endpoint عادي: جرب silent refresh أولاً ─────────────────
     if (status === 401 && !isAuthEndpoint && !err.config?._retried) {
-      if (_isRefreshing) {
-        return new Promise((resolve, reject) => {
-          _queue.push({
-            resolve: (newToken) => {
-              err.config.headers.Authorization = `Bearer ${newToken}`
-              resolve(api(err.config))
-            },
-            reject,
-          })
-        })
-      }
-
-      _isRefreshing = true
       err.config._retried = true
 
       try {
-        const res = await api.post(ENDPOINTS.auth.refresh, {}, { withCredentials: true })
-        const newToken: string = res.data.access_token
-        setApiToken(newToken)
-        _processQueue(null, newToken)
+        const newToken = await refreshAccessToken()
         err.config.headers.Authorization = `Bearer ${newToken}`
         return api(err.config)
       } catch (refreshErr) {
-        _processQueue(refreshErr, null)
         await _clearAuthAndRedirect()
         return Promise.reject(refreshErr)
-      } finally {
-        _isRefreshing = false
       }
     }
 

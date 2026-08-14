@@ -490,6 +490,7 @@ class TimeshareStaffCreate(BaseModel):
     """role مش حقل هنا عمدًا — ثابت timeshare_agent دايمًا، مش قابل
     للاختيار (راجع services.provision_timeshare_agent)."""
     branch_id: int
+    employee_id: int = Field(..., gt=0)
     email: str = Field(..., min_length=3, max_length=320)
     full_name: str = Field(..., min_length=3, max_length=255)
     phone: Optional[str] = None
@@ -498,10 +499,21 @@ class TimeshareStaffCreate(BaseModel):
 
 class TimeshareStaffProvisioned(BaseModel):
     id: int
+    employee_id: int
     email: str
     full_name: str
     temporary_password: str
     must_change_password: bool
+
+
+class TimeshareEligibleEmployeeRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    employee_code: str
+    full_name: str
+    position: str
+    email: Optional[str] = None
+    phone: Optional[str] = None
 
 
 class TimeshareStaffRead(BaseModel):

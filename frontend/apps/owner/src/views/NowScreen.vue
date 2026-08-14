@@ -6,19 +6,50 @@
  * Auto-refresh كل 60 ثانية + pull-to-refresh
  */
 import { ref, computed } from 'vue'
-import { useOwnerNow, useOwnerNowHistory, useOwnerCreditReceivables, useOwnerWatchlist } from '../composables/useOwnerData'
+import { useRouter } from 'vue-router'
+import { useOwnerNow, useOwnerNowHistory, useOwnerCreditReceivables, useOwnerExceptions, useOwnerWatchlist } from '../composables/useOwnerData'
 import { formatMoney, formatOccupancyPct } from '../composables/useFormat'
 import MetricCard from '../components/MetricCard.vue'
 import ErrorState from '../components/ErrorState.vue'
 import SkeletonCards from '../components/SkeletonCards.vue'
 import SparkLine from '../components/SparkLine.vue'
 import DetailSheet from '../components/DetailSheet.vue'
+import DataFreshness from '../components/DataFreshness.vue'
 
+const router = useRouter()
 const container = ref<HTMLElement | null>(null)
 const { data, loading, error, refreshing, reload } = useOwnerNow(container)
 const { data: historyData } = useOwnerNowHistory(7)
 const { data: creditData } = useOwnerCreditReceivables()
+const { data: exceptionsData, error: exceptionsError, reload: reloadExceptions } = useOwnerExceptions()
 const watchlist = useOwnerWatchlist()
+
+const importantExceptions = computed(() =>
+  (exceptionsData.value?.exceptions ?? [])
+    .filter(item => item.tier === 'critical' || item.tier === 'attention')
+    .slice(0, 3),
+)
+
+const operatingState = computed(() => {
+  if (!exceptionsData.value) {
+    return { label: 'جارٍ فحص التشغيل', message: 'يتم تحميل التنبيهات الحالية.', style: 'border-owner-border' }
+  }
+  if (exceptionsData.value.critical_count > 0) {
+    return {
+      label: 'تدخل مطلوب الآن',
+      message: `${exceptionsData.value.critical_count} تنبيه حرج يحتاج مراجعتك.`,
+      style: 'border-owner-red/60',
+    }
+  }
+  if (exceptionsData.value.attention_count > 0) {
+    return {
+      label: 'توجد نقاط للمتابعة',
+      message: `${exceptionsData.value.attention_count} تنبيه يحتاج متابعة، ولا يوجد حرج الآن.`,
+      style: 'border-owner-amber/60',
+    }
+  }
+  return { label: 'التشغيل مستقر', message: 'لا توجد تنبيهات حرجة أو عاجلة الآن.', style: 'border-owner-green/50' }
+})
 
 // ── تفاصيل التفاصيل — القوائم دي أصلًا كاملة عند الجلب (5 معروضة بس) ────
 type ListKey = 'b2b' | 'timeshare' | 'credit' | null
@@ -71,7 +102,7 @@ const spark = computed(() => {
 </script>
 
 <template>
-  <div ref="container" class="flex-1 overflow-y-auto overscroll-contain pb-20">
+  <div ref="container" class="flex-1 overflow-y-auto overscroll-contain">
     <!-- Pull-to-refresh indicator -->
     <div v-if="refreshing" class="ptr-indicator" role="status" aria-live="polite">
       ⏳ جارٍ التحديث...
@@ -84,10 +115,54 @@ const spark = computed(() => {
     <SkeletonCards v-else-if="loading && !data" />
 
     <!-- Content -->
-    <div v-else-if="data" class="p-4 space-y-4">
+    <div v-else-if="data" class="p-4 space-y-5">
+      <!-- القرار أولاً: ملخص واضح لما يحتاج تدخل المالك الآن. -->
+      <section class="owner-card border-2" :class="operatingState.style" aria-labelledby="operating-state-title">
+        <div class="flex items-start justify-between gap-3">
+          <div>
+            <div class="section-label !mb-1">حالة التشغيل</div>
+            <h2 id="operating-state-title" class="text-base font-bold text-owner-text">{{ operatingState.label }}</h2>
+            <p class="mt-1 text-xs leading-5 text-owner-muted">{{ operatingState.message }}</p>
+          </div>
+          <button
+            v-if="exceptionsData && exceptionsData.exceptions.length > 0"
+            type="button"
+            class="min-h-11 shrink-0 rounded-lg border border-owner-border px-3 text-xs font-bold text-owner-green active:bg-owner-bg"
+            @click="router.push('/shifts')"
+          >
+            كل التنبيهات
+          </button>
+        </div>
+
+        <div v-if="importantExceptions.length" class="mt-3 divide-y divide-owner-border border-t border-owner-border">
+          <button
+            v-for="item in importantExceptions"
+            :key="item.exception_id"
+            type="button"
+            class="flex min-h-12 w-full items-center justify-between gap-3 py-2 text-right"
+            @click="router.push('/shifts')"
+          >
+            <span class="min-w-0">
+              <span class="block truncate text-xs font-bold text-owner-text">{{ item.title }}</span>
+              <span class="block truncate text-[11px] text-owner-muted">{{ item.detail }}</span>
+            </span>
+            <span class="shrink-0 text-owner-muted" aria-hidden="true">‹</span>
+          </button>
+        </div>
+
+        <button
+          v-else-if="exceptionsError"
+          type="button"
+          class="mt-3 min-h-11 w-full rounded-lg border border-owner-border text-xs font-semibold text-owner-amber"
+          @click="reloadExceptions"
+        >
+          تعذّر تحميل التنبيهات — حاول مرة أخرى
+        </button>
+      </section>
+
       <!-- المفضلة — أهم أرقامك المثبّتة، لقطة سريعة فوق الشاشة -->
       <div v-if="pinnedWithValues.length > 0" class="owner-card" role="region" aria-label="المفضلة">
-        <div class="section-label mb-3">⭐ المفضلة</div>
+        <div class="section-label mb-3">أرقامك المثبّتة</div>
         <div class="grid grid-cols-2 gap-3">
           <div v-for="m in pinnedWithValues" :key="m.key" class="text-center">
             <div class="font-bold text-lg" :class="m.color">{{ m.value }}</div>
@@ -96,38 +171,48 @@ const spark = computed(() => {
         </div>
       </div>
 
-      <!-- A-1: إيراد اليوم -->
-      <MetricCard
-        label="إيراد اليوم"
-        :value="formatMoney(data.revenue_today)"
-        :is-provisional="data.period.is_provisional"
-        :spark-values="spark.revenue"
-        color-scheme="green"
-        :pinned="watchlist.isPinned('revenue_today')"
-        @toggle-pin="watchlist.togglePin('revenue_today')"
-      />
+      <section aria-labelledby="today-money-title">
+        <div class="screen-section-title">
+          <h2 id="today-money-title">حركة اليوم</h2>
+          <small>مقارنة مرئية لآخر ٧ أيام</small>
+        </div>
+        <div class="grid gap-3 lg:grid-cols-3">
+          <MetricCard
+            label="إيراد اليوم"
+            :value="formatMoney(data.revenue_today)"
+            :is-provisional="data.period.is_provisional"
+            :spark-values="spark.revenue"
+            color-scheme="green"
+            :pinned="watchlist.isPinned('revenue_today')"
+            @toggle-pin="watchlist.togglePin('revenue_today')"
+          />
 
-      <!-- A-2: كاش الأدراج -->
-      <MetricCard
-        label="كاش الأدراج المتوقع"
-        :value="formatMoney(data.cash_in_drawers)"
-        :subtitle="`${data.open_shift_count} وردية مفتوحة`"
-        :spark-values="spark.cash"
-        color-scheme="default"
-        :pinned="watchlist.isPinned('cash_in_drawers')"
-        @toggle-pin="watchlist.togglePin('cash_in_drawers')"
-      />
+          <MetricCard
+            label="كاش الأدراج المتوقع"
+            :value="formatMoney(data.cash_in_drawers)"
+            :subtitle="`${data.open_shift_count} وردية مفتوحة`"
+            :spark-values="spark.cash"
+            color-scheme="default"
+            :pinned="watchlist.isPinned('cash_in_drawers')"
+            @toggle-pin="watchlist.togglePin('cash_in_drawers')"
+          />
 
-      <!-- A-3: مصروفات اليوم -->
-      <MetricCard
-        label="مصروفات اليوم"
-        :value="formatMoney(data.expense_today)"
-        :is-provisional="data.period.is_provisional"
-        :spark-values="spark.expense"
-        color-scheme="amber"
-        :pinned="watchlist.isPinned('expense_today')"
-        @toggle-pin="watchlist.togglePin('expense_today')"
-      />
+          <MetricCard
+            label="مصروفات اليوم"
+            :value="formatMoney(data.expense_today)"
+            :is-provisional="data.period.is_provisional"
+            :spark-values="spark.expense"
+            color-scheme="amber"
+            :pinned="watchlist.isPinned('expense_today')"
+            @toggle-pin="watchlist.togglePin('expense_today')"
+          />
+        </div>
+      </section>
+
+      <div class="screen-section-title">
+        <h2>مبالغ تحتاج تحصيل</h2>
+        <small>حسب السجلات الحالية</small>
+      </div>
 
       <!-- A-4: ذمم B2B -->
       <div class="owner-card" role="region" aria-label="ذمم فنادق B2B">
@@ -186,6 +271,11 @@ const spark = computed(() => {
           </span>
           <span class="text-owner-green font-semibold">عرض الكل ‹</span>
         </button>
+      </div>
+
+      <div class="screen-section-title">
+        <h2>التشغيل الآن</h2>
+        <small>الغرف والشاطئ</small>
       </div>
 
       <!-- A-6: إشغال الغرف -->
@@ -257,10 +347,7 @@ const spark = computed(() => {
         </div>
       </div>
 
-      <!-- Footer timestamp -->
-      <div class="text-center text-xs text-owner-muted py-4">
-        آخر تحديث: {{ new Date(data.period.computed_at).toLocaleTimeString('ar-EG') }}
-      </div>
+      <DataFreshness :at="data.period.computed_at" :refresh="reload" />
     </div>
 
     <!-- تفاصيل كل القوائم — البيانات كاملة أصلًا في data، مفيش fetch جديد -->
