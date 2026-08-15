@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import subprocess
+import sys
 import uuid
 from datetime import date, datetime, timezone
 from decimal import Decimal
@@ -8,6 +10,28 @@ import pytest
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
+
+
+def test_cli_import_registers_audit_log_user_foreign_key():
+    """The standalone CLI must load every table required by its AuditLog row."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "from scripts.disable_beach_vat import AuditLog; "
+                "from app.core.database import Base; "
+                "assert 'users' in Base.metadata.tables; "
+                "fk = next(fk for fk in AuditLog.__table__.foreign_keys "
+                "if fk.parent.name == 'approved_by'); "
+                "assert fk.column.table.name == 'users'"
+            ),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 @pytest.fixture

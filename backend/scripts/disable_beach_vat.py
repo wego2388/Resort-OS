@@ -22,7 +22,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from sqlalchemy import or_
+from sqlalchemy.orm import Session
+
 from app.core.database import SessionLocal
+from app.core.kernel.models.user import User as _User  # noqa: F401
 from app.modules.beach.models import BeachTransaction
 from app.modules.core.models import AuditLog, Branch
 from app.modules.credit.models import CreditTransaction
@@ -38,8 +42,6 @@ from app.modules.finance.models import (
     JournalLine,
     Payment,
 )
-from sqlalchemy import or_
-from sqlalchemy.orm import Session
 
 EXPECTED_BRANCH_NAME = "El Kheima Beach Resort"
 HIST_OUTLET_NAMES = frozenset({"Restaurant HIST", "Cafe HIST"})
