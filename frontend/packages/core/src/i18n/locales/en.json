@@ -5538,6 +5538,7 @@
       "noItemsSelected": "No items selected",
       "tapToAdd": "Tap + on any price to add",
       "total": "Total",
+      "finalNoVat": "Final price — no VAT added",
       "payCash": "Cash",
       "payCard": "Card",
       "payWallet": "Wallet",

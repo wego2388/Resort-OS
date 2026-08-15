@@ -978,12 +978,13 @@ class TestCashierShiftHTTPFlow:
         assert body["counted_cash"] == "750.00"
         assert body["variance"] == "-50.00"
 
-    def test_get_current_shift_404_when_none_open(self, client: TestClient, db, cashier_headers):
+    def test_get_current_shift_returns_null_when_none_open(self, client: TestClient, db, cashier_headers):
         branch = make_branch_committed(db)
         resp = client.get(
             "/api/v1/finance/shifts/current", params={"branch_id": branch.id}, headers=cashier_headers,
         )
-        assert resp.status_code == 404
+        assert resp.status_code == 200
+        assert resp.json() is None
 
     def test_shift_report_404_for_missing_shift(self, client: TestClient, db, cashier_headers):
         resp = client.get("/api/v1/finance/shifts/999999/report", headers=cashier_headers)

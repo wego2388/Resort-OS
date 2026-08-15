@@ -552,8 +552,8 @@ class TestPostTaxedSaleJournal:
         total_credit = sum(l.credit for l in entry.lines)
         assert total_debit == total_credit == Decimal("1260.00")
 
-    def test_no_service_line_when_beach_has_no_service_charge(self, db: Session, branch):
-        """Beach uses VAT only (§10.4) — no 2165 line, no 2165 account needed."""
+    def test_no_service_line_for_historical_vat_only_sale(self, db: Session, branch):
+        """The generic journal supports legacy VAT-only rows without 2165."""
         from app.modules.finance.schemas import AccountCreate as AC
         cash = crud.create_account(db, AC(branch_id=branch.id, code="1100", name="Cash", account_type="asset"))
         rev = crud.create_account(db, AC(branch_id=branch.id, code="4300", name="Beach Revenue", account_type="revenue"))

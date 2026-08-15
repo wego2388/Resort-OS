@@ -104,8 +104,8 @@ const SETTINGS_META: Record<string, SettingMeta> = {
   },
   vat_percentage: {
     description: {
-      ar: 'نسبة ضريبة القيمة المضافة — بتُطبَّق فعليًا على كل فاتورة مطعم/كافيه، بيع شاطئ، وفاتورة إلكترونية (ETA) جديدة فور الحفظ. لو الفرع الحالي معندوش قيمة خاصة، بيتم استخدام القيمة العامة (بدون اختيار فرع)، وإلا القيمة الافتراضية من إعدادات السيرفر.',
-      en: 'VAT percentage — actually applied to every new dining order, beach sale, and e-invoice (ETA) as soon as it\'s saved. If the current branch has no override, the global value (no branch selected) is used, otherwise the server-side default.',
+      ar: 'نسبة ضريبة القيمة المضافة — بتُطبَّق فعليًا على فواتير المطعم/الكافيه والفواتير الإلكترونية (ETA) الجديدة فور الحفظ. تذاكر الشاطئ مستثناة تشغيليًا وسعرها المعروض نهائي بلا ضريبة. لو الفرع الحالي معندوش قيمة خاصة، بيتم استخدام القيمة العامة (بدون اختيار فرع)، وإلا القيمة الافتراضية من إعدادات السيرفر.',
+      en: 'VAT percentage — applied to new restaurant/cafe orders and e-invoices (ETA) as soon as it is saved. Beach tickets are operationally exempt and their displayed price is final with no VAT. If the current branch has no override, the global value is used; otherwise the server-side default applies.',
     },
     live: true,
   },

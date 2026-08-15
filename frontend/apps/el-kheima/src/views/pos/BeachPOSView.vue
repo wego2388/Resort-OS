@@ -642,6 +642,9 @@ onUnmounted(() => {
             <span class="text-lg font-bold text-gray-900 dark:text-gray-100">{{ t('backoffice.beachPos.total') }}</span>
             <span class="text-2xl font-black text-blue-700 dark:text-blue-300">{{ total }} <span class="text-sm font-normal">{{ t('backoffice.beachPos.egp') }}</span></span>
           </div>
+          <p class="text-xs font-semibold text-emerald-700 dark:text-emerald-300">
+            {{ t('backoffice.beachPos.finalNoVat') }}
+          </p>
 
           <!-- Payment method selector -->
           <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">

@@ -340,15 +340,21 @@ def get_handover_note(db: DbDep, user=Depends(get_cashier_user), branch_id: int 
     return {"handover_note": services.get_latest_handover_note(db, branch_id)}
 
 
-@router.get("/finance/shifts/current", response_model=CashierShiftRead)
+@router.get("/finance/shifts/current", response_model=CashierShiftRead | None)
 def get_current_shift(db: DbDep, user=Depends(get_cashier_user), branch_id: int = Query(...)):
+    """Return the caller's open shift, or JSON null when no shift is open.
+
+    "No open shift" is the normal state before a cashier starts work, not a
+    missing resource. Returning 404 made every POS page emit a red browser
+    network error even though the UI handled the state correctly.
+    """
     try:
         core_services.assert_branch_access(db, user, branch_id, "عرض الوردية الحالية")
     except PermissionError as exc:
         raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     shift = crud.get_open_shift(db, branch_id, user.id)
     if not shift:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "لا توجد وردية مفتوحة")
+        return None
     return CashierShiftRead.model_validate(shift)
 
 

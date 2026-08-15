@@ -154,13 +154,14 @@ def get_base_prices(db: Session, branch_id: int) -> dict[str, Decimal]:
     return _get_base_prices(db, branch_id)
 
 
-def _vat(db: Session, branch_id: int, amount: Decimal) -> Decimal:
-    """راجع core.services.get_effective_vat_percentage — 2026-08-03: كان
-    بيقرأ settings.VAT_PERCENTAGE (env) مباشرة، فتعديل مدير للنسبة من
-    شاشة الإعدادات مالوش أي أثر فعلي على بيع شاطئ حقيقي."""
-    from app.modules.core.services import get_effective_vat_percentage  # noqa: PLC0415
-    pct = get_effective_vat_percentage(db, branch_id)
-    return (amount * pct / Decimal("100")).quantize(Decimal("0.01"))
+BEACH_VAT_AMOUNT = Decimal("0.00")
+"""قرار التشغيل 2026-08-15: أسعار الشاطئ نهائية ولا تُضاف عليها VAT.
+
+``BeachTransaction.total_amount`` هو المبلغ الوحيد الذي يراه ويدفعه
+الكاشير، وهو نفسه الذي يُسجَّل في الوردية والفوليو والحساب الآجل والدفتر.
+وجود الثابت هنا يمنع رجوع الاختلاف القديم الذي كان يعرض 200 ج في الـPOS
+والإيصال ثم يسجّل 228 ج في درج الوردية بسبب VAT مخفية.
+"""
 
 
 def _customer_group_discount_amount(db: Session, customer_id: Optional[int], gross_amount: Decimal) -> Decimal:
@@ -255,12 +256,11 @@ def _sell_ticket_no_commit(
     surge_pct   = float(inv_row.surge_pct)
     unit_price  = calculate_tx_price(data.tx_type, base_prices, surge_pct)
     gross_total = unit_price * data.quantity
-    # خصم مجموعة العميل الدائم — تلقائي بالكامل، بيتحسب على السعر الأصلي
-    # قبل الـ VAT (نفس اتفاقية dining._customer_group_discount_amount).
-    # الـ VAT بيتحسب على gross_total من غير خصم (زي dining بالظبط — الخصم
-    # بيقلل الصافي المُحصَّل، مش بيغيّر الإقرار الضريبي على السعر المعلن).
+    # خصم مجموعة العميل الدائم — تلقائي بالكامل، بيتحسب على السعر الأصلي.
+    # قرار التشغيل 2026-08-15: الشاطئ بلا VAT؛ السعر بعد الخصم هو المبلغ
+    # النهائي نفسه في الشاشة والإيصال والتحصيل وتقفيل الوردية.
     discount = _customer_group_discount_amount(db, data.customer_id, gross_total)
-    vat      = _vat(db, branch_id, gross_total)
+    vat      = BEACH_VAT_AMOUNT
     total    = max(Decimal("0"), gross_total - discount)
 
     # تحديث inventory
@@ -340,14 +340,8 @@ def _sell_ticket_no_commit(
             raise ValueError(
                 "لا يوجد حساب آجل مطابق في هذا الفرع"
             )
-        # ⚠️ فجوة معروفة، غير مغطاة بهذه الدفعة (FIN-TAX-01 غطّت direct
-        # tender وfolio charge فقط): revenue_allocations هنا لسه بترحّل
-        # الإجمالي شامل VAT كإيراد كامل على 4300 — نفس باج post_simple_
-        # revenue_journal بالظبط، بس عبر آلية ترحيل منفصلة تمامًا في
-        # credit.services._create_journal (مش finance.services). تصحيحها
-        # يحتاج تغيير شكل credit_allocations نفسه (مشترك مع dining أيضًا) —
-        # نطاق أوسع من الدفعة دي، موثّق كمتابعة منفصلة.
-        charge_amount = (tx.total_amount or Decimal("0")) + (tx.vat_amount or Decimal("0"))
+        # سعر الشاطئ نهائي بلا VAT؛ الحساب الآجل يستلم نفس إجمالي الشاشة.
+        charge_amount = tx.total_amount or Decimal("0")
         credit_services.charge_to_account(
             db,
             credit_account.id,
@@ -394,7 +388,7 @@ def _sell_ticket_no_commit(
         _record_shift_payment(db, tx)
     if tx.customer_id:
         from app.modules.crm.services import record_customer_visit  # noqa: PLC0415
-        record_customer_visit(db, tx.customer_id, tx.total_amount + tx.vat_amount, tx.tx_date)
+        record_customer_visit(db, tx.customer_id, tx.total_amount, tx.tx_date)
 
     return tx
 
@@ -402,10 +396,9 @@ def _sell_ticket_no_commit(
 def _post_beach_revenue_journal(db: Session, tx: "BeachTransaction") -> None:
     """Direct tender journal, using the configured GL account for its method.
 
-    OPS-DATA-02 §11.2 (FIN-TAX-01) — كانت بترحّل total_amount+vat_amount
-    (الإجمالي شامل الضريبة) على 4300 كإيراد كامل، يعني VAT payable ماكانش
-    بيتسجّل خالص وإيراد الشاطئ كان مبالغ فيه بقيمة الضريبة. الشاطئ VAT بس،
-    مفيش رسم خدمة (§10.4).
+    قرار التشغيل 2026-08-15: الشاطئ بلا VAT أو رسم خدمة. نستخدم نفس منشئ
+    القيد الصارم المشترك لكن بقيمة ضريبة صفر؛ الناتج Dr وسيلة التحصيل / Cr
+    إيراد الشاطئ بالمبلغ النهائي الظاهر للكاشير.
 
     towel_return مالوش قيمة مالية (0/0) — post_taxed_sale_journal الصارمة
     بترفض إجمالي صفر (على عكس post_simple_revenue_journal القديمة اللي
@@ -460,7 +453,9 @@ def _record_shift_payment(db: Session, tx: "BeachTransaction") -> None:
 
     finance_crud.create_direct_payment(
         db, branch_id=tx.branch_id,
-        amount=(tx.total_amount or Decimal("0")) + (tx.vat_amount or Decimal("0")),
+        # مهم: total_amount هو إجمالي الشاشة/الإيصال النهائي. لا تضف أي
+        # مكوّن آخر هنا وإلا سيظهر فرق وهمي عند تقفيل الوردية.
+        amount=(tx.total_amount or Decimal("0")),
         method=tx.payment_method or "cash",
         posted_at=datetime.combine(tx.tx_date, datetime.min.time()),
         shift_id=tx.shift_id, cashier_id=tx.cashier_id,
@@ -472,10 +467,11 @@ def _record_shift_payment(db: Session, tx: "BeachTransaction") -> None:
 
 
 def _post_beach_folio_charge_journal(db: Session, tx: "BeachTransaction") -> None:
-    """Dr. ذمم الفوليو (1150) / Cr. إيراد الشاطئ (4300) + VAT payable —
-    عملية محمّلة على فوليو غرفة. راجع restaurant.services._post_order_folio_
-    charge_journal للتفاصيل الكاملة — نفس المنطق بالظبط، زائد فصل الضريبة
-    (FIN-TAX-01، OPS-DATA-02 §11.2)."""
+    """Dr. ذمم الفوليو (1150) / Cr. إيراد الشاطئ (4300).
+
+    عملية محمّلة على فوليو غرفة بالمبلغ النهائي نفسه؛ الشاطئ بلا VAT أو
+    رسم خدمة بقرار التشغيل 2026-08-15.
+    """
     from app.modules.finance.services import post_taxed_sale_journal  # noqa: PLC0415
 
     post_taxed_sale_journal(
@@ -541,7 +537,7 @@ def b2b_checkin(
         raise ValueError(inv_validation.error)
 
     total = calculate_b2b_price(contract_state, data.guests_count, data.with_towel)
-    vat   = _vat(db, branch_id, total)
+    vat   = BEACH_VAT_AMOUNT
 
     # تحقق من حد الائتمان — قبل أي تعديل فعلي على inventory/checked_in_count
     # عشان لو اتخطى الحد، محدش يتأثر ولا يتحتاج عكس. راجع تعليق B2BContract
@@ -800,7 +796,6 @@ def generate_ticket_pdf(db: Session, tx_id: int) -> bytes:
         ("نوع التذكرة",  tx_label),
         ("الكمية",       str(tx.quantity)),
         ("سعر الوحدة",   f"{tx.unit_price:,.2f} EGP"),
-        ("ضريبة القيمة", f"{tx.vat_amount:,.2f} EGP"),
         ("التاريخ",      str(tx.tx_date)),
     ]
     if tx.surge_applied:

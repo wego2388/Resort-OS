@@ -197,7 +197,8 @@ must-revalidate, private`. القوائم paginated، والردود المال�
 - NOWAIT contention وعدم إخفاء DB operational failures غير الخاصة بالقفل.
 - Dining وBeach integration لحسابات customer وemployee، وعدم إنشاء cash
   `Payment` للآجل.
-- Beach net + VAT، وatomic rollback للتذكرة/السعة/الرصيد عند فشل GL.
+- Beach final amount (VAT is zero under Decision 0006)، وatomic rollback
+  للتذكرة/السعة/الرصيد عند فشل GL.
 - Beach credit void بلا cash artifacts، وDining credit item refund الكامل/
   الجزئي مع cap وتجميع صحيح لفروق التقريب.
 - exact-role authorization، owner/hr_manager/cashier denials، branch isolation، no-store.

@@ -17,10 +17,11 @@ from fastapi.testclient import TestClient
 
 
 def make_finance_accounts(db, branch):
-    """OPS-DATA-02 FIN-TAX-01: post_taxed_sale_journal (replacing the old
-    best-effort post_simple_revenue_journal) is strict and needs 1100/1150/
-    4300/2160 to exist for any real beach sale (every real sale has
-    vat_amount > 0). Idempotent — safe to call more than once."""
+    """Seed the strict Beach journal accounts; 2160 remains for compatibility.
+
+    New Beach sales have zero VAT, while dining and historical fixtures still
+    use the shared VAT-payable account. Idempotent — safe to call repeatedly.
+    """
     from app.modules.finance.models import Account
     existing_codes = {
         a.code for a in db.query(Account).filter(Account.branch_id == branch.id).all()
@@ -453,11 +454,8 @@ class TestBeachValidation:
         )
         assert list_resp.json()["total"] == 1  # مش 2 — الـ retry مارجعش يعمل بيع جديد
 
-    def test_vat_percentage_setting_is_live(self, client: TestClient, db, fake_redis, cashier_headers):
-        """2026-08-03: زي dining بالظبط — كان settings.VAT_PERCENTAGE (env)
-        بيتقرأ مباشرة، فتعديل مدير للنسبة من شاشة الإعدادات مالوش أي أثر
-        فعلي على بيع شاطئ حقيقي. الافتراضي 14% — هنا الفرع عنده صف Setting
-        خاص بـ10% بدلًا منه."""
+    def test_beach_ignores_general_vat_setting_by_approved_policy(self, client: TestClient, db, fake_redis, cashier_headers):
+        """إعداد VAT العام يظل للمطعم/الكافيه وETA؛ سعر الشاطئ نهائي بلا VAT."""
         from app.modules.core.crud import upsert_setting
 
         branch = make_branch_committed(db)
@@ -471,9 +469,8 @@ class TestBeachValidation:
         )
         assert resp.status_code == 201, resp.text
         body = resp.json()
-        # entry الافتراضي = 200 (beach.price.adult seed default) →
-        # vat=10%*200=20.00 مش 14%*200=28.00
-        assert Decimal(str(body["vat_amount"])) == Decimal("20.00")
+        assert Decimal(str(body["total_amount"])) == Decimal("200.00")
+        assert Decimal(str(body["vat_amount"])) == Decimal("0.00")
 
 
 class TestBeachB2BContracts:

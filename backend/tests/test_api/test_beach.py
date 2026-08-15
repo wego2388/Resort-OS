@@ -29,13 +29,8 @@ def make_branch(db):
     )
     db.add(b)
     db.commit()
-    # OPS-DATA-02 FIN-TAX-01: post_taxed_sale_journal (replacing the old
-    # silently-best-effort post_simple_revenue_journal) is strict — every
-    # real beach sale has vat_amount > 0, so any branch without 2160 seeded
-    # now genuinely fails the sale instead of quietly posting nothing.
-    # Every test in this file that does a real sell/checkin/void needs
-    # these accounts to exist; seed them here once instead of repeating
-    # make_finance_accounts(db, branch) at every call site.
+    # Beach journals remain strict even after the approved no-VAT policy:
+    # cash and Beach revenue accounts must exist or the sale rolls back.
     make_finance_accounts(db, b)
     return b
 
@@ -221,11 +216,12 @@ class TestSellTicket:
         db.refresh(inv)
         assert inv.towels_available == towels_before - 1
 
-    def test_vat_applied(self, db):
+    def test_beach_price_is_final_without_vat(self, db):
         branch = make_branch(db)
         req = BeachSellRequest(tx_type="entry", quantity=1)
         tx = services.sell_ticket(db, branch.id, req)
-        assert tx.vat_amount >= Decimal("0")
+        assert tx.vat_amount == Decimal("0.00")
+        assert tx.total_amount == tx.unit_price
 
     def test_full_capacity_raises(self, db):
         branch = make_branch(db)
@@ -334,7 +330,7 @@ class TestSellTicket:
 
 class TestCustomerGroupDiscount:
     """خصم مجموعة العميل الدائم على معاملة شاطئ — تلقائي بالكامل، بيتحسب
-    على السعر الأصلي قبل الـ VAT وبيتخصم من total_amount (اللي بقى صافي
+    على السعر الأصلي وبيتخصم من total_amount (اللي بقى صافي
     من دلوقتي، مش unit_price × quantity زي قبل كده). الشاطئ مفيهوش خصم
     شرطي منافس (زي dining) فمفيش سيناريو "أفضل يفوز" هنا."""
 
@@ -513,14 +509,15 @@ class TestShiftAttachment:
         tx = services.sell_ticket(db, branch.id, req)
 
         report = finance_services.build_shift_end_report(db, shift.id)
+        assert tx.vat_amount == Decimal("0.00")
         assert report.invoice_count == 1
-        assert report.total_cash == tx.total_amount + tx.vat_amount
-        assert report.total_sales == tx.total_amount + tx.vat_amount
+        assert report.total_cash == tx.total_amount
+        assert report.total_sales == tx.total_amount
 
         invoices = finance_services.list_shift_invoices(db, shift.id, requesting_user=_FakeManager())
         assert len(invoices) == 1
         assert invoices[0].folio_id is None
-        assert invoices[0].amount == tx.total_amount + tx.vat_amount
+        assert invoices[0].amount == tx.total_amount
 
         # إلغاء البيع لازم يعكس الدفعة من تقرير الوردية برضو، مش بس القيد المحاسبي
         services.void_transaction(db, tx.id, voided_by=43, reason="اختبار")
@@ -1156,10 +1153,10 @@ class TestEODReport:
 
 
 def make_finance_accounts(db, branch):
-    """يزرع 1100 (نقدية) و4300 (إيرادات الشاطئ) و1150 (ذمم الفوليو) و2160
-    (ضريبة القيمة المضافة مستحقة — FIN-TAX-01، post_taxed_sale_journal
-    الصارمة محتاجاه لأي بيع فيه vat_amount > 0، وكل بيع شاطئ حقيقي فيه) —
-    الحسابات اللي beach.services بيدوّر عليها بالكود عند ترحيل قيد الإيراد.
+    """يزرع 1100 (نقدية) و4300 (إيرادات الشاطئ) و1150 (ذمم الفوليو) و2160.
+
+    الشاطئ الجديد بلا VAT ولا يستخدم 2160؛ الحساب باقٍ لأن بقية المنظومة
+    الخاضعة للضريبة واختبارات التوافق التاريخي تحتاجه.
     Idempotent (بيتخطى أي كود موجود بالفعل) — make_branch بينادي الدالة دي
     تلقائيًا، فالاستدعاء الصريح القديم في بعض التستات بقى no-op آمن."""
     from app.modules.finance.models import Account
@@ -1203,21 +1200,18 @@ class TestBeachRevenueJournalPosting:
         total_debit = sum(l.debit for l in entry.lines)
         total_credit = sum(l.credit for l in entry.lines)
         assert total_debit == total_credit
-        expected_gross = tx.total_amount + tx.vat_amount
-        assert total_debit == expected_gross
+        assert tx.vat_amount == Decimal("0.00")
+        assert total_debit == tx.total_amount
 
         db.refresh(cash)
         db.refresh(revenue)
-        # OPS-DATA-02 FIN-TAX-01: cash carries the gross (net + VAT), but the
-        # revenue line now only carries the net amount — VAT goes to its own
-        # 2160 line instead of being folded into revenue like it used to be.
+        # Beach final price is posted directly: Dr Cash / Cr Beach Revenue.
         cash_line = next(l for l in entry.lines if l.account_id == cash.id)
         revenue_line = next(l for l in entry.lines if l.account_id == revenue.id)
-        assert cash_line.debit == expected_gross
+        assert cash_line.debit == tx.total_amount
         assert revenue_line.credit == tx.total_amount
         vat_account = finance_crud.get_account_by_code(db, branch.id, "2160")
-        vat_line = next(l for l in entry.lines if l.account_id == vat_account.id)
-        assert vat_line.credit == tx.vat_amount
+        assert all(l.account_id != vat_account.id for l in entry.lines)
 
     def test_sell_ticket_updates_linked_customer_stats(self, db):
         from app.modules.crm import services as crm_services
@@ -1232,7 +1226,28 @@ class TestBeachRevenueJournalPosting:
         ))
         db.refresh(customer)
         assert customer.visits_count == 1
-        assert customer.total_spent == tx.total_amount + tx.vat_amount
+        assert customer.total_spent == tx.total_amount
+
+    def test_ticket_receipt_omits_vat_and_uses_final_total(self, db, monkeypatch):
+        """The thermal ticket must match the POS and shift amount exactly."""
+        from app.resort_os.report_builder import builder
+
+        branch = make_branch(db)
+        tx = services.sell_ticket(
+            db, branch.id, BeachSellRequest(tx_type="entry", quantity=1),
+        )
+        captured = {}
+
+        def fake_receipt(**kwargs):
+            captured.update(kwargs)
+            return b"%PDF-test"
+
+        monkeypatch.setattr(builder, "receipt_pdf_thermal", fake_receipt)
+        result = services.generate_ticket_pdf(db, tx.id)
+
+        assert result == b"%PDF-test"
+        assert captured["total"] == float(tx.total_amount)
+        assert all("ضريبة" not in label for label, _value in captured["fields"])
 
     def test_b2b_checkin_posts_journal_entry(self, db):
         from app.modules.finance import crud as finance_crud
@@ -1243,6 +1258,7 @@ class TestBeachRevenueJournalPosting:
         tx = services.b2b_checkin(db, branch.id, B2BCheckinRequest(contract_id=contract.id, guests_count=3))
 
         entries, total = finance_crud.list_journal_entries(db, branch.id, source="beach")
+        assert tx.vat_amount == Decimal("0.00")
         assert total == 1
         assert entries[0].source_id == tx.id
 
@@ -1303,7 +1319,7 @@ class TestBeachVoidReversesFinancials:
         cash, revenue = make_finance_accounts(db, branch)
 
         tx = services.sell_ticket(db, branch.id, BeachSellRequest(tx_type="entry", quantity=2))
-        expected_amount = tx.total_amount + tx.vat_amount
+        expected_amount = tx.total_amount
 
         services.void_transaction(db, tx.id, voided_by=1, reason="اختبار عكس القيد")
 
@@ -1320,12 +1336,10 @@ class TestBeachVoidReversesFinancials:
         cash_line = next(l for l in entry.lines if l.account_id == cash.id)
         revenue_line = next(l for l in entry.lines if l.account_id == revenue.id)
         assert cash_line.credit == expected_amount  # عكس البيع: دلوقتي دائن مش مدين
-        # FIN-TAX-01: العكس بيرد نفس الإيراد الصافي (مش الإجمالي) + VAT في
-        # سطره الخاص — راجع تعليق test_sell_ticket_posts_balanced_journal_entry.
+        # الشاطئ بلا ضريبة: العكس له سطر إيراد وسطر كاش فقط.
         assert revenue_line.debit == tx.total_amount
         vat_account = finance_crud.get_account_by_code(db, branch.id, "2160")
-        vat_line = next(l for l in entry.lines if l.account_id == vat_account.id)
-        assert vat_line.debit == tx.vat_amount
+        assert all(l.account_id != vat_account.id for l in entry.lines)
 
     def test_void_room_charged_ticket_removes_folio_charge(self, db):
         from app.modules.finance import crud as finance_crud
@@ -1348,13 +1362,14 @@ class TestBeachVoidReversesFinancials:
         charge = finance_crud.get_charge_by_ref_beach_tx(db, tx.id)
         assert charge is not None
         db.refresh(folio)
-        assert folio.total == tx.total_amount + tx.vat_amount
+        assert tx.vat_amount == Decimal("0.00")
+        assert folio.total == tx.total_amount
 
         # ⚠️ باج حقيقي اتصلح 2026-07-07 (CLAUDE.md §18): بيع شاطئ محمّل على
         # غرفة كان بيضيف FolioCharge بس من غير أي قيد يومية — إيراد الشاطئ
         # الحقيقي كان غايب عن دفتر الأستاذ. دلوقتي بيترحّل Dr ذمم الفوليو
         # (1150)/Cr إيراد الشاطئ (4300) فورًا.
-        expected_amount = tx.total_amount + tx.vat_amount
+        expected_amount = tx.total_amount
         charge_entries, charge_total = finance_crud.list_journal_entries(
             db, branch.id, source="beach_folio_charge",
         )
@@ -1382,14 +1397,12 @@ class TestBeachVoidReversesFinancials:
         void_credit = next(l for l in void_lines if l.credit > 0)
         assert finance_crud.get_account_by_code(db, branch.id, "4300").id == void_debit.account_id
         assert finance_crud.get_account_by_code(db, branch.id, "1150").id == void_credit.account_id
-        # FIN-TAX-01: revenue debit line is net-only now — VAT reverses in
-        # its own 2160 debit line instead of being folded into revenue.
+        # الشاطئ بلا ضريبة: لا يُنشأ أي سطر على 2160 في البيع أو العكس.
         assert void_debit.debit == tx.total_amount
-        void_vat = next(
-            l for l in void_lines
-            if l.account_id == finance_crud.get_account_by_code(db, branch.id, "2160").id
+        assert all(
+            l.account_id != finance_crud.get_account_by_code(db, branch.id, "2160").id
+            for l in void_lines
         )
-        assert void_vat.debit == tx.vat_amount
         assert void_credit.credit == expected_amount
 
     def test_void_rejected_on_closed_folio(self, db):
