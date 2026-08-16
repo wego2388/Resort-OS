@@ -1,10 +1,11 @@
 # لوحة التنفيذ الحية — El Kheima
 
-**آخر تحديث:** 2026-08-14 — REL-15: auth/roles/single-branch/Owner readiness
-منشور ومتحقق (راجع handoff REL-15 الأحدث)
+**آخر تحديث:** 2026-08-16 — REL-16: قنوات تحصيل حقيقية + تحصين كاشير
+الشاطئ، مُختبر بالكامل ومُدفوع (تفويض مباشر من Mohamed خارج دورة Codex)،
+النشر جارٍ حسب DEPLOYMENT.md
 **المالك:** Mohamed
 **قائد التنفيذ والمراجع النهائي:** Codex
-**المرحلة الحالية:** ACC-01 real-person roster + UAT-01
+**المرحلة الحالية:** REL-16 deployment، بالتوازي مع ACC-01 real-person roster + UAT-01
 **قرار الإطلاق:** CREDIT-0005 DEPLOYED؛ قرار Go/No-Go التشغيلي العام ما زال
 مرتبطًا بالـUAT والبيانات الحقيقية
 
@@ -55,6 +56,7 @@
 | REL-12 — PMS checkout/folio settlement fix — بتأكيد صريح من Mohamed (تفويض مباشر خارج دورة Codex) | COMPLETE / DEPLOYED | `403bbd7` فعال؛ راجع `docs/agent-workflow/handoffs/2026-08-09_REL-12_claude_handoff.md` — لا migration؛ تسوية الـcheckout بقت تشمل شحنات beach/dining على الغرفة مش سعر الغرفة بس | — |
 | REL-13 — financial integrity + fractional ownership naming + Owner PWA hotfix | COMPLETE / DEPLOYED | `8fbda3c` فعال؛ Alembic `c9d0e1f2a3b4`؛ 2806 backend + 103 frontend؛ مصالحة PMS/Leasing صفر نواقص؛ PWA meta حي؛ راجع handoff 2026-08-11 | — |
 | REL-15 — auth/role isolation + single branch + Timeshare/Owner readiness | COMPLETE / DEPLOYED | `6f1f6e1` فعال؛ Alembic `e2f3a4b5c6d7`؛ 2869 backend collected؛ Staff/Owner responsive gates؛ 9 containers؛ live browser 6/6 | — |
+| REL-16 — قنوات تحصيل حقيقية (Payment Channels) + تحصين كاشير الشاطئ (atomic cart، وردية إجبارية، إصلاح باج commit ضمني وrace أول صف يومي) — تفويض مباشر من Mohamed خارج دورة Codex | IMPLEMENTED / DEPLOYING | commit التنفيذ `4b08698`؛ Alembic `a7b3f2c8e9d1`؛ 2850 backend (صفر فشل) + 106 frontend + 8 mock e2e + 12 owner e2e؛ راجع `docs/agent-workflow/handoffs/2026-08-16_REL-16_payment-channels-beach-cashier_claude_handoff.md` | نشر VPS جارٍ حسب DEPLOYMENT.md |
 | ACC-01 — employee/account workflow | CORE RECONCILED؛ REAL ROSTER PENDING | كل حساب فعلي باسم شخص + HR link + temporary credential handoff | ملف `docs/templates/REL15_STAFF_ROSTER_TEMPLATE.xlsx` بعد تعبئته |
 | OPS-01 — burn-in and alerting | BASELINE COMPLETE | مراقبة مستمرة + إرسال خارجي | اختيار قناة التنبيه |
 | UAT-01 — operational acceptance | PENDING | جهاز/دور/لغة/شبكة/مال | ممثلو التشغيل والمالية |
@@ -146,11 +148,18 @@
 
 ## آخر تسليم
 
-`docs/agent-workflow/handoffs/2026-08-14_REL-15_auth-ops-owner-readiness_codex_handoff.md`
+`docs/agent-workflow/handoffs/2026-08-16_REL-16_payment-channels-beach-cashier_claude_handoff.md`
+(السابق: `docs/agent-workflow/handoffs/2026-08-14_REL-15_auth-ops-owner-readiness_codex_handoff.md`)
 
 ## التحديث التالي المطلوب
 
-املأ `docs/templates/REL15_STAFF_ROSTER_TEMPLATE.xlsx` بصف واحد لكل شخص
+بعد نشر REL-16: زُر شاشة Finance ← "قنوات التحصيل" وأضِف القنوات
+الحقيقية الفعلية (Visa CIB، Mastercard Banque Misr، Vodafone Cash،
+Orange Cash، Etisalat Cash، InstaPay) بحساب GL وحساب بنكي حقيقيين
+لكل قناة — لحد ما يحصل ده، كل الفروع شغالة بمسار الحساب القديم
+(env-based fallback) بلا أي تغيير في السلوك.
+
+بالتوازي: املأ `docs/templates/REL15_STAFF_ROSTER_TEMPLATE.xlsx` بصف واحد لكل شخص
 حقيقي (بلا كلمات مرور أو 2FA)، ثم راجع وأنشئ HR link والحساب الشخصي.
 بعدها نفّذ `docs/UAT_REL15_OWNER_STAFF_AR.md` على أجهزة المالك والموظفين،
 وسجّل Mohamed قرار Go/No-Go التشغيلي المؤرخ بعد معالجة ملاحظات الـUAT.

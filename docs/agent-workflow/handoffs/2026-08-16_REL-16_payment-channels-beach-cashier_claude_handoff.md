@@ -2,7 +2,7 @@
 
 **التاريخ:** 2026-08-16
 **Branch:** `codex/rel-15-auth-ops-readiness`
-**Implementation commit:** `<COMMIT_SHA>`
+**Implementation commit:** `4b08698` (branch commit; not yet deployed)
 **Alembic:** `a7b3f2c8e9d1 (head)` — additive, single head, downgrade rehearsed
 
 ## 1. الخلفية
