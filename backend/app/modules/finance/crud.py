@@ -13,13 +13,13 @@ from app.resort_os.timezone_utils import local_today
 from app.modules.finance.models import (
     Account, AccountingPeriod, AssetDepreciationEntry, BankAccount, BankStatementLine,
     CashierShift, CashierShiftCashCount, CashMovement, ConditionalDiscount,
-    CostCenter, ETAInvoice, ExchangeRate, Folio, FolioCharge, JournalEntry, JournalLine, Payment,
+    CostCenter, ETAInvoice, ExchangeRate, Expense, Folio, FolioCharge, JournalEntry, JournalLine, Payment,
     PaymentChannel, Check, CheckMovement, RevenueAuditLog,
 )
 from app.modules.finance.schemas import (
     AccountCreate, BankAccountCreate, BankAccountUpdate, BankStatementLineCreate,
     ConditionalDiscountCreate, ConditionalDiscountUpdate,
-    CostCenterCreate, ExchangeRateCreate, FolioCreate, FolioChargeCreate,
+    CostCenterCreate, ExchangeRateCreate, ExpenseCreate, FolioCreate, FolioChargeCreate,
     JournalEntryCreate, PaymentChannelCreate, PaymentChannelUpdate, PaymentCreate,
 )
 
@@ -623,6 +623,46 @@ def get_account_by_code(db: Session, branch_id: int, code: str) -> Optional[Acco
     )
 
 
+# ── Expenses (2026-08-16) ────────────────────────────────────────────────
+
+def create_expense(
+    db: Session, branch_id: int, data: ExpenseCreate, journal_entry_id: int, recorded_by: int,
+) -> Expense:
+    expense = Expense(
+        branch_id=branch_id,
+        expense_date=data.expense_date,
+        expense_account_id=data.expense_account_id,
+        settlement_account_id=data.settlement_account_id,
+        amount=data.amount,
+        description=data.description,
+        reference=data.reference,
+        cost_center_id=data.cost_center_id,
+        journal_entry_id=journal_entry_id,
+        recorded_by=recorded_by,
+    )
+    db.add(expense)
+    db.flush()
+    return expense
+
+
+def list_expenses(
+    db: Session, branch_id: int,
+    date_from: Optional[object] = None, date_to: Optional[object] = None,
+    page: int = 1, size: int = 30,
+) -> tuple[list[Expense], int]:
+    q = db.query(Expense).filter(Expense.branch_id == branch_id)
+    if date_from:
+        q = q.filter(Expense.expense_date >= date_from)
+    if date_to:
+        q = q.filter(Expense.expense_date <= date_to)
+    total = q.count()
+    items = (
+        q.order_by(Expense.expense_date.desc(), Expense.id.desc())
+        .offset((page - 1) * size).limit(size).all()
+    )
+    return items, total
+
+
 def list_accounts(
     db: Session,
     branch_id: int,
@@ -817,6 +857,10 @@ def create_cost_center(db: Session, data: CostCenterCreate) -> CostCenter:
     db.add(obj)
     db.flush()
     return obj
+
+
+def get_cost_center(db: Session, cost_center_id: int) -> Optional[CostCenter]:
+    return db.query(CostCenter).filter(CostCenter.id == cost_center_id).first()
 
 
 def get_cost_center_by_code(db: Session, branch_id: int, code: str) -> Optional[CostCenter]:

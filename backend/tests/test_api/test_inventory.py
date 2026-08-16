@@ -373,6 +373,110 @@ class TestPurchaseOrder:
             services.receive_purchase_order(db, po.id, req, received_by=1)
 
 
+class TestSupplierPayment:
+    """2026-08-16 — سداد فعلي لمورد يقفل حلقة الذمم الدائنة (2200) اللي
+    receive_purchase_order فتحها."""
+
+    def _received_po(self, db: Session, branch, supplier, product, warehouse, qty=Decimal("100"), unit_cost=Decimal("18")):
+        from app.modules.inventory.schemas import (
+            PurchaseOrderCreate, PurchaseOrderItemCreate, ReceiveItemsRequest,
+        )
+        _seed_purchase_accounts(db, branch)
+        po_data = PurchaseOrderCreate(
+            branch_id=branch.id, supplier_id=supplier.id,
+            ordered_at=date.today(),
+            items=[PurchaseOrderItemCreate(
+                product_id=product.id, ordered_qty=qty, unit_cost=unit_cost,
+            )],
+        )
+        po = services.create_purchase_order(db, po_data)
+        req = ReceiveItemsRequest(
+            items=[{"item_id": po.items[0].id, "received_qty": float(qty)}],
+            warehouse_id=warehouse.id, received_at=date.today(),
+        )
+        return services.receive_purchase_order(db, po.id, req, received_by=1)
+
+    def _cash_account(self, db: Session, branch):
+        from app.modules.finance.models import Account
+        acc = Account(branch_id=branch.id, code="1100", name="Cash", account_type="asset")
+        db.add(acc); db.flush()
+        return acc
+
+    def test_pay_purchase_order_full_amount(self, db, branch, supplier, product, warehouse):
+        from app.modules.inventory.schemas import SupplierPaymentCreate
+
+        po = self._received_po(db, branch, supplier, product, warehouse)
+        cash = self._cash_account(db, branch)
+        assert po.total_amount == Decimal("1800.00")
+
+        updated = services.pay_purchase_order(db, po.id, SupplierPaymentCreate(
+            amount=Decimal("1800"), settlement_account_id=cash.id, paid_at=date.today(),
+        ), recorded_by=1)
+        assert updated.amount_paid == Decimal("1800.00")
+        assert updated.payment_status == "paid"
+
+        payments = crud.list_supplier_payments(db, po.id)
+        assert len(payments) == 1
+        assert payments[0].amount == Decimal("1800")
+
+    def test_pay_purchase_order_partial_then_full(self, db, branch, supplier, product, warehouse):
+        from app.modules.inventory.schemas import SupplierPaymentCreate
+
+        po = self._received_po(db, branch, supplier, product, warehouse)
+        cash = self._cash_account(db, branch)
+
+        po = services.pay_purchase_order(db, po.id, SupplierPaymentCreate(
+            amount=Decimal("800"), settlement_account_id=cash.id, paid_at=date.today(),
+        ), recorded_by=1)
+        assert po.payment_status == "partial"
+        assert po.amount_paid == Decimal("800.00")
+
+        po = services.pay_purchase_order(db, po.id, SupplierPaymentCreate(
+            amount=Decimal("1000"), settlement_account_id=cash.id, paid_at=date.today(),
+        ), recorded_by=1)
+        assert po.payment_status == "paid"
+        assert po.amount_paid == Decimal("1800.00")
+        assert len(crud.list_supplier_payments(db, po.id)) == 2
+
+    def test_overpayment_rejected(self, db, branch, supplier, product, warehouse):
+        from app.modules.inventory.schemas import SupplierPaymentCreate
+
+        po = self._received_po(db, branch, supplier, product, warehouse)
+        cash = self._cash_account(db, branch)
+
+        with pytest.raises(ValueError, match="أكبر من المتبقي"):
+            services.pay_purchase_order(db, po.id, SupplierPaymentCreate(
+                amount=Decimal("5000"), settlement_account_id=cash.id, paid_at=date.today(),
+            ), recorded_by=1)
+
+    def test_cannot_pay_unreceived_po(self, db, branch, supplier, product):
+        from app.modules.inventory.schemas import PurchaseOrderCreate, PurchaseOrderItemCreate, SupplierPaymentCreate
+        _seed_purchase_accounts(db, branch)
+        cash = self._cash_account(db, branch)
+        po_data = PurchaseOrderCreate(
+            branch_id=branch.id, supplier_id=supplier.id, ordered_at=date.today(),
+            items=[PurchaseOrderItemCreate(product_id=product.id, ordered_qty=Decimal("10"), unit_cost=Decimal("5"))],
+        )
+        po = services.create_purchase_order(db, po_data)
+        with pytest.raises(ValueError, match="received"):
+            services.pay_purchase_order(db, po.id, SupplierPaymentCreate(
+                amount=Decimal("10"), settlement_account_id=cash.id, paid_at=date.today(),
+            ), recorded_by=1)
+
+    def test_settlement_account_must_be_asset(self, db, branch, supplier, product, warehouse):
+        from app.modules.finance.models import Account
+        from app.modules.inventory.schemas import SupplierPaymentCreate
+
+        po = self._received_po(db, branch, supplier, product, warehouse)
+        revenue_acc = Account(branch_id=branch.id, code="4100", name="Revenue", account_type="revenue")
+        db.add(revenue_acc); db.flush()
+
+        with pytest.raises(ValueError, match="حساب أصول"):
+            services.pay_purchase_order(db, po.id, SupplierPaymentCreate(
+                amount=Decimal("100"), settlement_account_id=revenue_acc.id, paid_at=date.today(),
+            ), recorded_by=1)
+
+
 class TestPurchaseApproval:
 
     def test_create_purchase_request(self, db, branch, product):

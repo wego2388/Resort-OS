@@ -82,7 +82,7 @@ from app.modules.timeshare.schemas import (
     TimeshareUnitRead, TimeshareUnitUpdate,
     TimeshareVisitCreate, TimeshareVisitRead, TimeshareVisitUpdate,
     TimeshareVisitRequestApprove, TimeshareVisitRequestCreate,
-    TimeshareVisitRequestReject, TimeshareVisitRequestRead,
+    TimeshareVisitRequestReject, TimeshareVisitRequestRead, TimeshareUnitAvailabilityRead,
     WaitlistCreate, WaitlistRead, WaitlistStatusUpdate,
     ImportContractsResponse,
     TIMESHARE_BOOKING_RULES_VERSION, TIMESHARE_TERMS_VERSION,
@@ -868,8 +868,29 @@ def list_visit_requests(
             read.customer_name = r.contract.customer_name
             read.customer_phone = r.contract.customer_phone
             read.contract_number = r.contract.contract_number
+            # 2026-08-16: عشان الشاشة الإدارية تعرض خريطة الوحدات الصح وقت
+            # الموافقة — راجع TimeshareVisitRequestRead docstring.
+            read.room_type = r.contract.room_type
+            read.contract_unit_id = r.contract.unit_id
+            read.unit_capacity = r.contract.unit_capacity
         result.append(read)
     return result
+
+
+@router.get("/timeshare/units/availability", response_model=list[TimeshareUnitAvailabilityRead],
+            dependencies=[Depends(require_permission("timeshare.visit_requests", "view", min_role_level=25))])
+def get_units_availability(
+    db: DbDep, user=Depends(get_timeshare_user),
+    branch_id: int = Query(...), unit_type: str = Query(...),
+    check_in: date = Query(...), check_out: date = Query(...),
+):
+    """خريطة الوحدات (2026-08-16) — تدعم اختيار يدوي حقيقي لوحدة عقد عائم
+    وقت تأكيد زيارة، بدل التخصيص الأعمى بالكامل. راجع
+    services.get_units_availability."""
+    _assert_timeshare_branch(db, user, branch_id, "عرض خريطة الوحدات")
+    if check_out <= check_in:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "check_out يجب أن يكون بعد check_in")
+    return services.get_units_availability(db, branch_id, unit_type, check_in, check_out)
 
 
 @router.post("/timeshare/visit-requests/{request_id}/approve", response_model=TimeshareVisitRequestRead,
@@ -881,7 +902,9 @@ def approve_visit_request(request_id: int, data: TimeshareVisitRequestApprove, d
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"طلب الزيارة {request_id} غير موجود")
     _assert_timeshare_branch(db, user, req.branch_id, "الموافقة على طلب زيارة")
     try:
-        return services.approve_visit_request(db, request_id, data.check_in, data.check_out, approved_by=user.id)
+        return services.approve_visit_request(
+            db, request_id, data.check_in, data.check_out, approved_by=user.id, unit_id=data.unit_id,
+        )
     except services.VisitConflictError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
     except ValueError as exc:

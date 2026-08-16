@@ -15,6 +15,9 @@ const props = defineProps<{
   noteLabel: string
   cartLocked: boolean
   pendingOrderNumber: string
+  // 2026-08-16: غير فاضية لما الكاشير بيضيف أصناف على فاتورة مفتوحة
+  // بالفعل (مش طلب جديد) — راجع UnifiedPOSView.vue's appendToOrderId.
+  appendOrderNumber?: string
   itemSubtotal: number
   serverSummary: { discount_amount: number | string; total: number | string } | null
   customer: POSCustomer | null
@@ -37,6 +40,8 @@ const emit = defineEmits<{
   customer: []
   send: []
   pay: []
+  append: []
+  cancelAppend: []
   // ── فيتشر الفنادق (2026-08-07) ──────────────────────────────────────
   'selectHotel': [contract: B2BContractOption | null]
 }>()
@@ -46,6 +51,7 @@ const { formatMoney, formatNumber, name } = useStaffFormat()
 const itemCount = computed(() => props.cart.reduce((sum, line) => sum + line.quantity, 0))
 const displayedTotal = computed(() => props.serverSummary?.total ?? props.itemSubtotal)
 const payPrimary = computed(() => props.orderType !== 'dine_in')
+const isAppendMode = computed(() => !!props.appendOrderNumber)
 
 // يجمّع أصناف السلة حسب outlet — لو outlet واحد بس، group واحد بدون header
 const cartGroups = computed(() => {
@@ -239,6 +245,7 @@ const cartGroups = computed(() => {
       </div>
 
       <AppButton
+        v-if="!isAppendMode"
         variant="outline"
         size="sm"
         block
@@ -248,9 +255,24 @@ const cartGroups = computed(() => {
       >
         🏷️ {{ t('backoffice.pos.applyDiscount') }}
       </AppButton>
-      <p v-if="discountError" role="alert" class="text-xs text-danger">{{ discountError }}</p>
+      <p v-if="!isAppendMode && discountError" role="alert" class="text-xs text-danger">{{ discountError }}</p>
 
-      <div class="grid grid-cols-2 gap-2">
+      <!-- 2026-08-16: إضافة أصناف لفاتورة مفتوحة — لا دفع ولا خصم هنا،
+      الدفع بيحصل من شاشة تفاصيل الفاتورة نفسها بعد ما الأصناف تتضاف. -->
+      <div v-if="isAppendMode" class="space-y-2">
+        <p class="rounded-xl border border-primary-300 bg-primary-50 dark:bg-primary-950/20 px-3 py-2 text-sm text-primary-900 dark:text-primary-200">
+          🧾 {{ t('backoffice.pos.appendItems.notice', { number: appendOrderNumber }) }}
+        </p>
+        <div class="grid grid-cols-2 gap-2">
+          <AppButton variant="outline" size="lg" :disabled="submitting" @click="emit('cancelAppend')">
+            {{ t('backoffice.pos.appendItems.cancel') }}
+          </AppButton>
+          <AppButton variant="primary" size="lg" :disabled="cart.length === 0" :loading="submitting" @click="emit('append')">
+            ➕ {{ t('backoffice.pos.appendItems.confirm') }}
+          </AppButton>
+        </div>
+      </div>
+      <div v-else class="grid grid-cols-2 gap-2">
         <AppButton
           :variant="payPrimary ? 'outline' : 'primary'"
           size="lg"
@@ -270,7 +292,7 @@ const cartGroups = computed(() => {
           💳 {{ t('backoffice.pos.cart.payNow') }}
         </AppButton>
       </div>
-      <p v-if="!online" class="text-xs text-amber-700 dark:text-amber-300 text-center">
+      <p v-if="!isAppendMode && !online" class="text-xs text-amber-700 dark:text-amber-300 text-center">
         {{ t('backoffice.pos.cart.paymentOffline') }}
       </p>
     </div>

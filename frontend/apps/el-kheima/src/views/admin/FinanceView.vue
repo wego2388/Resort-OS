@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, reactive } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api, ENDPOINTS, useAuthStore, useResortWebSocket } from '@resort-os/core'
 import { useStaffFormat } from '@resort-os/core/i18n/staff'
@@ -16,7 +16,7 @@ const auth = useAuthStore()
 // activeBranchId is null when requires_branch_selection=true — in that case
 // API calls carry no branch_id and the server returns 409 BRANCH_CONTEXT_REQUIRED.
 const branchId = computed(() => auth.activeBranchId)
-const tab = ref<'overview' | 'checks' | 'accounts' | 'cost-centers' | 'balance-sheet' | 'depreciation' | 'bank-reconciliation' | 'shifts' | 'exchange-rates' | 'journal' | 'payment-channels'>('overview')
+const tab = ref<'overview' | 'checks' | 'accounts' | 'cost-centers' | 'balance-sheet' | 'depreciation' | 'bank-reconciliation' | 'shifts' | 'exchange-rates' | 'journal' | 'payment-channels' | 'expenses'>('overview')
 
 interface Check { id: number; check_number: string; amount: number; drawer_name: string; due_date: string; status: string; bank_name: string }
 interface Account { id: number; code: string; name: string; account_type: string; balance: number }
@@ -524,6 +524,14 @@ async function loadTab(tabId: typeof tab.value) {
   if (tabId === 'exchange-rates') { await loadExchangeRates(); return }
   if (tabId === 'journal') { journalPage.value = 1; await loadJournal(); return }
   if (tabId === 'payment-channels') { await loadPaymentChannels(); return }
+  if (tabId === 'expenses') {
+    expensesPage.value = 1
+    await Promise.all([
+      loadExpenses(),
+      accounts.value.length ? Promise.resolve() : api.get(ENDPOINTS.finance.accounts, { params: { branch_id: branchId.value } }).then(r => { accounts.value = r.data.accounts ?? r.data.items ?? r.data }),
+    ])
+    return
+  }
 
   loading.value = true
   try {
@@ -652,6 +660,165 @@ function toggleJournalEntry(id: number) {
   journalExpanded.value = journalExpanded.value === id ? null : id
 }
 
+// ── قيد يدوي جديد (2026-08-16) ──────────────────────────────────────────
+// POST /finance/journal-entries كان جاهزًا بالكامل في الباك إند (يتحقق من
+// توازن مدين=دائن وقفل الفترة المحاسبية) بس مفيش أي شاشة كانت تستخدمه —
+// المحاسب معندوش أي طريقة يسجّل بيها تسوية/تصحيح/سند دين أو ائتمان يدوي.
+interface NewJournalLine { accountId: number | null; debit: string; credit: string; description: string }
+const allAccountOptions = computed(() => accounts.value)
+const newJournalModal = reactive({
+  open: false, saving: false, error: '',
+  entryDate: today, reference: '', description: '',
+  lines: [
+    { accountId: null, debit: '', credit: '', description: '' },
+    { accountId: null, debit: '', credit: '', description: '' },
+  ] as NewJournalLine[],
+})
+function openNewJournalModal() {
+  Object.assign(newJournalModal, {
+    open: true, saving: false, error: '',
+    entryDate: today, reference: '', description: '',
+    lines: [
+      { accountId: null, debit: '', credit: '', description: '' },
+      { accountId: null, debit: '', credit: '', description: '' },
+    ],
+  })
+}
+function addJournalLine() {
+  newJournalModal.lines.push({ accountId: null, debit: '', credit: '', description: '' })
+}
+function removeJournalLine(index: number) {
+  if (newJournalModal.lines.length <= 2) return
+  newJournalModal.lines.splice(index, 1)
+}
+const newJournalTotalDebit = computed(() =>
+  newJournalModal.lines.reduce((sum, l) => sum + (Number(l.debit) || 0), 0))
+const newJournalTotalCredit = computed(() =>
+  newJournalModal.lines.reduce((sum, l) => sum + (Number(l.credit) || 0), 0))
+const newJournalIsBalanced = computed(() =>
+  Math.abs(newJournalTotalDebit.value - newJournalTotalCredit.value) < 0.01 && newJournalTotalDebit.value > 0)
+async function confirmNewJournalEntry() {
+  if (!newJournalModal.reference.trim() || !newJournalModal.description.trim()) {
+    newJournalModal.error = t('backoffice.finance.journal.newEntry.validationError')
+    return
+  }
+  if (newJournalModal.lines.some(l => !l.accountId || (!Number(l.debit) && !Number(l.credit)))) {
+    newJournalModal.error = t('backoffice.finance.journal.newEntry.lineValidationError')
+    return
+  }
+  if (!newJournalIsBalanced.value) {
+    newJournalModal.error = t('backoffice.finance.journal.newEntry.unbalancedError')
+    return
+  }
+  newJournalModal.saving = true
+  newJournalModal.error = ''
+  try {
+    await api.post(ENDPOINTS.finance.journalEntries, {
+      branch_id: branchId.value,
+      entry_date: newJournalModal.entryDate,
+      reference: newJournalModal.reference.trim(),
+      description: newJournalModal.description.trim(),
+      source: 'manual',
+      lines: newJournalModal.lines.map(l => ({
+        account_id: l.accountId,
+        debit: Number(l.debit) || 0,
+        credit: Number(l.credit) || 0,
+        description: l.description.trim() || undefined,
+      })),
+    })
+    toast.success(t('backoffice.finance.journal.newEntry.success'))
+    newJournalModal.open = false
+    journalPage.value = 1
+    await loadJournal()
+  } catch (e: unknown) {
+    newJournalModal.error = (e as ApiErr)?.response?.data?.detail ?? t('backoffice.finance.journal.newEntry.error')
+  } finally {
+    newJournalModal.saving = false
+  }
+}
+
+// ── مصروفات (2026-08-16) ────────────────────────────────────────────────
+// سند مصروفات حقيقي بفئة (حساب 5xxx) — طلب Mohamed صراحةً بديل القيد
+// اليدوي العام.
+interface ExpenseRow {
+  id: number; expense_date: string; amount: number; description: string
+  reference: string | null; expense_account_code: string; expense_account_name: string
+  settlement_account_code: string
+}
+const expenses = ref<ExpenseRow[]>([])
+const expensesTotal = ref(0)
+const expensesPage = ref(1)
+const expensesDateFrom = ref(firstOfMonth)
+const expensesDateTo = ref(today)
+const expensesLoading = ref(false)
+const expenseAccountOptions = computed(() => accounts.value.filter(a => a.account_type === 'expense'))
+const settlementAccountOptions = computed(() => accounts.value.filter(a => a.account_type === 'asset'))
+
+async function loadExpenses() {
+  expensesLoading.value = true
+  try {
+    const { data } = await api.get(ENDPOINTS.finance.expenses, {
+      params: {
+        branch_id: branchId.value, date_from: expensesDateFrom.value, date_to: expensesDateTo.value,
+        page: expensesPage.value, size: 30,
+      },
+    })
+    expenses.value = (data.items ?? []).map((e: Record<string, unknown>) => ({ ...e, amount: Number(e.amount) }))
+    expensesTotal.value = data.total ?? 0
+  } catch (e: unknown) {
+    toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.finance.expenses.loadError'))
+  } finally {
+    expensesLoading.value = false
+  }
+}
+
+const newExpenseModal = reactive({
+  open: false, saving: false, error: '',
+  expenseDate: today, expenseAccountId: null as number | null, settlementAccountId: null as number | null,
+  amount: '', description: '', reference: '',
+})
+function openNewExpenseModal() {
+  Object.assign(newExpenseModal, {
+    open: true, saving: false, error: '',
+    expenseDate: today, expenseAccountId: null, settlementAccountId: null,
+    amount: '', description: '', reference: '',
+  })
+}
+async function confirmNewExpense() {
+  if (!newExpenseModal.expenseAccountId || !newExpenseModal.settlementAccountId) {
+    newExpenseModal.error = t('backoffice.finance.expenses.newExpense.accountsRequired')
+    return
+  }
+  if (!Number(newExpenseModal.amount) || Number(newExpenseModal.amount) <= 0) {
+    newExpenseModal.error = t('backoffice.finance.expenses.newExpense.amountRequired')
+    return
+  }
+  if (!newExpenseModal.description.trim()) {
+    newExpenseModal.error = t('backoffice.finance.expenses.newExpense.descriptionRequired')
+    return
+  }
+  newExpenseModal.saving = true
+  newExpenseModal.error = ''
+  try {
+    await api.post(ENDPOINTS.finance.expenses, {
+      expense_date: newExpenseModal.expenseDate,
+      expense_account_id: newExpenseModal.expenseAccountId,
+      settlement_account_id: newExpenseModal.settlementAccountId,
+      amount: Number(newExpenseModal.amount),
+      description: newExpenseModal.description.trim(),
+      reference: newExpenseModal.reference.trim() || undefined,
+    }, { params: { branch_id: branchId.value } })
+    toast.success(t('backoffice.finance.expenses.newExpense.success'))
+    newExpenseModal.open = false
+    expensesPage.value = 1
+    await loadExpenses()
+  } catch (e: unknown) {
+    newExpenseModal.error = (e as ApiErr)?.response?.data?.detail ?? t('backoffice.finance.expenses.newExpense.error')
+  } finally {
+    newExpenseModal.saving = false
+  }
+}
+
 onMounted(() => loadTab('overview'))
 
 const tabsList = computed<{ val: typeof tab.value; label: string }[]>(() => [
@@ -666,6 +833,7 @@ const tabsList = computed<{ val: typeof tab.value; label: string }[]>(() => [
   { val: 'exchange-rates',       label: t('backoffice.finance.tabs.exchangeRates') },
   { val: 'journal',              label: t('backoffice.finance.tabs.journal') },
   { val: 'payment-channels',     label: t('backoffice.finance.tabs.paymentChannels') },
+  { val: 'expenses',             label: t('backoffice.finance.tabs.expenses') },
 ])
 
 const shiftStatusList = computed<{ v: 'all' | 'open' | 'closed'; l: string }[]>(() => [
@@ -1452,6 +1620,9 @@ async function saveExchangeRate() {
           <AppButton variant="primary" :loading="journalLoading" @click="() => { journalPage = 1; loadJournal() }">
             {{ t('backoffice.finance.refresh') }}
           </AppButton>
+          <AppButton variant="outline" class="ms-auto" @click="openNewJournalModal">
+            ✍️ {{ t('backoffice.finance.journal.newEntry.btnLabel') }}
+          </AppButton>
         </div>
       </AppCard>
 
@@ -1536,6 +1707,67 @@ async function saveExchangeRate() {
         </div>
       </AppCard>
     </div>
+
+    <!-- ══ NEW MANUAL JOURNAL ENTRY MODAL ══ -->
+    <AppModal :open="newJournalModal.open" :title="`✍️ ${t('backoffice.finance.journal.newEntry.title')}`"
+      size="lg" @close="newJournalModal.open = false">
+      <div class="space-y-4">
+        <div class="grid grid-cols-2 gap-3">
+          <label class="block text-sm font-bold text-gray-700 dark:text-gray-300">{{ t('backoffice.finance.journal.newEntry.entryDate') }}
+            <input v-model="newJournalModal.entryDate" type="date"
+              class="min-h-[44px] w-full mt-1 bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-900 dark:text-gray-100 rounded-xl px-3 py-2 text-sm" />
+          </label>
+          <label class="block text-sm font-bold text-gray-700 dark:text-gray-300">{{ t('backoffice.finance.journal.newEntry.reference') }}
+            <input v-model="newJournalModal.reference"
+              :placeholder="t('backoffice.finance.journal.newEntry.referencePlaceholder')"
+              class="min-h-[44px] w-full mt-1 bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-900 dark:text-gray-100 rounded-xl px-3 py-2 text-sm" />
+          </label>
+        </div>
+        <label class="block text-sm font-bold text-gray-700 dark:text-gray-300">{{ t('backoffice.finance.journal.newEntry.description') }}
+          <input v-model="newJournalModal.description"
+            class="min-h-[44px] w-full mt-1 bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-900 dark:text-gray-100 rounded-xl px-3 py-2 text-sm" />
+        </label>
+
+        <div class="space-y-2">
+          <div class="grid grid-cols-12 gap-2 text-xs font-semibold text-gray-500 dark:text-gray-400 px-1">
+            <span class="col-span-5">{{ t('backoffice.finance.journal.account') }}</span>
+            <span class="col-span-3">{{ t('backoffice.finance.journal.debit') }}</span>
+            <span class="col-span-3">{{ t('backoffice.finance.journal.credit') }}</span>
+          </div>
+          <div v-for="(line, i) in newJournalModal.lines" :key="i" class="grid grid-cols-12 gap-2 items-center">
+            <select v-model.number="line.accountId" class="col-span-5 min-h-[44px] rounded-xl border border-stone-200 dark:border-border bg-white dark:bg-surface px-2 py-2 text-sm">
+              <option :value="null">{{ t('backoffice.finance.journal.newEntry.selectAccount') }}</option>
+              <option v-for="acc in allAccountOptions" :key="acc.id" :value="acc.id">{{ acc.code }} — {{ acc.name }}</option>
+            </select>
+            <input v-model="line.debit" type="number" min="0" step="0.01" placeholder="0.00"
+              class="col-span-3 min-h-[44px] rounded-xl border border-stone-200 dark:border-border bg-white dark:bg-surface px-2 py-2 text-sm tabular-nums" />
+            <input v-model="line.credit" type="number" min="0" step="0.01" placeholder="0.00"
+              class="col-span-3 min-h-[44px] rounded-xl border border-stone-200 dark:border-border bg-white dark:bg-surface px-2 py-2 text-sm tabular-nums" />
+            <button type="button" class="col-span-1 text-danger disabled:opacity-30" :disabled="newJournalModal.lines.length <= 2"
+              @click="removeJournalLine(i)">✕</button>
+          </div>
+          <button type="button" class="text-sm font-semibold text-primary-700 dark:text-primary-400" @click="addJournalLine">
+            + {{ t('backoffice.finance.journal.newEntry.addLine') }}
+          </button>
+        </div>
+
+        <div class="flex items-center justify-between rounded-xl px-3 py-2 text-sm font-bold"
+          :class="newJournalIsBalanced ? 'bg-success/10 text-success' : 'bg-warning/10 text-warning'">
+          <span>{{ t('backoffice.finance.journal.newEntry.totalDebit') }}: {{ formatNumber(newJournalTotalDebit) }}</span>
+          <span>{{ t('backoffice.finance.journal.newEntry.totalCredit') }}: {{ formatNumber(newJournalTotalCredit) }}</span>
+          <span>{{ newJournalIsBalanced ? '✓' : '⚠️' }}</span>
+        </div>
+        <p v-if="newJournalModal.error" class="text-sm text-red-600 dark:text-red-400">{{ newJournalModal.error }}</p>
+      </div>
+      <template #footer>
+        <div class="flex gap-2">
+          <AppButton variant="ghost" class="flex-1" @click="newJournalModal.open = false">{{ t('backoffice.finance.cancel') }}</AppButton>
+          <AppButton class="flex-1" :disabled="!newJournalIsBalanced" :loading="newJournalModal.saving" @click="confirmNewJournalEntry">
+            {{ t('backoffice.finance.journal.newEntry.confirm') }}
+          </AppButton>
+        </div>
+      </template>
+    </AppModal>
 
     <!-- Payment Channels -->
     <div v-if="tab === 'payment-channels'" class="space-y-4">
@@ -1664,6 +1896,118 @@ async function saveExchangeRate() {
         </div>
       </AppModal>
     </div>
+
+    <!-- Expenses (2026-08-16) -->
+    <div v-if="tab === 'expenses'" class="space-y-4">
+      <AppCard padding="md">
+        <div class="flex flex-wrap gap-3 items-end">
+          <div>
+            <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 mb-1">{{ t('backoffice.finance.dateFrom') }}</label>
+            <input v-model="expensesDateFrom" type="date"
+              class="rounded-xl border border-stone-200 dark:border-border bg-white dark:bg-surface px-3 py-2 text-sm" />
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 mb-1">{{ t('backoffice.finance.dateTo') }}</label>
+            <input v-model="expensesDateTo" type="date"
+              class="rounded-xl border border-stone-200 dark:border-border bg-white dark:bg-surface px-3 py-2 text-sm" />
+          </div>
+          <AppButton variant="primary" :loading="expensesLoading" @click="() => { expensesPage = 1; loadExpenses() }">
+            {{ t('backoffice.finance.refresh') }}
+          </AppButton>
+          <AppButton variant="outline" class="ms-auto" @click="openNewExpenseModal">
+            💸 {{ t('backoffice.finance.expenses.newExpense.btnLabel') }}
+          </AppButton>
+        </div>
+      </AppCard>
+
+      <AppCard padding="none">
+        <div v-if="expensesLoading" class="flex justify-center py-12"><AppSpinner size="lg" /></div>
+        <EmptyState v-else-if="!expenses.length" icon="💸"
+          :title="t('backoffice.finance.expenses.empty')" />
+        <div v-else class="overflow-x-auto">
+          <div class="px-4 py-2 border-b border-stone-100 dark:border-border/50 text-xs text-gray-500 dark:text-gray-400">
+            {{ t('backoffice.finance.journal.totalEntries', { count: expensesTotal }) }}
+          </div>
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="text-gray-500 dark:text-gray-400 text-xs">
+                <th class="px-4 py-2 text-start font-semibold">{{ t('backoffice.finance.date') }}</th>
+                <th class="px-4 py-2 text-start font-semibold">{{ t('backoffice.finance.expenses.category') }}</th>
+                <th class="px-4 py-2 text-start font-semibold">{{ t('backoffice.finance.journal.description') }}</th>
+                <th class="px-4 py-2 text-start font-semibold">{{ t('backoffice.finance.expenses.settlementAccount') }}</th>
+                <th class="px-4 py-2 text-end font-semibold">{{ t('backoffice.finance.expenses.amount') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="exp in expenses" :key="exp.id" class="border-t border-stone-100 dark:border-border/20">
+                <td class="px-4 py-2 tabular-nums text-gray-500 dark:text-gray-400">{{ exp.expense_date }}</td>
+                <td class="px-4 py-2 font-mono text-xs">{{ exp.expense_account_code }} — {{ exp.expense_account_name }}</td>
+                <td class="px-4 py-2">{{ exp.description }}<span v-if="exp.reference" class="text-gray-500 dark:text-gray-400"> ({{ exp.reference }})</span></td>
+                <td class="px-4 py-2 font-mono text-xs text-gray-500 dark:text-gray-400">{{ exp.settlement_account_code }}</td>
+                <td class="px-4 py-2 text-end tabular-nums font-bold">{{ formatNumber(exp.amount) }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <div v-if="expensesTotal > 30" class="flex items-center justify-between px-4 py-3 border-t border-stone-100 dark:border-border/50">
+            <span class="text-xs text-gray-500 dark:text-gray-400">
+              {{ t('backoffice.finance.journal.page', { page: expensesPage, total: Math.ceil(expensesTotal / 30) }) }}
+            </span>
+            <div class="flex gap-2">
+              <AppButton variant="outline" size="sm" :disabled="expensesPage <= 1"
+                @click="() => { expensesPage--; loadExpenses() }">{{ t('backoffice.finance.prev') }}</AppButton>
+              <AppButton variant="outline" size="sm" :disabled="expensesPage * 30 >= expensesTotal"
+                @click="() => { expensesPage++; loadExpenses() }">{{ t('backoffice.finance.next') }}</AppButton>
+            </div>
+          </div>
+        </div>
+      </AppCard>
+    </div>
+
+    <!-- ══ NEW EXPENSE MODAL ══ -->
+    <AppModal :open="newExpenseModal.open" :title="`💸 ${t('backoffice.finance.expenses.newExpense.title')}`"
+      size="md" @close="newExpenseModal.open = false">
+      <div class="space-y-4">
+        <label class="block text-sm font-bold text-gray-700 dark:text-gray-300">{{ t('backoffice.finance.journal.newEntry.entryDate') }}
+          <input v-model="newExpenseModal.expenseDate" type="date"
+            class="min-h-[44px] w-full mt-1 bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-900 dark:text-gray-100 rounded-xl px-3 py-2 text-sm" />
+        </label>
+        <label class="block text-sm font-bold text-gray-700 dark:text-gray-300">{{ t('backoffice.finance.expenses.category') }}
+          <select v-model.number="newExpenseModal.expenseAccountId"
+            class="min-h-[44px] w-full mt-1 rounded-xl border border-stone-200 dark:border-border bg-white dark:bg-surface px-3 py-2 text-sm">
+            <option :value="null">{{ t('backoffice.finance.journal.newEntry.selectAccount') }}</option>
+            <option v-for="acc in expenseAccountOptions" :key="acc.id" :value="acc.id">{{ acc.code }} — {{ acc.name }}</option>
+          </select>
+        </label>
+        <label class="block text-sm font-bold text-gray-700 dark:text-gray-300">{{ t('backoffice.finance.expenses.settlementAccount') }}
+          <select v-model.number="newExpenseModal.settlementAccountId"
+            class="min-h-[44px] w-full mt-1 rounded-xl border border-stone-200 dark:border-border bg-white dark:bg-surface px-3 py-2 text-sm">
+            <option :value="null">{{ t('backoffice.finance.journal.newEntry.selectAccount') }}</option>
+            <option v-for="acc in settlementAccountOptions" :key="acc.id" :value="acc.id">{{ acc.code }} — {{ acc.name }}</option>
+          </select>
+        </label>
+        <label class="block text-sm font-bold text-gray-700 dark:text-gray-300">{{ t('backoffice.finance.expenses.amount') }}
+          <input v-model="newExpenseModal.amount" type="number" min="0" step="0.01"
+            class="min-h-[44px] w-full mt-1 bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-900 dark:text-gray-100 rounded-xl px-3 py-2 text-sm tabular-nums" />
+        </label>
+        <label class="block text-sm font-bold text-gray-700 dark:text-gray-300">{{ t('backoffice.finance.journal.description') }}
+          <input v-model="newExpenseModal.description"
+            class="min-h-[44px] w-full mt-1 bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-900 dark:text-gray-100 rounded-xl px-3 py-2 text-sm" />
+        </label>
+        <label class="block text-sm font-bold text-gray-700 dark:text-gray-300">{{ t('backoffice.finance.journal.newEntry.reference') }}
+          <input v-model="newExpenseModal.reference"
+            class="min-h-[44px] w-full mt-1 bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-900 dark:text-gray-100 rounded-xl px-3 py-2 text-sm" />
+        </label>
+        <p v-if="newExpenseModal.error" class="text-sm text-red-600 dark:text-red-400">{{ newExpenseModal.error }}</p>
+      </div>
+      <template #footer>
+        <div class="flex gap-2">
+          <AppButton variant="ghost" class="flex-1" @click="newExpenseModal.open = false">{{ t('backoffice.finance.cancel') }}</AppButton>
+          <AppButton class="flex-1" :loading="newExpenseModal.saving" @click="confirmNewExpense">
+            {{ t('backoffice.finance.expenses.newExpense.confirm') }}
+          </AppButton>
+        </div>
+      </template>
+    </AppModal>
 
   </div>
 </template>

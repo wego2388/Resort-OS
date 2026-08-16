@@ -13,7 +13,7 @@ from app.core.config import settings
 from app.modules.finance import crud
 from app.modules.finance.models import (
     AccountingPeriod, BankAccount, BankStatementLine, CashierShift, Check, CostCenter, ETAInvoice,
-    ExchangeRate, Folio, FolioCharge, JournalEntry, Payment,
+    ExchangeRate, Expense, Folio, FolioCharge, JournalEntry, Payment,
 )
 from app.modules.finance.schemas import (
     ActiveShiftSummary, ActiveShiftsResponse,
@@ -24,7 +24,8 @@ from app.modules.finance.schemas import (
     ConditionalDiscountCreate,
     ForeignCurrencySummary,
     CostCenterCreate,
-    CostCenterReport, CostCenterReportLine, DepreciationRunResult, ExchangeRateCreate, FolioChargeCreate,
+    CostCenterReport, CostCenterReportLine, DepreciationRunResult, ExchangeRateCreate, ExpenseCreate,
+    ExpenseRead, FolioChargeCreate,
     FolioCreate,
     IncomeStatementLine, IncomeStatementReport,
     JournalEntryCreate, JournalLineCreate, PaymentChannelCreate, PaymentChannelUpdate, PaymentCreate,
@@ -1259,6 +1260,74 @@ def post_journal_entry(db: Session, data: JournalEntryCreate, user_id: int) -> J
     db.commit()
     db.refresh(entry)
     return entry
+
+
+def record_expense(db: Session, branch_id: int, data: ExpenseCreate, recorded_by: int) -> Expense:
+    """سند مصروفات حقيقي (2026-08-16، طلب Mohamed صراحةً) — بديل القيد
+    اليدوي العام (بلا فئة/تتبّع) اللي كان الخيار الوحيد قبل كده. الفئة هي
+    اختيار expense_account_id نفسه (حساب 5xxx). يرحّل Dr. حساب المصروف /
+    Cr. حساب التسوية (كاش/بنك)، بنفس مسار post_simple_revenue_journal
+    الموحّد (strict=True — فشل تجهيز الحساب لازم يظهر بوضوح للمحاسب، مش
+    يتبلع بصمت زي مسارات البيع التلقائية)."""
+    validate_period_open(db, branch_id, data.expense_date)
+
+    expense_account = crud.get_account(db, data.expense_account_id)
+    if not expense_account or expense_account.branch_id != branch_id:
+        raise ValueError(f"حساب المصروف {data.expense_account_id} غير موجود في هذا الفرع")
+    if expense_account.account_type != "expense":
+        raise ValueError(f"الحساب «{expense_account.name}» ليس حساب مصروفات")
+    if not expense_account.is_active:
+        raise ValueError(f"الحساب «{expense_account.name}» معطّل")
+
+    settlement_account = crud.get_account(db, data.settlement_account_id)
+    if not settlement_account or settlement_account.branch_id != branch_id:
+        raise ValueError(f"حساب التسوية {data.settlement_account_id} غير موجود في هذا الفرع")
+    if settlement_account.account_type != "asset":
+        raise ValueError(f"حساب التسوية «{settlement_account.name}» لازم يكون حساب أصول")
+    if not settlement_account.is_active:
+        raise ValueError(f"حساب التسوية «{settlement_account.name}» معطّل")
+
+    cost_center_code = None
+    if data.cost_center_id:
+        cc = crud.get_cost_center(db, data.cost_center_id)
+        if not cc or cc.branch_id != branch_id:
+            raise ValueError(f"مركز التكلفة {data.cost_center_id} غير موجود في هذا الفرع")
+        cost_center_code = cc.code
+
+    entry = post_simple_revenue_journal(
+        db, branch_id, data.expense_date,
+        debit_account_code=expense_account.code,
+        credit_account_code=settlement_account.code,
+        amount=data.amount,
+        reference=data.reference or f"EXP-{data.expense_date.isoformat()}",
+        description=data.description,
+        source="manual_expense",
+        source_id=None,
+        created_by=recorded_by,
+        cost_center_code=cost_center_code,
+        commit_cost_centers=False,
+        strict=True,
+    )
+    expense = crud.create_expense(db, branch_id, data, journal_entry_id=entry.id, recorded_by=recorded_by)
+    db.commit()
+    db.refresh(expense)
+    return expense
+
+
+def list_expenses(
+    db: Session, branch_id: int,
+    date_from: Optional[date] = None, date_to: Optional[date] = None,
+    page: int = 1, size: int = 30,
+) -> tuple[list[dict], int]:
+    items, total = crud.list_expenses(db, branch_id, date_from, date_to, page, size)
+    enriched = []
+    for exp in items:
+        row = ExpenseRead.model_validate(exp).model_dump()
+        row["expense_account_code"] = exp.expense_account.code if exp.expense_account else ""
+        row["expense_account_name"] = exp.expense_account.name if exp.expense_account else ""
+        row["settlement_account_code"] = exp.settlement_account.code if exp.settlement_account else ""
+        enriched.append(row)
+    return enriched, total
 
 
 def post_simple_revenue_journal(

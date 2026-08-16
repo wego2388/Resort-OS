@@ -1064,6 +1064,30 @@ def get_available_weeks(
     }
 
 
+def get_units_availability(
+    db: Session, branch_id: int, unit_type: str, check_in, check_out,
+) -> list[dict]:
+    """خريطة الوحدات لفترة معيّنة — كل وحدة من النوع المطلوب مع is_available
+    (مش تحت صيانة ومفيش زيارة scheduled/active متقاطعة معاها في الفترة دي).
+    2026-08-16: كان مفيش أي طريقة للموظف يشوف/يختار وحدة فعلية وقت تأكيد
+    زيارة — الاختيار كان أوتوماتيكي بالكامل (find_available_unit). الشاشة
+    دي بتوفّر البيانات لخريطة بصرية حقيقية بدل التخصيص الأعمى."""
+    units = crud.list_units(db, branch_id, unit_type=unit_type)
+    return [
+        {
+            "id": unit.id,
+            "unit_number": unit.unit_number,
+            "unit_type": unit.unit_type,
+            "status": unit.status,
+            "is_available": (
+                unit.status != "maintenance"
+                and not crud.has_overlapping_visit(db, unit.id, check_in, check_out)
+            ),
+        }
+        for unit in units
+    ]
+
+
 def get_upcoming_visits(db: Session, branch_id: int, days: int = 30) -> list[dict]:
     from app.core.config import settings  # noqa: PLC0415
     from app.resort_os.timeshare_engine import find_next_visit  # noqa: PLC0415
@@ -1476,10 +1500,32 @@ def create_visit(db: Session, data: TimeshareVisitCreate) -> TimeshareVisit:
         return _create_entitlement_pair_visit(db, contract, data, nights)
 
     if contract.unit_id:
+        # عقد بوحدة ثابتة (متعاقد عليها بالاسم) — الاختيار اليدوي ميتجاهلش
+        # هنا، ده مش اختيار حر زي العقد العائم. تغيير وحدة عقد ثابت عملية
+        # مقصودة منفصلة (reassign_contract_unit فوق)، مش جزء من تأكيد زيارة.
+        if data.unit_id and data.unit_id != contract.unit_id:
+            raise ValueError(
+                f"العقد {contract.contract_number} مربوط بوحدة ثابتة — "
+                "لتغييرها استخدم إعادة تخصيص الوحدة على العقد نفسه، مش تأكيد الزيارة"
+            )
         candidate_id = contract.unit_id
+    elif data.unit_id:
+        # عقد عائم واختار الموظف وحدة معيّنة من خريطة الوحدات (2026-08-16)
+        # بدل الاختيار الأوتوماتيكي — نوع/فرع الوحدة يتأكدوا هنا، وباقي
+        # الفحوصات (تعارض/صيانة) بتحصل بعد القفل تحت زي أي مسار تاني بالظبط.
+        manual_unit = crud.get_unit(db, data.unit_id)
+        if not manual_unit or manual_unit.branch_id != contract.branch_id:
+            raise ValueError(f"الوحدة {data.unit_id} غير موجودة في هذا الفرع")
+        if manual_unit.unit_type != contract.room_type:
+            raise ValueError(
+                f"الوحدة {manual_unit.unit_number} نوعها {manual_unit.unit_type} "
+                f"لا يطابق نوع عقد {contract.contract_number} ({contract.room_type})"
+            )
+        candidate_id = manual_unit.id
     else:
-        # عقد عائم — ابحث عن أي وحدة متاحة من نفس نوع الغرفة (قبل القفل، مجرد
-        # ترشيح أولي) ثم اقفلها وأعد التحقق تحت الحماية فعليًا تحت.
+        # عقد عائم بدون اختيار يدوي — ابحث عن أي وحدة متاحة من نفس نوع
+        # الغرفة (قبل القفل، مجرد ترشيح أولي) ثم اقفلها وأعد التحقق تحت
+        # الحماية فعليًا تحت.
         found = crud.find_available_unit(db, contract.branch_id, contract.room_type, data.check_in, data.check_out)
         if not found:
             raise ValueError(f"لا توجد وحدة متاحة من نوع {contract.room_type} في الفترة المطلوبة")
@@ -1954,10 +2000,12 @@ def _notify_admin_new_visit_request(contract: "TimeshareContract", req: "Timesha
 
 def approve_visit_request(
     db: Session, request_id: int, check_in, check_out, approved_by: int,
+    unit_id: Optional[int] = None,
 ) -> TimeshareVisitRequest:
     """موافقة مدير — بيحدد التواريخ الفعلية بنفسه (مش بالضرورة نفس تفضيل
     العميل)، وبتمرّ بنفس create_visit الموجودة فوق حرفيًا — صفر تكرار
-    لمنطق منع التعارض/التجميد/انتهاء العقد."""
+    لمنطق منع التعارض/التجميد/انتهاء العقد. unit_id: اختيار يدوي من خريطة
+    الوحدات (2026-08-16) — لعقد عائم بس، create_visit بترفضه لعقد ثابت."""
     req = crud.get_visit_request(db, request_id)
     if not req:
         raise ValueError(f"طلب الزيارة {request_id} غير موجود")
@@ -1967,6 +2015,7 @@ def approve_visit_request(
     visit = create_visit(db, TimeshareVisitCreate(
         branch_id=req.branch_id, contract_id=req.contract_id,
         check_in=check_in, check_out=check_out, notes=req.notes,
+        unit_id=unit_id,
     ))
     req.status = "approved"
     req.reviewed_by = approved_by

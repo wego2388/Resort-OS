@@ -92,6 +92,62 @@ const pendingOrderStatus = ref<'held' | 'open' | null>(null)
 const pendingOrderSummary = ref<{ discount_amount: number | string; total: number | string } | null>(null)
 const showDiscountPinGuard = ref(false)
 
+// 2026-08-16: إضافة أصناف لفاتورة مفتوحة بالفعل — فتح طاولة مشغولة كان
+// بيوديك لعرض/دفع/إلغاء بس (DiningOrderDetailModal)، مفيش أي طريقة تضيف
+// صنف تاني على نفس الفاتورة غير من غير SSH على السيرفر. الباك إند
+// (dining.services.add_items_to_order، POST /dining/orders/{id}/items)
+// كان جاهز بالكامل من الأول ويدعم held/open/in_kitchen/served — الفجوة
+// كانت في الفرونت إند بس. عمدًا مش pendingOrderId (ده بيقفل السلة عبر
+// cartLocked لخصم الوردية القديم) — appendToOrderId منفصل تمامًا فالكاشير
+// يقدر يبني سلة جديدة عادي زي أي طلب جديد.
+const appendToOrderId = ref<number | null>(null)
+const appendToOrderNumber = ref('')
+
+function openAddItemsToOrder(order: {
+  id: number; order_number: string; outlet_id: number
+  order_type: OrderType; table_id?: number | null
+}) {
+  selectedOrderId.value = null
+  cart.value = []
+  appendToOrderId.value = order.id
+  appendToOrderNumber.value = order.order_number
+  selectedOutletId.value = order.outlet_id
+  orderType.value = order.order_type
+  selectedTableId.value = order.order_type === 'dine_in' ? (order.table_id ?? null) : null
+  workspace.value = 'order'
+  loadMenu()
+}
+
+async function sendAppendedItems() {
+  if (appendToOrderId.value === null || !hasItems.value || submitting.value) return
+  submitting.value = true
+  try {
+    await api.post(ENDPOINTS.dining.orderItems(appendToOrderId.value), cart.value.map(line => ({
+      item_id: line.itemId,
+      variant_id: line.variantId ?? undefined,
+      quantity: line.quantity,
+      notes: line.notes || undefined,
+      extra_ids: line.extraIds,
+      extra_texts: line.extraTexts,
+    })))
+    toast.success(t('backoffice.pos.appendItems.success', { number: appendToOrderNumber.value }))
+    resetDraft()
+    workspace.value = 'tables'
+    await Promise.all([loadTables(), loadActiveOrders()])
+  } catch (e: any) {
+    const detail = e?.response?.data?.detail
+    const message = typeof detail === 'string' ? detail : typeof detail?.message === 'string' ? detail.message : ''
+    toast.error(message || t('backoffice.pos.appendItems.error'))
+  } finally {
+    submitting.value = false
+  }
+}
+
+function cancelAppendItems() {
+  resetDraft()
+  workspace.value = 'tables'
+}
+
 const selectedOrderId = ref<number | null>(null)
 const directPaymentOrder = ref<DiningOrderDetail | null>(null)
 const paymentOpen = ref(false)
@@ -442,6 +498,8 @@ function resetDraft() {
   pendingOrderNumber.value = ''
   pendingOrderStatus.value = null
   pendingOrderSummary.value = null
+  appendToOrderId.value = null
+  appendToOrderNumber.value = ''
   mobileCartOpen.value = false
   guestName.value = ''
   guestPhone.value = ''
@@ -1102,6 +1160,7 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
           :online="isOnline"
           :branch-id="branchId"
           :selected-contract-id="selectedContractId"
+          :append-order-number="appendToOrderNumber"
           @update:covers="covers = $event"
           @update:note="extraNote = $event"
           @quantity="adjustQuantity"
@@ -1112,6 +1171,8 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
           @select-hotel="onSelectHotel"
           @send="sendOrderToKitchen"
           @pay="openDirectPayment"
+          @append="sendAppendedItems"
+          @cancel-append="cancelAppendItems"
         />
 
         <button
@@ -1154,6 +1215,7 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
                 :online="isOnline"
                 :branch-id="branchId"
                 :selected-contract-id="selectedContractId"
+                :append-order-number="appendToOrderNumber"
                 @update:covers="covers = $event"
                 @update:note="extraNote = $event"
                 @quantity="adjustQuantity"
@@ -1164,6 +1226,8 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
                 @select-hotel="onSelectHotel"
                 @send="sendOrderToKitchen"
                 @pay="openDirectPayment"
+                @append="sendAppendedItems"
+                @cancel-append="cancelAppendItems"
               />
             </div>
           </div>
@@ -1182,6 +1246,7 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
       :branch-id="branchId"
       @close="onOrderDetailClosed"
       @changed="loadActiveOrders(); loadTables()"
+      @add-items="openAddItemsToOrder"
     />
     <POSCustomerModal
       :open="customerModalOpen"

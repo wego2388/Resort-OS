@@ -139,6 +139,31 @@ class PurchaseOrderRead(BaseModel):
     total_amount: Decimal; notes: Optional[str]
     items: list[PurchaseOrderItemRead] = []
     created_at: datetime; updated_at: datetime
+    # 2026-08-16: راجع services.pay_purchase_order
+    amount_paid: Decimal = Decimal("0")
+    payment_status: str = "unpaid"
+
+
+# ── Supplier Payments (2026-08-16) ──────────────────────────────────────
+
+class SupplierPaymentCreate(BaseModel):
+    """سند دفع لمورد مقابل أمر شراء مُستلَم — راجع services.pay_purchase_order
+    لقواعد التحقق الكاملة (لازم PO يكون received، والمبلغ الكلي المدفوع
+    (القديم + ده) ميعديش total_amount)."""
+    amount:                 Decimal = Field(..., gt=0)
+    settlement_account_id:  int
+    reference:              Optional[str] = Field(None, max_length=100)
+    notes:                  Optional[str] = Field(None, max_length=500)
+    paid_at:                date
+
+
+class SupplierPaymentRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int; branch_id: int; supplier_id: int; purchase_order_id: int
+    amount: Decimal; settlement_account_id: int
+    reference: Optional[str]; notes: Optional[str]
+    paid_at: date; journal_entry_id: int; recorded_by: int
+    created_at: datetime
 
 
 # ── Supplier ──────────────────────────────────────────────────────────

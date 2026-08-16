@@ -283,6 +283,10 @@ class TimeshareVisitCreate(BaseModel):
     check_out:   date
     booking_id:  Optional[int] = None
     notes:       Optional[str] = None
+    # 2026-08-16: اختيار يدوي لوحدة فعلية من خريطة الوحدات — بس لعقد عائم
+    # (contract.unit_id فاضي)؛ عقد بوحدة ثابتة بيتجاهل الاختيار اليدوي
+    # ويستخدم وحدته المتعاقد عليها دايمًا (راجع services.create_visit).
+    unit_id:     Optional[int] = None
 
 
 class TimeshareVisitUpdate(BaseModel):
@@ -441,14 +445,33 @@ class TimeshareVisitRequestRead(BaseModel):
     customer_name:  Optional[str] = None
     customer_phone: Optional[str] = None
     contract_number: Optional[str] = None
+    # 2026-08-16: عشان الشاشة الإدارية تقدر تعرض خريطة الوحدات الصح وقت
+    # الموافقة — room_type لازم يفلتر بيه، contract_unit_id لو موجود يبقى
+    # العقد بوحدة ثابتة (الاختيار اليدوي متعطّل)، unit_capacity=6 يبقى
+    # Family Compound (تخصيص زوج أوتوماتيكي، برضو من غير اختيار يدوي).
+    room_type:         Optional[str] = None
+    contract_unit_id:  Optional[int] = None
+    unit_capacity:     Optional[int] = None
+
+
+class TimeshareUnitAvailabilityRead(BaseModel):
+    """صف واحد في خريطة الوحدات — راجع services.get_units_availability."""
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    unit_number: str
+    unit_type: str
+    status: str
+    is_available: bool
 
 
 class TimeshareVisitRequestApprove(BaseModel):
     """موافقة مدير — هو اللي بيحدد التواريخ الفعلية (طلب Mohamed الصريح:
     "المسؤول هو اللي يحدد الأسبوع")، مش بالضرورة نفس تواريخ العميل
-    المفضّلة. بتمرّ بنفس services.create_visit الموجودة (منع تعارض/تجميد)."""
+    المفضّلة. بتمرّ بنفس services.create_visit الموجودة (منع تعارض/تجميد).
+    unit_id: اختيار يدوي من خريطة الوحدات (2026-08-16) — لعقد عائم بس."""
     check_in:  date
     check_out: date
+    unit_id:   Optional[int] = None
 
 
 class TimeshareVisitRequestReject(BaseModel):

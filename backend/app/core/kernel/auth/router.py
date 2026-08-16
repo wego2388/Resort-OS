@@ -213,6 +213,11 @@ _STEP_UP_PURPOSES = frozenset({
     # admin_bootstrap recover الـCLI.
     "user_unlock",
     "user_force_2fa_reset",
+    # 2026-08-16 — بديل ويب لـ`admin_bootstrap recover` الـCLI: باسورد+2FA
+    # مؤقتين جداد لموظف عادي نسي/غلط بيانات دخوله. أوسع من
+    # user_force_2fa_reset (بتلمس الباسورد كمان)، فمحتاجة نفس مستوى
+    # reason+step-up بالظبط — راجع step_up.staff_credentials_reset_scope.
+    "staff_credentials_reset",
     "admin_session_revoke",
 })
 
@@ -452,6 +457,22 @@ class _UserForce2FAResetIntent(BaseModel):
         return normalized
 
 
+class _StaffCredentialsResetIntent(BaseModel):
+    """2026-08-16: باسورد+2FA مؤقتين جداد لموظف عادي — نفس شكل
+    _UserForce2FAResetIntent بالظبط (user_id + reason)."""
+    model_config = ConfigDict(extra="forbid")
+    user_id: int = Field(gt=0, strict=True)
+    reason: str = Field(min_length=3, max_length=500)
+
+    @field_validator("reason")
+    @classmethod
+    def _normalize_reason(cls, value: str) -> str:
+        normalized = value.strip()
+        if len(normalized) < 3:
+            raise ValueError("Reason must contain at least 3 non-whitespace characters")
+        return normalized
+
+
 _STEP_UP_INTENT_MODELS: dict[str, type[BaseModel]] = {
     "user_provision": _UserProvisionIntent,
     "user_role_update": _UserRoleUpdateIntent,
@@ -464,6 +485,7 @@ _STEP_UP_INTENT_MODELS: dict[str, type[BaseModel]] = {
     "dining_refund": _DiningRefundIntent,
     "user_unlock": _UserUnlockIntent,
     "user_force_2fa_reset": _UserForce2FAResetIntent,
+    "staff_credentials_reset": _StaffCredentialsResetIntent,
     "admin_session_revoke": _AdminSessionRevokeIntent,
 }
 
@@ -867,6 +889,10 @@ def build_auth_router(
             scope_hash = step_up_scopes.user_unlock_scope(user_id=intent.user_id)
         elif payload.purpose == "user_force_2fa_reset":
             scope_hash = step_up_scopes.user_force_2fa_reset_scope(
+                user_id=intent.user_id, reason=intent.reason,
+            )
+        elif payload.purpose == "staff_credentials_reset":
+            scope_hash = step_up_scopes.staff_credentials_reset_scope(
                 user_id=intent.user_id, reason=intent.reason,
             )
         else:  # admin_session_revoke

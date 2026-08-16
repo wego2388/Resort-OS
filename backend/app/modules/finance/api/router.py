@@ -35,7 +35,7 @@ from app.modules.finance.schemas import (
     CostCenterCreate, CostCenterRead, CostCenterReport,
     DepreciationRunRequest, DepreciationRunResult,
     DiscountCalculateRequest, ETAInvoiceRead, ETAInvoiceSubmitRequest,
-    ExchangeRateCreate, ExchangeRateRead,
+    ExchangeRateCreate, ExchangeRateRead, ExpenseCreate, ExpenseRead,
     FolioChargeCreate, FolioChargeRead,
     FolioCreate, FolioRead, IncomeStatementReport, JournalEntryCreate, JournalEntryRead,
     PaymentChannelCreate, PaymentChannelRead, PaymentChannelUpdate,
@@ -722,6 +722,43 @@ def get_journal_entry(entry_id: int, db: DbDep, _=Depends(get_finance_user)):
     if not entry:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Journal entry {entry_id} not found")
     return JournalEntryRead.model_validate(entry)
+
+
+# ── Expenses (2026-08-16) ─────────────────────────────────────────────
+# سند مصروفات حقيقي بفئة (حساب 5xxx) — راجع services.record_expense.
+
+@router.post("/finance/expenses", response_model=ExpenseRead, status_code=status.HTTP_201_CREATED)
+def create_expense(
+    data: ExpenseCreate, db: DbDep, branch_id: int = Query(...),
+    user=Depends(get_finance_user),
+):
+    try:
+        expense = services.record_expense(db, branch_id, data, recorded_by=user.id)
+    except services.FinancialConfigurationError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {
+            "code": "FINANCIAL_CONFIGURATION_ERROR", "message": str(exc),
+        })
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    row = ExpenseRead.model_validate(expense).model_dump()
+    row["expense_account_code"] = expense.expense_account.code if expense.expense_account else ""
+    row["expense_account_name"] = expense.expense_account.name if expense.expense_account else ""
+    row["settlement_account_code"] = expense.settlement_account.code if expense.settlement_account else ""
+    return row
+
+
+@router.get("/finance/expenses", response_model=PaginatedResponse)
+def list_expenses(
+    db: DbDep,
+    _=Depends(get_finance_user),
+    branch_id: int = Query(...),
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+    page: int = Query(1, ge=1),
+    size: int = Query(30, ge=1, le=200),
+):
+    items, total = services.list_expenses(db, branch_id, date_from, date_to, page, size)
+    return PaginatedResponse(total=total, page=page, size=size, items=items)
 
 
 # ── Revenue Audit Log ────────────────────────────────────────────────

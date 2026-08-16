@@ -3783,6 +3783,7 @@
       "confirmDeactivate": "Disable {name}'s account and invalidate its sessions",
       "confirmUnlock": "Unlock {name}'s account after failed login attempts",
       "confirmForce2FAReset": "Reset 2FA for {name} — they'll need to re-enroll a new device on next login",
+      "confirmResetCredentials": "Reset the password and 2FA for {name} entirely — they'll be locked out until they use the new credentials",
       "created": "Account created; deliver the onboarding credentials now.",
       "activated": "Account activated.",
       "deactivated": "Account disabled.",
@@ -3791,6 +3792,8 @@
       "unlocked": "Account unlocked.",
       "force2FAReset": "Reset 2FA",
       "force2FAResetDone": "2FA reset — the account will need to re-enroll a new device.",
+      "resetCredentials": "Reset login credentials",
+      "resetCredentialsDone": "New temporary password generated — hand it to the employee securely (WhatsApp/Telegram directly, not plain email).",
       "sessions": "Sessions",
       "sessionsModalTitle": "{name}'s active sessions",
       "sessionsLoadError": "Could not load sessions.",
@@ -4044,6 +4047,13 @@
       "clear": "Clear",
       "sendToKitchen": "Send to kitchen",
       "close": "Close",
+      "appendItems": {
+        "notice": "Adding new items to open bill #{number}",
+        "confirm": "Add to bill",
+        "cancel": "Back",
+        "success": "Items added to bill #{number} ✓",
+        "error": "Could not add the items to the bill"
+      },
       "noActiveOrders": "No active orders right now",
       "tableFilterOnly": "Table {number} only",
       "tableLabel": "Table {number}",
@@ -4282,6 +4292,7 @@
         "paymentMethod": "Payment method",
         "markServed": "Mark served",
         "collectPayment": "Collect payment",
+        "addItems": "Add items to the bill",
         "voidPinTitle": "Void item approval",
         "voidPinMessage": "Voiding an order item requires manager PIN approval.",
         "refundStepUpDescription": "A post-payment refund is a real financial reversal — confirm your password and enter a reason.",
@@ -5605,7 +5616,25 @@
         "shifts": "Shifts",
         "exchangeRates": "Exchange Rates",
         "journal": "Journal",
-        "paymentChannels": "Payment Channels"
+        "paymentChannels": "Payment Channels",
+        "expenses": "Expenses"
+      },
+      "expenses": {
+        "loadError": "Failed to load expenses",
+        "empty": "No expenses recorded in this period",
+        "category": "Category",
+        "settlementAccount": "Settlement account",
+        "amount": "Amount",
+        "newExpense": {
+          "btnLabel": "New expense",
+          "title": "Record a new expense",
+          "confirm": "Record expense",
+          "accountsRequired": "Choose the expense account and settlement account",
+          "amountRequired": "Enter a valid amount",
+          "descriptionRequired": "Description is required",
+          "success": "Expense recorded ✓",
+          "error": "Could not record the expense"
+        }
       },
       "paymentChannels": {
         "description": "Every collection method (cash drawer, Visa, Vodafone Cash...) is tied to an independent GL account — disabling instead of deleting preserves every transaction's history.",
@@ -5658,7 +5687,25 @@
         "credit": "Credit",
         "total": "Total",
         "page": "Page {page} of {total}",
-        "loadError": "Failed to load journal"
+        "loadError": "Failed to load journal",
+        "newEntry": {
+          "btnLabel": "New manual entry",
+          "title": "New manual journal entry",
+          "entryDate": "Entry date",
+          "reference": "Reference",
+          "referencePlaceholder": "e.g. adjustment-2026-001",
+          "description": "Description",
+          "selectAccount": "Select an account...",
+          "addLine": "Add line",
+          "totalDebit": "Total debit",
+          "totalCredit": "Total credit",
+          "confirm": "Post entry",
+          "validationError": "Reference and description are required",
+          "lineValidationError": "Every line needs an account and an amount (debit or credit)",
+          "unbalancedError": "Entry is unbalanced — total debit must equal total credit",
+          "success": "Entry posted ✓",
+          "error": "Could not post the entry"
+        }
       },
       "fx": {
         "addTitle": "Add Exchange Rate",
@@ -6341,6 +6388,17 @@
         "statusUpdated": "Visit status updated",
         "statusError": "Failed to update status"
       },
+      "unitPicker": {
+        "title": "Choose a unit (optional — auto-assigned if not picked)",
+        "loading": "Loading unit map...",
+        "loadError": "Could not load the unit map",
+        "noUnits": "No units of this type",
+        "fixedUnitHint": "This contract is tied to a fixed unit — it will be used automatically",
+        "pickDatesFirst": "Pick check-in and check-out dates first to see the unit map",
+        "maintenance": "Maintenance",
+        "occupied": "Booked",
+        "autoAssignHint": "If nothing is picked, the first available unit will be assigned automatically"
+      },
       "confirmStatusChange": "Confirm status change from {from} to {to}?",
       "loadingRequests": "Loading visit requests...",
       "loadingTickets": "Loading support tickets...",
@@ -6515,6 +6573,23 @@
       "suppliers": "Suppliers",
       "manualAdjustment": "Manual adjustment",
       "recordReceipt": "Record stock receipt",
+      "supplierPayables": "Supplier payables",
+      "payables": {
+        "orderNumber": "Order #",
+        "supplier": "Supplier",
+        "total": "Total",
+        "paid": "Paid",
+        "remaining": "Remaining",
+        "pay": "Pay",
+        "empty": "No outstanding supplier payables",
+        "payTitle": "Record payment — order {number}",
+        "amount": "Amount",
+        "settlementAccount": "Settlement account (cash/bank)",
+        "selectAccount": "Select an account...",
+        "reference": "Reference (optional)",
+        "notes": "Notes (optional)",
+        "confirmPay": "Record payment"
+      },
       "newProduct": "New product",
       "searchPlaceholder": "Search for a product or SKU...",
       "column": {
@@ -6604,6 +6679,11 @@
         "addAtLeastOneLine": "Add at least one item with a quantity greater than zero",
         "receiptRecorded": "Stock receipt recorded and inventory updated",
         "receiptError": "Couldn't record the receipt",
+        "loadPayablesError": "Could not load supplier payables",
+        "selectSettlementAccount": "Select the settlement account",
+        "enterValidAmount": "Enter a valid amount",
+        "paymentRecorded": "Payment recorded ✓",
+        "paymentError": "Could not record the payment",
         "selectProduct": "Select the product",
         "enterAdjustQty": "Enter the adjustment quantity (positive = add, negative = deduct)",
         "adjustmentRecorded": "Stock adjustment recorded",

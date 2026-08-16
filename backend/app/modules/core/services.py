@@ -813,6 +813,90 @@ def force_reset_2fa(
     }
 
 
+def reset_staff_credentials(
+    db: Session, user_id: int, reset_by: int, reason: str,
+    step_up_public_reference: Optional[str] = None,
+    assurance_method: Optional[str] = None,
+) -> dict:
+    """يولّد باسورد مؤقت جديد + رابط تفعيل 2FA جديد لموظف عادي نسي/غلط
+    بيانات دخوله — بديل ويب آمن لـ`admin_bootstrap recover` الـCLI، اللي
+    كان قبل كده الطريقة الوحيدة (لازم SSH على السيرفر فعليًا). مقصور
+    عمدًا على الأدوار العادية: super_admin/owner يفضلوا CLI-only بنفس
+    القيد اللي `provision_account_bootstrap`'s `create` بيفرضه فعليًا
+    (`BOOTSTRAP_CREATABLE_ROLES`) — جلسة سوبر أدمن مخترقة على الويب
+    ميتقدرش تولّد بيانات دخول لحساب سوبر أدمن/مالك تاني."""
+    from app.core.deps import revoke_user_tokens  # noqa: PLC0415
+    from app.core.deps import MANDATORY_2FA_ROLES  # noqa: PLC0415
+    from app.core.kernel.auth.repository import delete_refresh_tokens_for_user  # noqa: PLC0415
+    from app.core.kernel.auth.service import AuthService, BOOTSTRAP_CREATABLE_ROLES  # noqa: PLC0415
+    from app.core.kernel.models.user import TwoFactorRecoveryCode  # noqa: PLC0415
+    from app.core.kernel.security import get_password_hash  # noqa: PLC0415
+
+    user = crud.lock_user_for_update(db, user_id)
+    if not user:
+        raise UserNotFoundError(f"المستخدم {user_id} غير موجود")
+    if user.role in BOOTSTRAP_CREATABLE_ROLES:
+        raise PermissionError(
+            "حسابات super_admin/owner لا تُعاد تعيينها عبر الويب — "
+            "استخدم `python -m app.admin_bootstrap recover` من على "
+            "السيرفر مباشرة."
+        )
+
+    temporary_password = AuthService._new_temporary_password()
+    requires_enrollment = user.role in MANDATORY_2FA_ROLES
+    enrollment_token = secrets.token_urlsafe(32) if requires_enrollment else None
+    enrollment_expires_at = (
+        datetime.now(timezone.utc) + timedelta(
+            minutes=settings.TWO_FACTOR_ENROLLMENT_TOKEN_TTL_MINUTES,
+        )
+        if requires_enrollment else None
+    )
+
+    user.password_hash = get_password_hash(temporary_password)
+    user.must_change_password = True
+    user.failed_login_attempts = 0
+    user.account_locked_until = None
+    user.two_factor_enabled = False
+    user.two_factor_secret = None
+    user.two_factor_last_used_step = None
+    user.two_factor_bootstrap_required = requires_enrollment
+    user.two_factor_enrollment_token_hash = (
+        hashlib.sha256(enrollment_token.encode()).hexdigest()
+        if enrollment_token else None
+    )
+    user.two_factor_enrollment_expires_at = enrollment_expires_at
+    db.query(TwoFactorRecoveryCode).filter(
+        TwoFactorRecoveryCode.user_id == user.id,
+    ).delete(synchronize_session=False)
+    delete_refresh_tokens_for_user(db, user.id)
+
+    from app.modules.core.crud import create_audit_log  # noqa: PLC0415
+    from app.modules.core.schemas import AuditLogCreate  # noqa: PLC0415
+    create_audit_log(db, AuditLogCreate(
+        user_id=reset_by, branch_id=None, action="reset_staff_credentials",
+        entity_type="user", entity_id=user.id,
+        new_data=json.dumps({
+            "requires_2fa_enrollment": requires_enrollment,
+            **_step_up_audit_context(
+                reason=reason,
+                step_up_public_reference=step_up_public_reference,
+                assurance_method=assurance_method,
+            ),
+        }),
+    ))
+    db.commit()
+    # التوكنات الحالية لازم تتجدد بعد تغيير أمني زي ده — نفس نمط
+    # force_reset_2fa/update_user_role.
+    revoke_user_tokens(user.id)
+    db.refresh(user)
+    return {
+        "user": user,
+        "temporary_password": temporary_password,
+        "enrollment_token": enrollment_token,
+        "enrollment_expires_at": enrollment_expires_at,
+    }
+
+
 # ─────────────────────── Settings ────────────────────────────────────
 
 def get_setting_value(

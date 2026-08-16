@@ -15,7 +15,8 @@ from app.modules.inventory import crud, services
 from app.modules.inventory.schemas import (
     CategoryCreate, CategoryRead, ProductCreate, ProductRead, ProductUpdate,
     PurchaseOrderCreate, PurchaseOrderRead, ReceiveItemsRequest,
-    StockMovementCreate, StockMovementRead, SupplierCreate, SupplierRead, SupplierUpdate,
+    StockMovementCreate, StockMovementRead, SupplierCreate, SupplierPaymentCreate,
+    SupplierPaymentRead, SupplierRead, SupplierUpdate,
     WarehouseCreate, WarehouseRead,
     PurchaseRequestCreate, PurchaseRequestRead,
     ApproveRequest, ConvertToPurchaseOrderRequest, RejectRequest,
@@ -250,6 +251,36 @@ def receive_purchase_order(po_id: int, req: ReceiveItemsRequest, db: DbDep,
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+# ── Supplier Payments (2026-08-16) ────────────────────────────────────
+# سند دفع لمورد يقفل حلقة الذمم الدائنة اللي receive_purchase_order فتحها
+# (Dr.1200/Cr.2200 وقت الاستلام). راجع services.pay_purchase_order.
+
+@router.post("/inventory/purchase-orders/{po_id}/pay", response_model=PurchaseOrderRead)
+def pay_purchase_order(po_id: int, data: SupplierPaymentCreate, db: DbDep,
+                        user=Depends(get_manager_user)):
+    po = crud.get_purchase_order(db, po_id)
+    if not po:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "أمر الشراء غير موجود")
+    _assert_inventory_branch(db, user, po.branch_id, "تسجيل دفعة لمورد")
+    try:
+        return services.pay_purchase_order(db, po_id, data, recorded_by=user.id)
+    except FinancialConfigurationError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {
+            "code": "FINANCIAL_CONFIGURATION_ERROR", "message": str(exc),
+        })
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+@router.get("/inventory/purchase-orders/{po_id}/payments", response_model=list[SupplierPaymentRead])
+def list_supplier_payments(po_id: int, db: DbDep, user=Depends(get_manager_user)):
+    po = crud.get_purchase_order(db, po_id)
+    if not po:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "أمر الشراء غير موجود")
+    _assert_inventory_branch(db, user, po.branch_id, "عرض دفعات مورد")
+    return crud.list_supplier_payments(db, po_id)
 
 
 # ── Purchase Request Workflow ─────────────────────────────────────────

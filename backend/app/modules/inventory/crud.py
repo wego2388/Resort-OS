@@ -13,11 +13,12 @@ from app.resort_os.timezone_utils import local_now
 from app.modules.inventory.models import (
     Category, Product, PurchaseOrder, PurchaseOrderItem,
     PurchaseRequest, PurchaseRequestItem, PurchaseApproval,
-    StockCount, StockMovement, Supplier, Warehouse,
+    StockCount, StockMovement, Supplier, SupplierPayment, Warehouse,
 )
 from app.modules.inventory.schemas import (
     CategoryCreate, ProductCreate, ProductUpdate,
-    PurchaseOrderCreate, StockMovementCreate, SupplierCreate, SupplierUpdate, WarehouseCreate,
+    PurchaseOrderCreate, StockMovementCreate, SupplierCreate, SupplierPaymentCreate,
+    SupplierUpdate, WarehouseCreate,
 )
 
 
@@ -254,6 +255,32 @@ def _next_po_number(db: Session) -> str:
 
 def get_purchase_order(db: Session, po_id: int) -> Optional[PurchaseOrder]:
     return db.query(PurchaseOrder).filter(PurchaseOrder.id == po_id).first()
+
+
+# ── Supplier Payments (2026-08-16) ───────────────────────────────────────
+
+def create_supplier_payment(
+    db: Session, branch_id: int, supplier_id: int, po: PurchaseOrder,
+    data: SupplierPaymentCreate, journal_entry_id: int, recorded_by: int,
+) -> SupplierPayment:
+    payment = SupplierPayment(
+        branch_id=branch_id, supplier_id=supplier_id, purchase_order_id=po.id,
+        amount=data.amount, settlement_account_id=data.settlement_account_id,
+        reference=data.reference, notes=data.notes, paid_at=data.paid_at,
+        journal_entry_id=journal_entry_id, recorded_by=recorded_by,
+    )
+    db.add(payment)
+    db.flush()
+    return payment
+
+
+def list_supplier_payments(db: Session, purchase_order_id: int) -> list["SupplierPayment"]:
+    return (
+        db.query(SupplierPayment)
+        .filter(SupplierPayment.purchase_order_id == purchase_order_id)
+        .order_by(SupplierPayment.paid_at.desc(), SupplierPayment.id.desc())
+        .all()
+    )
 
 
 def list_purchase_orders(

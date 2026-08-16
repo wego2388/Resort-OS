@@ -2145,3 +2145,87 @@ class TestBankReconciliationServiceEdgeCases:
         assert summary.statement_balance == Decimal("0")
         assert summary.difference == Decimal("-2000.00")
         assert summary.is_reconciled is False
+
+
+class TestExpense:
+    """2026-08-16 — سند مصروفات حقيقي بفئة (طلب Mohamed صراحةً). الفئة هي
+    expense_account_id نفسه (حساب 5xxx)، مفيش taxonomy موازية."""
+
+    @pytest.fixture
+    def expense_accounts(self, db, branch):
+        from app.modules.finance.models import Account
+        rent = Account(branch_id=branch.id, code="5100", name="إيجار", account_type="expense")
+        cash = Account(branch_id=branch.id, code="1100", name="Cash", account_type="asset")
+        db.add_all([rent, cash]); db.commit()
+        return rent, cash
+
+    def test_record_expense_posts_balanced_journal(self, db, branch, expense_accounts):
+        from app.modules.finance.schemas import ExpenseCreate
+        rent, cash = expense_accounts
+
+        expense = services.record_expense(db, branch.id, ExpenseCreate(
+            expense_date=date(2026, 8, 16),
+            expense_account_id=rent.id, settlement_account_id=cash.id,
+            amount=Decimal("5000"), description="إيجار أغسطس 2026",
+        ), recorded_by=1)
+
+        assert expense.amount == Decimal("5000")
+        entry = crud.get_journal_entry(db, expense.journal_entry_id)
+        assert entry is not None
+        assert entry.source == "manual_expense"
+        total_debit = sum(l.debit for l in entry.lines)
+        total_credit = sum(l.credit for l in entry.lines)
+        assert total_debit == total_credit == Decimal("5000.00")
+        debit_line = next(l for l in entry.lines if l.debit > 0)
+        credit_line = next(l for l in entry.lines if l.credit > 0)
+        assert debit_line.account_id == rent.id
+        assert credit_line.account_id == cash.id
+
+    def test_expense_account_must_be_expense_type(self, db, branch, expense_accounts):
+        from app.modules.finance.models import Account
+        from app.modules.finance.schemas import ExpenseCreate
+        _, cash = expense_accounts
+        revenue = Account(branch_id=branch.id, code="4100", name="Revenue", account_type="revenue")
+        db.add(revenue); db.commit()
+
+        with pytest.raises(ValueError, match="ليس حساب مصروفات"):
+            services.record_expense(db, branch.id, ExpenseCreate(
+                expense_date=date(2026, 8, 16),
+                expense_account_id=revenue.id, settlement_account_id=cash.id,
+                amount=Decimal("100"), description="محاولة خاطئة",
+            ), recorded_by=1)
+
+    def test_settlement_account_must_be_asset_type(self, db, branch, expense_accounts):
+        from app.modules.finance.models import Account
+        from app.modules.finance.schemas import ExpenseCreate
+        rent, _ = expense_accounts
+        liability = Account(branch_id=branch.id, code="2200", name="Payable", account_type="liability")
+        db.add(liability); db.commit()
+
+        with pytest.raises(ValueError, match="حساب أصول"):
+            services.record_expense(db, branch.id, ExpenseCreate(
+                expense_date=date(2026, 8, 16),
+                expense_account_id=rent.id, settlement_account_id=liability.id,
+                amount=Decimal("100"), description="محاولة خاطئة",
+            ), recorded_by=1)
+
+    def test_list_expenses_filters_by_date_and_enriches_account_labels(self, db, branch, expense_accounts):
+        from app.modules.finance.schemas import ExpenseCreate
+        rent, cash = expense_accounts
+
+        services.record_expense(db, branch.id, ExpenseCreate(
+            expense_date=date(2026, 8, 1),
+            expense_account_id=rent.id, settlement_account_id=cash.id,
+            amount=Decimal("1000"), description="مصروف أغسطس",
+        ), recorded_by=1)
+        services.record_expense(db, branch.id, ExpenseCreate(
+            expense_date=date(2026, 7, 1),
+            expense_account_id=rent.id, settlement_account_id=cash.id,
+            amount=Decimal("900"), description="مصروف يوليو",
+        ), recorded_by=1)
+
+        items, total = services.list_expenses(db, branch.id, date_from=date(2026, 8, 1), date_to=date(2026, 8, 31))
+        assert total == 1
+        assert items[0]["description"] == "مصروف أغسطس"
+        assert items[0]["expense_account_code"] == "5100"
+        assert items[0]["settlement_account_code"] == "1100"

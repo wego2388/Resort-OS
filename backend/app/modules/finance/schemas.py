@@ -542,6 +542,34 @@ class JournalEntryRead(BaseModel):
     updated_at:  datetime
 
 
+# ── Expenses (2026-08-16) ────────────────────────────────────────────────
+
+class ExpenseCreate(BaseModel):
+    """سند مصروفات — راجع models.Expense / services.record_expense.
+    الفئة هي expense_account_id نفسه (حساب 5xxx من دليل الحسابات)، مفيش
+    taxonomy موازية."""
+    expense_date:           date
+    expense_account_id:     int
+    settlement_account_id:  int
+    amount:                 Decimal = Field(..., gt=0)
+    description:            str = Field(..., min_length=3, max_length=300)
+    reference:              Optional[str] = Field(None, max_length=100)
+    cost_center_id:         Optional[int] = None
+
+
+class ExpenseRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int; branch_id: int; expense_date: date
+    expense_account_id: int; settlement_account_id: int
+    amount: Decimal; description: str; reference: Optional[str]
+    cost_center_id: Optional[int]; journal_entry_id: int; recorded_by: int
+    created_at: datetime
+    # للعرض — راجع services.list_expenses
+    expense_account_code: str = ""
+    expense_account_name: str = ""
+    settlement_account_code: str = ""
+
+
 class AccountingPeriodRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id:        int

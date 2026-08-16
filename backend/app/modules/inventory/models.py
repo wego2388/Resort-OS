@@ -156,6 +156,13 @@ class PurchaseOrder(Base, TimestampMixin):
     received_at:   Mapped[date | None]     = mapped_column(Date, nullable=True)
     total_amount:  Mapped[Decimal]         = mapped_column(Numeric(12, 2), default=Decimal("0"))
     notes:         Mapped[str | None]      = mapped_column(Text, nullable=True)
+    # 2026-08-16: إغلاق حلقة الذمم الدائنة — receive_purchase_order بترحّل
+    # Dr.1200/Cr.2200 (موردون) من الأول، بس مفيش أي طريقة كانت موجودة
+    # لتسجيل إن المنتجع دفع فعليًا للمورد بعد كده (2200 كان رصيده هيفضل
+    # يكبر للأبد). راجع services.pay_purchase_order + SupplierPayment.
+    amount_paid:    Mapped[Decimal]         = mapped_column(Numeric(12, 2), default=Decimal("0"))
+    payment_status: Mapped[str]             = mapped_column(String(20), default="unpaid")
+    # unpaid|partial|paid
     # E-2 fix (Decision 0004): id طلب الشراء الأصلي الذي أنتج هذا الأمر
     # عبر convert_to_purchase_order — nullable لأوامر الشراء المنشأة يدوياً
     # أو القديمة قبل هذا التعديل.
@@ -266,3 +273,27 @@ class StockCountLine(Base, TimestampMixin):
     # variance = counted - system
 
     count: Mapped["StockCount"] = relationship("StockCount", back_populates="lines")
+
+
+class SupplierPayment(Base, TimestampMixin):
+    """سداد فعلي لمورد مقابل أمر شراء مُستلَم بالفعل (2026-08-16، طلب
+    Mohamed صراحةً) — سجل دائم لكل دفعة، مش رصيد واحد متراكم على المورد،
+    زي نفس نمط installments/credit_transactions في باقي المشروع. راجع
+    services.pay_purchase_order للقيد المحاسبي (Dr. موردون 2200 /
+    Cr. حساب التسوية)."""
+    __tablename__ = "supplier_payments"
+
+    id:                     Mapped[int]        = mapped_column(primary_key=True)
+    branch_id:              Mapped[int]        = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"), index=True)
+    supplier_id:            Mapped[int]        = mapped_column(ForeignKey("suppliers.id", ondelete="RESTRICT"), index=True)
+    purchase_order_id:      Mapped[int]        = mapped_column(ForeignKey("purchase_orders.id", ondelete="RESTRICT"), index=True)
+    amount:                 Mapped[Decimal]    = mapped_column(Numeric(12, 2))
+    settlement_account_id:  Mapped[int]        = mapped_column(ForeignKey("accounts.id", ondelete="RESTRICT"))
+    reference:              Mapped[str | None] = mapped_column(String(100), nullable=True)
+    notes:                  Mapped[str | None] = mapped_column(String(500), nullable=True)
+    paid_at:                Mapped[date]       = mapped_column(Date)
+    journal_entry_id:       Mapped[int]        = mapped_column(ForeignKey("journal_entries.id", ondelete="RESTRICT"))
+    recorded_by:            Mapped[int]        = mapped_column(Integer)
+
+    supplier:       Mapped["Supplier"]      = relationship("Supplier")
+    purchase_order: Mapped["PurchaseOrder"] = relationship("PurchaseOrder")

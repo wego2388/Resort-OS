@@ -20,7 +20,7 @@ from app.modules.inventory.models import (
 from app.modules.inventory.schemas import (
     CategoryCreate, ProductCreate, ProductUpdate,
     PurchaseOrderCreate, PurchaseOrderItemCreate, ReceiveItemsRequest,
-    StockMovementCreate, SupplierCreate, SupplierUpdate, WarehouseCreate,
+    StockMovementCreate, SupplierCreate, SupplierPaymentCreate, SupplierUpdate, WarehouseCreate,
     PurchaseRequestCreate, StockCountCreate,
 )
 
@@ -372,6 +372,68 @@ def get_po_or_404(db: Session, po_id: int) -> PurchaseOrder:
     po = crud.get_purchase_order(db, po_id)
     if not po:
         raise ValueError(f"أمر الشراء {po_id} غير موجود")
+    return po
+
+
+def pay_purchase_order(
+    db: Session, po_id: int, data: SupplierPaymentCreate, recorded_by: int,
+) -> PurchaseOrder:
+    """سداد فعلي لمورد (2026-08-16، طلب Mohamed صراحةً) — يقفل حلقة الذمم
+    الدائنة اللي receive_purchase_order فتحها (Dr.1200/Cr.2200 وقت
+    الاستلام، راجع _post_purchase_receipt_journal). بيترحّل Dr.2200
+    (موردون) / Cr. حساب التسوية (كاش/بنك) لكل دفعة، ويحدّث amount_paid/
+    payment_status على أمر الشراء نفسه.
+
+    مقصور عمدًا على أمر شراء received بالكامل — دفعة على أمر لسه partial
+    مش متأكد قيمته النهائية، وده تبسيط متعمد (مفيش سيناريو دفع مقدّم قبل
+    الاستلام في النطاق المطلوب حاليًا)."""
+    from app.modules.finance import crud as finance_crud  # noqa: PLC0415
+    from app.modules.finance.services import (  # noqa: PLC0415
+        post_simple_revenue_journal, validate_period_open,
+    )
+
+    po = get_po_or_404(db, po_id)
+    if po.status != "received":
+        raise ValueError(f"أمر الشراء {po.order_number} لازم يكون received بالكامل قبل تسجيل دفعة له")
+    if not po.supplier_id:
+        raise ValueError(f"أمر الشراء {po.order_number} بدون مورد مسجَّل — لا يمكن تسجيل دفعة")
+
+    remaining = po.total_amount - po.amount_paid
+    if data.amount > remaining + Decimal("0.01"):
+        raise ValueError(
+            f"المبلغ ({data.amount}) أكبر من المتبقي على أمر الشراء ({remaining})"
+        )
+
+    settlement_account = finance_crud.get_account(db, data.settlement_account_id)
+    if not settlement_account or settlement_account.branch_id != po.branch_id:
+        raise ValueError(f"حساب التسوية {data.settlement_account_id} غير موجود في هذا الفرع")
+    if settlement_account.account_type != "asset":
+        raise ValueError(f"حساب التسوية «{settlement_account.name}» لازم يكون حساب أصول")
+    if not settlement_account.is_active:
+        raise ValueError(f"حساب التسوية «{settlement_account.name}» معطّل")
+
+    validate_period_open(db, po.branch_id, data.paid_at)
+
+    entry = post_simple_revenue_journal(
+        db, po.branch_id, data.paid_at,
+        debit_account_code="2200", credit_account_code=settlement_account.code,
+        amount=data.amount,
+        reference=data.reference or f"PO-{po.order_number}-PAY",
+        description=f"سداد مورد — أمر شراء {po.order_number}"
+                    + (f" ({po.supplier.name})" if po.supplier else ""),
+        source="supplier_payment", source_id=po.id,
+        created_by=recorded_by,
+        strict=True,
+    )
+
+    payment = crud.create_supplier_payment(
+        db, po.branch_id, po.supplier_id, po, data,
+        journal_entry_id=entry.id, recorded_by=recorded_by,
+    )
+    po.amount_paid = po.amount_paid + data.amount
+    po.payment_status = "paid" if po.amount_paid >= po.total_amount - Decimal("0.01") else "partial"
+    db.commit()
+    db.refresh(po)
     return po
 
 

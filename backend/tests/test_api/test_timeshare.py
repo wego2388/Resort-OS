@@ -859,6 +859,128 @@ class TestTimeshareVisit:
         assert second.unit_id == unit.id
 
 
+class TestVisitManualUnitPicker:
+    """2026-08-16: اختيار يدوي لوحدة فعلية من خريطة الوحدات وقت تأكيد
+    زيارة — كان التخصيص أوتوماتيكي بالكامل بلا أي اختيار للموظف."""
+
+    @pytest.fixture
+    def second_unit(self, db: Session, branch):
+        from app.modules.timeshare.models import TimeshareUnit
+        u = TimeshareUnit(branch_id=branch.id, unit_number="A-102", unit_type="Studio")
+        db.add(u); db.flush()
+        return u
+
+    @pytest.fixture
+    def chalet_unit(self, db: Session, branch):
+        from app.modules.timeshare.models import TimeshareUnit
+        u = TimeshareUnit(branch_id=branch.id, unit_number="B-201", unit_type="Chalet")
+        db.add(u); db.flush()
+        return u
+
+    def test_manual_unit_id_used_for_floating_contract(self, db: Session, branch, contract, unit, second_unit):
+        from app.modules.timeshare.schemas import TimeshareVisitCreate
+        visit = services.create_visit(db, TimeshareVisitCreate(
+            branch_id=branch.id, contract_id=contract.id,
+            check_in=date(2026, 8, 1), check_out=date(2026, 8, 8),
+            unit_id=second_unit.id,
+        ))
+        assert visit.unit_id == second_unit.id
+
+    def test_manual_unit_id_wrong_room_type_rejected(self, db: Session, branch, contract, chalet_unit):
+        """العقد room_type=Studio — اختيار وحدة Chalet يدويًا لازم يترفض."""
+        from app.modules.timeshare.schemas import TimeshareVisitCreate
+        with pytest.raises(ValueError, match="لا يطابق نوع"):
+            services.create_visit(db, TimeshareVisitCreate(
+                branch_id=branch.id, contract_id=contract.id,
+                check_in=date(2026, 8, 1), check_out=date(2026, 8, 8),
+                unit_id=chalet_unit.id,
+            ))
+
+    def test_manual_unit_id_different_branch_rejected(self, db: Session, branch, contract):
+        from app.modules.core.models import Branch
+        from app.modules.timeshare.models import TimeshareUnit
+        from app.modules.timeshare.schemas import TimeshareVisitCreate
+
+        other_branch = Branch(name="Other", name_ar="آخر", code="TS-OTHER")
+        db.add(other_branch); db.flush()
+        foreign_unit = TimeshareUnit(branch_id=other_branch.id, unit_number="X-1", unit_type="Studio")
+        db.add(foreign_unit); db.flush()
+
+        with pytest.raises(ValueError, match="غير موجودة في هذا الفرع"):
+            services.create_visit(db, TimeshareVisitCreate(
+                branch_id=branch.id, contract_id=contract.id,
+                check_in=date(2026, 8, 1), check_out=date(2026, 8, 8),
+                unit_id=foreign_unit.id,
+            ))
+
+    def test_manual_unit_id_conflicting_with_other_visit_rejected(self, db: Session, branch, contract, unit):
+        """الوحدة المختارة يدويًا محجوزة بالفعل في نفس الفترة — فحص التعارض
+        الموجود لازم يمنعها برضو، مش بس المسار الأوتوماتيكي."""
+        from app.modules.timeshare.schemas import TimeshareVisitCreate
+        services.create_visit(db, TimeshareVisitCreate(
+            branch_id=branch.id, contract_id=contract.id,
+            check_in=date(2026, 8, 1), check_out=date(2026, 8, 8),
+            unit_id=unit.id,
+        ))
+        with pytest.raises(ValueError, match="محجوزة بالفعل"):
+            services.create_visit(db, TimeshareVisitCreate(
+                branch_id=branch.id, contract_id=contract.id,
+                check_in=date(2026, 8, 5), check_out=date(2026, 8, 10),  # يتقاطع
+                unit_id=unit.id,
+            ))
+
+    def test_manual_unit_id_ignored_when_matches_fixed_contract_unit(self, db: Session, branch, contract, unit):
+        """عقد بوحدة ثابتة — تمرير نفس الـunit_id (زي ما الفرونت إند بيعمل
+        لما يبعت اختيار مطابق للوحدة الثابتة نفسها) لازم ينجح عادي."""
+        from app.modules.timeshare.schemas import TimeshareVisitCreate
+        contract.unit_id = unit.id
+        db.commit()
+        visit = services.create_visit(db, TimeshareVisitCreate(
+            branch_id=branch.id, contract_id=contract.id,
+            check_in=date(2026, 8, 1), check_out=date(2026, 8, 8),
+            unit_id=unit.id,
+        ))
+        assert visit.unit_id == unit.id
+
+    def test_manual_unit_id_rejected_for_fixed_contract_with_different_unit(
+        self, db: Session, branch, contract, unit, second_unit,
+    ):
+        """عقد بوحدة ثابتة — محاولة اختيار وحدة تانية يدويًا لازم تترفض
+        بوضوح (تغيير الوحدة الثابتة عملية منفصلة، مش تأكيد زيارة)."""
+        from app.modules.timeshare.schemas import TimeshareVisitCreate
+        contract.unit_id = unit.id
+        db.commit()
+        with pytest.raises(ValueError, match="وحدة ثابتة"):
+            services.create_visit(db, TimeshareVisitCreate(
+                branch_id=branch.id, contract_id=contract.id,
+                check_in=date(2026, 8, 1), check_out=date(2026, 8, 8),
+                unit_id=second_unit.id,
+            ))
+
+    def test_units_availability_reflects_existing_visit(self, db: Session, branch, contract, unit, second_unit):
+        from app.modules.timeshare.schemas import TimeshareVisitCreate
+        services.create_visit(db, TimeshareVisitCreate(
+            branch_id=branch.id, contract_id=contract.id,
+            check_in=date(2026, 8, 1), check_out=date(2026, 8, 8),
+            unit_id=unit.id,
+        ))
+        rows = services.get_units_availability(
+            db, branch.id, "Studio", date(2026, 8, 3), date(2026, 8, 6),
+        )
+        by_number = {r["unit_number"]: r for r in rows}
+        assert by_number["A-101"]["is_available"] is False
+        assert by_number["A-102"]["is_available"] is True
+
+    def test_units_availability_excludes_maintenance(self, db: Session, branch, unit):
+        unit.status = "maintenance"
+        db.commit()
+        rows = services.get_units_availability(
+            db, branch.id, "Studio", date(2026, 8, 1), date(2026, 8, 8),
+        )
+        assert rows[0]["is_available"] is False
+        assert rows[0]["status"] == "maintenance"
+
+
 class TestExcelImport:
 
     def _build_workbook(self, headers: list[str], rows: list[list]) -> bytes:

@@ -2301,3 +2301,62 @@ class TestCostCenterHTTPFlow:
         )
         assert resp.status_code == 200
         assert resp.json()["total_revenue"] == "0"
+
+
+class TestExpenseHTTP:
+    """2026-08-16 — سند مصروفات حقيقي عبر الـAPI الفعلي."""
+
+    def _accounts(self, db, branch):
+        # make_branch_committed بيزرع 1100/1150 بالفعل — 5100 (المصروف) بس
+        # جديد هنا.
+        rent = make_account_committed(db, branch, "5100", "إيجار", "expense")
+        cash = make_account_committed(db, branch, "1100", "Cash", "asset")
+        return rent, cash
+
+    def test_create_expense_http(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        rent, cash = self._accounts(db, branch)
+
+        resp = client.post(
+            "/api/v1/finance/expenses",
+            params={"branch_id": branch.id},
+            json={
+                "expense_date": str(date.today()),
+                "expense_account_id": rent.id,
+                "settlement_account_id": cash.id,
+                "amount": "1500.00",
+                "description": "فاتورة كهرباء أغسطس",
+            },
+            headers=manager_headers,
+        )
+        assert resp.status_code == 201, resp.text
+        body = resp.json()
+        assert body["amount"] == "1500.00"
+        assert body["expense_account_code"] == "5100"
+        assert body["settlement_account_code"] == "1100"
+
+        list_resp = client.get(
+            "/api/v1/finance/expenses",
+            params={"branch_id": branch.id,
+                    "date_from": str(date.today()), "date_to": str(date.today())},
+            headers=manager_headers,
+        )
+        assert list_resp.status_code == 200
+        assert list_resp.json()["total"] == 1
+
+    def test_create_expense_requires_finance_role(self, client: TestClient, db, waiter_headers):
+        branch = make_branch_committed(db)
+        rent, cash = self._accounts(db, branch)
+        resp = client.post(
+            "/api/v1/finance/expenses",
+            params={"branch_id": branch.id},
+            json={
+                "expense_date": str(date.today()),
+                "expense_account_id": rent.id,
+                "settlement_account_id": cash.id,
+                "amount": "100.00",
+                "description": "محاولة من غير صلاحية",
+            },
+            headers=waiter_headers,
+        )
+        assert resp.status_code == 403

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, reactive } from 'vue'
+import { ref, computed, onMounted, reactive, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api, useAuthStore } from '@resort-os/core'
 import { useStaffFormat } from '@resort-os/core/i18n/staff'
@@ -20,6 +20,7 @@ import {
   useToast,
   type SelectOption,
 } from '@resort-os/ui'
+import TimeshareUnitPicker from '../../components/TimeshareUnitPicker.vue'
 
 const toast = useToast()
 const { confirm } = useConfirm()
@@ -56,6 +57,7 @@ interface Contract {
   maintenance_dues_list: MaintenanceDue[]
   collected?: number; overdue_amount?: number
   unit_id: number | null
+  unit_capacity?: number | null
 }
 interface CalendarWeek { week: number; start_date: string; end_date: string; is_current: boolean; is_past: boolean; contracts: CalendarContract[] }
 interface CalendarContract { id: number; customer_name: string; rci_included: boolean; status: string; contract_number?: string; room_type: string }
@@ -364,6 +366,8 @@ const scheduleModal = reactive({
   checkOut: '',
   notes: '',
   error: '',
+  // 2026-08-16: اختيار يدوي من خريطة الوحدات — راجع TimeshareUnitPicker.vue
+  unitId: null as number | null,
 })
 
 function openScheduleVisit() {
@@ -374,6 +378,7 @@ function openScheduleVisit() {
   scheduleModal.checkOut = ''
   scheduleModal.notes    = ''
   scheduleModal.error    = ''
+  scheduleModal.unitId   = null
   scheduleModal.open     = true
 }
 
@@ -383,6 +388,11 @@ const contractOptions = computed<SelectOption[]>(() =>
     label: `${c.contract_number ?? '#' + c.id} — ${c.nights_per_year ?? ''}n/yr`,
   })),
 )
+
+// السلوك اليدوي (unit_id) بيحتاج نوع الغرفة/الوحدة الثابتة/سعة العقد
+// الحاليين — راجع TimeshareUnitPicker.vue.
+const scheduleModalContract = computed(() => profileModal.contracts.find(c => c.id === scheduleModal.contractId) ?? null)
+watch(() => scheduleModal.contractId, () => { scheduleModal.unitId = null })
 
 async function confirmScheduleVisit() {
   if (scheduleModal.contractId == null || !scheduleModal.checkIn || !scheduleModal.checkOut) {
@@ -398,6 +408,7 @@ async function confirmScheduleVisit() {
       check_in:    scheduleModal.checkIn,
       check_out:   scheduleModal.checkOut,
       notes:       scheduleModal.notes || undefined,
+      unit_id:     scheduleModal.unitId ?? undefined,
     })
     toast.success(t('backoffice.timeshare.scheduleVisit.successToast'))
     scheduleModal.open = false
@@ -488,16 +499,26 @@ interface VisitRequestItem {
   id: number; contract_id: number; preferred_start: string; preferred_end: string
   notes: string | null; status: string; rejection_reason: string | null
   customer_name?: string; customer_phone?: string; contract_number?: string
+  // 2026-08-16: عشان خريطة الوحدات (TimeshareUnitPicker) تعرف تفلتر صح —
+  // راجع backend TimeshareVisitRequestRead.
+  room_type?: string | null; contract_unit_id?: number | null; unit_capacity?: number | null
 }
 const visitRequests = ref<VisitRequestItem[]>([])
 const requestsLoading = ref(false)
 const requestsStatus = ref('pending')
-const approveModal = reactive({ open: false, request: null as VisitRequestItem | null, check_in: '', check_out: '', saving: false, error: '' })
+const approveModal = reactive({
+  open: false, request: null as VisitRequestItem | null, check_in: '', check_out: '', saving: false, error: '',
+  unitId: null as number | null,
+})
 const rejectModal = reactive({ open: false, request: null as VisitRequestItem | null, reason: '', saving: false, error: '' })
 
 function openApproveModal(r: VisitRequestItem) {
-  Object.assign(approveModal, { open: true, request: r, check_in: r.preferred_start, check_out: r.preferred_end, saving: false, error: '' })
+  Object.assign(approveModal, {
+    open: true, request: r, check_in: r.preferred_start, check_out: r.preferred_end, saving: false, error: '',
+    unitId: null,
+  })
 }
+watch(() => [approveModal.check_in, approveModal.check_out], () => { approveModal.unitId = null })
 async function confirmApprove() {
   if (!approveModal.request) return
   approveModal.saving = true
@@ -505,6 +526,7 @@ async function confirmApprove() {
   try {
     await api.post(`/api/v1/timeshare/visit-requests/${approveModal.request.id}/approve`, {
       check_in: approveModal.check_in, check_out: approveModal.check_out,
+      unit_id: approveModal.unitId ?? undefined,
     })
     toast.success(t('backoffice.timeshare.msg.requestApproved'))
     approveModal.open = false
@@ -1708,6 +1730,15 @@ onMounted(refreshAll)
         <label class="block text-sm font-bold text-gray-700 dark:text-gray-300">{{ t('backoffice.timeshare.scheduleVisit.checkOut') }}
           <input v-model="approveModal.check_out" type="date" class="min-h-[44px] w-full mt-1 bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-900 dark:text-gray-100 rounded-xl px-3 py-2 text-sm" />
         </label>
+        <TimeshareUnitPicker
+          v-model="approveModal.unitId"
+          :branch-id="branchId"
+          :unit-type="approveModal.request.room_type ?? ''"
+          :check-in="approveModal.check_in"
+          :check-out="approveModal.check_out"
+          :contract-unit-id="approveModal.request.contract_unit_id ?? null"
+          :unit-capacity="approveModal.request.unit_capacity ?? null"
+        />
         <p v-if="approveModal.error" class="text-sm text-red-600 dark:text-red-400">{{ approveModal.error }}</p>
         <AppButton class="w-full min-h-[44px]" :disabled="approveModal.saving" @click="confirmApprove">{{ approveModal.saving ? t('backoffice.timeshare.saving') : t('backoffice.timeshare.confirmApprove') }}</AppButton>
       </div>
@@ -2074,6 +2105,15 @@ onMounted(refreshAll)
           </label>
           <AppInput v-model="scheduleModal.notes" :placeholder="t('backoffice.timeshare.scheduleVisit.notesPlaceholder')" />
         </div>
+        <TimeshareUnitPicker
+          v-model="scheduleModal.unitId"
+          :branch-id="branchId"
+          :unit-type="scheduleModalContract?.room_type ?? ''"
+          :check-in="scheduleModal.checkIn"
+          :check-out="scheduleModal.checkOut"
+          :contract-unit-id="scheduleModalContract?.unit_id ?? null"
+          :unit-capacity="scheduleModalContract?.unit_capacity ?? null"
+        />
         <p v-if="scheduleModal.error" class="text-sm text-red-600 dark:text-red-400">{{ scheduleModal.error }}</p>
       </div>
       <template #footer>

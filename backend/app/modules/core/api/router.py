@@ -93,6 +93,8 @@ from app.modules.core.schemas import (
     UserRoleUpdate,
     ForceTwoFactorResetRequest,
     TwoFactorResetResult,
+    ResetStaffCredentialsRequest,
+    ResetStaffCredentialsResult,
 )
 
 router = APIRouter(tags=["core"])
@@ -684,6 +686,50 @@ def force_reset_2fa(
         )
     except services.UserNotFoundError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+
+
+@router.post(
+    "/users/{user_id}/reset-credentials",
+    response_model=ResetStaffCredentialsResult,
+)
+def reset_staff_credentials(
+    user_id: int,
+    data: ResetStaffCredentialsRequest,
+    db: DbDep,
+    request: Request,
+    response: Response,
+    user=Depends(get_super_admin_user),
+    x_step_up_token: Optional[str] = Header(default=None, alias="X-Step-Up-Token"),
+):
+    """Gate 2B3A + بديل ويب لـ`admin_bootstrap recover` الـCLI: باسورد
+    مؤقت جديد + رابط تفعيل 2FA جديد لموظف عادي نسي/غلط بيانات دخوله —
+    بلا حاجة لـSSH على السيرفر. super_admin/owner مرفوضين هنا صراحةً
+    (403) — يفضلوا CLI-only، راجع services.reset_staff_credentials."""
+    from app.core.kernel.auth.step_up import staff_credentials_reset_scope  # noqa: PLC0415
+
+    scope_hash = staff_credentials_reset_scope(user_id=user_id, reason=data.reason)
+    step_up = _consume_step_up_or_raise(
+        db, user, request,
+        purpose="staff_credentials_reset", scope_hash=scope_hash, x_step_up_token=x_step_up_token,
+    )
+    try:
+        result = services.reset_staff_credentials(
+            db, user_id, reset_by=user.id, reason=data.reason,
+            step_up_public_reference=step_up["public_reference"],
+            assurance_method=step_up["assurance_method"],
+        )
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Pragma"] = "no-cache"
+        return ResetStaffCredentialsResult(
+            user=UserRead.model_validate(result["user"]),
+            temporary_password=result["temporary_password"],
+            enrollment_token=result["enrollment_token"],
+            enrollment_expires_at=result["enrollment_expires_at"],
+        )
+    except services.UserNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
 
 
 @router.get("/users/{user_id}/sessions")

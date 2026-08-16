@@ -379,6 +379,32 @@ class TwoFactorResetResult(BaseModel):
     enrollment_expires_at: Optional[datetime] = None
 
 
+class ResetStaffCredentialsRequest(BaseModel):
+    """super_admin فقط — إعادة تعيين باسورد+2FA لموظف عادي (نسي/غلط
+    بيانات دخوله). super_admin/owner مرفوضين هنا صراحةً (CLI-only)،
+    راجع services.reset_staff_credentials. Gate 2B3A: reason إجباري
+    ومحمي بـstep-up، زي ForceTwoFactorResetRequest بالظبط."""
+    reason: str = Field(..., max_length=_REASON_MAX_LENGTH)
+
+    @field_validator("reason")
+    @classmethod
+    def _reason_must_be_real_text(cls, v: str) -> str:
+        stripped = v.strip()
+        if len(stripped) < 5:
+            raise ValueError("السبب لازم يكون نص حقيقي (5 أحرف على الأقل)")
+        return stripped
+
+
+class ResetStaffCredentialsResult(BaseModel):
+    """الباسورد المؤقت وtoken التفعيل بيظهروا مرة واحدة بس — مش
+    مخزّنين نص صريح في أي مكان."""
+
+    user: UserRead
+    temporary_password: str
+    enrollment_token: Optional[str] = None
+    enrollment_expires_at: Optional[datetime] = None
+
+
 # ─────────────────────── UserPermission ──────────────────────────────
 # انظر app/modules/core/models.py::UserPermission للشرح الكامل عن
 # resource/action naming scheme و branch scoping.

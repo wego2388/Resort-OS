@@ -104,6 +104,19 @@ def user_force_2fa_reset_scope(*, user_id: int, reason: str) -> str:
     })
 
 
+def staff_credentials_reset_scope(*, user_id: int, reason: str) -> str:
+    """2026-08-16: باسورد+2FA مؤقتين جداد لموظف عادي نسي/غلط بيانات
+    دخوله — بديل ويب لـ`admin_bootstrap recover` الـCLI (اللي فضل
+    الطريقة الوحيدة قبل كده، محتاج SSH فعلي على السيرفر). أوسع من
+    user_force_2fa_reset (بتلمس الباسورد كمان مش الـ2FA بس)، فمحتاجة
+    نفس مستوى reason+step-up، وservices.reset_staff_credentials بترفض
+    super_admin/owner صراحةً بغض النظر عن نتيجة الـstep-up."""
+    return build_step_up_scope("staff_credentials_reset", {
+        "user_id": user_id,
+        "reason_sha256": sha256_text(reason),
+    })
+
+
 def permission_override_upsert_scope(
     *,
     user_id: int,

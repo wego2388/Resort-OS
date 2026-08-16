@@ -553,3 +553,30 @@ class ETAInvoice(Base, TimestampMixin):
     response_json:    Mapped[str | None]   = mapped_column(Text, nullable=True)
     error_message:    Mapped[str | None]   = mapped_column(String(1000), nullable=True)
     submitted_at:     Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class Expense(Base, TimestampMixin):
+    """سند مصروفات حقيقي (2026-08-16، طلب Mohamed صراحةً) — قبل كده المحاسب
+    مكانش قدامه غير قيد يدوي عام (بلا فئة/تتبّع مخصص) أو مفيش حاجة خالص.
+    expense_account_id: حساب المصروف (5xxx) — الفئة هي اختيار الحساب نفسه،
+    مفيش taxonomy موازية منفصلة عن دليل الحسابات. settlement_account_id: أي
+    حساب أصول نشط (كاش/بنك) اتدفع منه المصروف — اختيار مباشر من المحاسب،
+    مش عبر منظومة payment_channel (دي مخصوصة لتحصيل نقاط البيع، مش لصرف
+    خلفي). راجع services.record_expense للقيد المحاسبي (Dr. المصروف /
+    Cr. التسوية)."""
+    __tablename__ = "expenses"
+
+    id:                     Mapped[int]           = mapped_column(primary_key=True)
+    branch_id:              Mapped[int]           = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"), index=True)
+    expense_date:           Mapped[date]          = mapped_column(Date)
+    expense_account_id:     Mapped[int]           = mapped_column(ForeignKey("accounts.id", ondelete="RESTRICT"))
+    settlement_account_id:  Mapped[int]           = mapped_column(ForeignKey("accounts.id", ondelete="RESTRICT"))
+    amount:                 Mapped[Decimal]       = mapped_column(Numeric(12, 2))
+    description:            Mapped[str]           = mapped_column(String(300))
+    reference:              Mapped[str | None]    = mapped_column(String(100), nullable=True)
+    cost_center_id:         Mapped[int | None]    = mapped_column(ForeignKey("cost_centers.id", ondelete="SET NULL"), nullable=True)
+    journal_entry_id:       Mapped[int]           = mapped_column(ForeignKey("journal_entries.id", ondelete="RESTRICT"))
+    recorded_by:            Mapped[int]           = mapped_column(Integer)
+
+    expense_account:     Mapped["Account"] = relationship("Account", foreign_keys=[expense_account_id])
+    settlement_account:  Mapped["Account"] = relationship("Account", foreign_keys=[settlement_account_id])

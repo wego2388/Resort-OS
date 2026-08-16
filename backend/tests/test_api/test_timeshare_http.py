@@ -311,6 +311,54 @@ class TestTimeshareVisitAndUnitsHttp:
         assert resp.status_code == 201, resp.text
         assert resp.json()["unit_id"] == unit.id
 
+    def test_create_visit_manual_unit_id_via_http(self, client: TestClient, db, fake_redis, timeshare_admin_headers):
+        """2026-08-16: اختيار يدوي لوحدة من خريطة الوحدات عبر الـAPI —
+        بديل الاختيار الأوتوماتيكي الأعمى، مقصور على عقد عائم."""
+        from app.modules.timeshare.models import TimeshareUnit
+        branch = make_branch_committed(db)
+        unit_a = TimeshareUnit(branch_id=branch.id, unit_number="A-101", unit_type="Studio")
+        unit_b = TimeshareUnit(branch_id=branch.id, unit_number="A-102", unit_type="Studio")
+        db.add_all([unit_a, unit_b]); db.commit()
+
+        contract = client.post(
+            "/api/v1/timeshare/contracts", json=contract_payload(branch.id), headers=timeshare_admin_headers,
+        ).json()
+
+        resp = client.post(
+            "/api/v1/timeshare/visits",
+            json={
+                "branch_id": branch.id, "contract_id": contract["id"],
+                "check_in": str(date.today() + timedelta(days=10)),
+                "check_out": str(date.today() + timedelta(days=17)),
+                "unit_id": unit_b.id,
+            },
+            headers=timeshare_admin_headers,
+        )
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["unit_id"] == unit_b.id
+
+    def test_units_availability_endpoint_http(self, client: TestClient, db, fake_redis, timeshare_admin_headers):
+        from app.modules.timeshare.models import TimeshareUnit
+        branch = make_branch_committed(db)
+        unit_a = TimeshareUnit(branch_id=branch.id, unit_number="A-101", unit_type="Studio")
+        unit_b = TimeshareUnit(branch_id=branch.id, unit_number="A-102", unit_type="Studio", status="maintenance")
+        db.add_all([unit_a, unit_b]); db.commit()
+
+        resp = client.get(
+            "/api/v1/timeshare/units/availability",
+            params={
+                "branch_id": branch.id, "unit_type": "Studio",
+                "check_in": str(date.today() + timedelta(days=10)),
+                "check_out": str(date.today() + timedelta(days=17)),
+            },
+            headers=timeshare_admin_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        rows = {r["unit_number"]: r for r in resp.json()}
+        assert rows["A-101"]["is_available"] is True
+        assert rows["A-102"]["is_available"] is False
+        assert rows["A-102"]["status"] == "maintenance"
+
     def test_create_visit_without_available_unit_returns_400(self, client: TestClient, db, fake_redis, timeshare_admin_headers):
         """مفيش أي وحدة من نوع 2R في الفرع ده — لازم 400 وليس نجاح صامت."""
         branch = make_branch_committed(db)

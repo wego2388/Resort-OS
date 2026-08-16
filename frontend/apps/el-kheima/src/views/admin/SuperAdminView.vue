@@ -66,6 +66,7 @@ interface EmployeeOption {
 }
 type PendingAction = { kind: 'create' } | { kind: 'status'; user: UserRow; nextActive: boolean }
   | { kind: 'unlock'; user: UserRow } | { kind: 'force2fa'; user: UserRow }
+  | { kind: 'reset_creds'; user: UserRow }
   | { kind: 'revoke_session'; user: UserRow; sessionRef: string }
 
 const users = ref<UserRow[]>([])
@@ -209,12 +210,25 @@ function requestForce2FAReset(user: UserRow) {
   pending.value = { kind: 'force2fa', user }
   stepUpError.value = ''
 }
+// 2026-08-16: بديل ويب لـ`admin_bootstrap recover` الـCLI — موظف نسي/غلط
+// باسورده المؤقت كان محتاج SSH فعلي على السيرفر قبل كده (باج حقيقي حصل
+// فعليًا: محاسب اتقفل حسابه بعد 5 محاولات غلط ومكانش قدامنا غير الـCLI).
+// super_admin/owner متعمّد إخفاء الزرار ليهم — الباك إند برضو بيرفضهم
+// صراحةً (403)، الإخفاء هنا تجربة استخدام بس مش الحماية الحقيقية.
+function canResetCredentials(user: UserRow): boolean {
+  return user.role !== 'super_admin' && user.role !== 'owner'
+}
+function requestResetCredentials(user: UserRow) {
+  pending.value = { kind: 'reset_creds', user }
+  stepUpError.value = ''
+}
 
 const stepUpPurpose = computed(() => {
   const kind = pending.value?.kind
   if (kind === 'status') return 'user_role_update' as const
   if (kind === 'unlock') return 'user_unlock' as const
   if (kind === 'force2fa') return 'user_force_2fa_reset' as const
+  if (kind === 'reset_creds') return 'staff_credentials_reset' as const
   if (kind === 'revoke_session') return 'admin_session_revoke' as const
   return 'user_provision' as const
 })
@@ -225,6 +239,8 @@ const stepUpIntent = computed<Record<string, unknown>>(() => {
   if (pending.value?.kind === 'unlock')
     return { user_id: pending.value.user.id }
   if (pending.value?.kind === 'force2fa')
+    return { user_id: pending.value.user.id }
+  if (pending.value?.kind === 'reset_creds')
     return { user_id: pending.value.user.id }
   if (pending.value?.kind === 'revoke_session')
     return { target_user_id: pending.value.user.id, session_ref: pending.value.sessionRef }
@@ -245,6 +261,8 @@ const stepUpDescription = computed(() => {
     return t('backoffice.accounts.confirmUnlock', { name: pending.value.user.full_name })
   if (pending.value?.kind === 'force2fa')
     return t('backoffice.accounts.confirmForce2FAReset', { name: pending.value.user.full_name })
+  if (pending.value?.kind === 'reset_creds')
+    return t('backoffice.accounts.confirmResetCredentials', { name: pending.value.user.full_name })
   if (pending.value?.kind === 'revoke_session')
     return t('backoffice.accounts.sessionsRevokeDescription', { name: pending.value.user.full_name })
   return t('backoffice.accounts.confirmCreate', { name: form.value.full_name.trim() })
@@ -294,6 +312,13 @@ async function onStepUpConfirmed({ stepUpToken, reason }: { stepUpToken: string;
       allUsersSnapshot.value = allUsersSnapshot.value.map(u => u.id === res.data.user.id ? res.data.user : u)
       twoFactorRecovery.value = res.data
       toast.success(t('backoffice.accounts.force2FAResetDone'))
+    } else if (action.kind === 'reset_creds') {
+      const res = await api.post(ENDPOINTS.users.resetCredentials(action.user.id), { reason },
+        { headers: { 'X-Step-Up-Token': stepUpToken } })
+      users.value = users.value.map(u => u.id === res.data.user.id ? res.data.user : u)
+      allUsersSnapshot.value = allUsersSnapshot.value.map(u => u.id === res.data.user.id ? res.data.user : u)
+      bootstrap.value = res.data
+      toast.success(t('backoffice.accounts.resetCredentialsDone'))
     } else {
       await api.delete(ENDPOINTS.users.revokeSession(action.user.id, action.sessionRef),
         { headers: { 'X-Step-Up-Token': stepUpToken } })
@@ -785,6 +810,13 @@ onMounted(() => {
                     <button v-if="canRecoverTwoFactor(row)" class="font-semibold text-orange-600 hover:underline disabled:opacity-50 dark:text-orange-400"
                       :disabled="stepUpBusy" @click="requestForce2FAReset(row)">
                       {{ t('backoffice.accounts.force2FAReset') }}
+                    </button>
+                    <!-- 2026-08-16: باسورد+2FA مؤقتين جداد لموظف نسي/غلط
+                    بيانات دخوله — بديل ويب لـ`admin_bootstrap recover`
+                    الـCLI، كان قبل كده لازم SSH فعلي على السيرفر. -->
+                    <button v-if="canResetCredentials(row)" class="font-semibold text-purple-600 hover:underline disabled:opacity-50 dark:text-purple-400"
+                      :disabled="stepUpBusy" @click="requestResetCredentials(row)">
+                      {{ t('backoffice.accounts.resetCredentials') }}
                     </button>
                     <button class="font-semibold text-blue-700 hover:underline dark:text-blue-400"
                       @click="openSessionsModal(row)">

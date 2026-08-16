@@ -261,6 +261,72 @@ class TestPurchaseOrderFlow:
         assert Decimal(bs["total_liabilities"]) == Decimal("1000.00")
 
 
+class TestSupplierPaymentHTTP:
+    """2026-08-16 — سند دفع لمورد عبر الـAPI الفعلي (يقفل حلقة 2200)."""
+
+    def _received_po(self, client: TestClient, db, branch, manager_headers):
+        from app.modules.inventory.models import Supplier
+        warehouse = make_warehouse_committed(db, branch)
+        product = make_product_committed(db, branch)
+        make_account_committed(db, branch, "1200", "مخزون البضاعة", "asset")
+        make_account_committed(db, branch, "2200", "موردون — ذمم دائنة", "liability")
+        supplier = Supplier(branch_id=branch.id, name="شركة التوريد المصرية")
+        db.add(supplier); db.commit()
+
+        po = client.post(
+            "/api/v1/inventory/purchase-orders",
+            json={
+                "branch_id": branch.id, "supplier_id": supplier.id,
+                "ordered_at": str(date.today()),
+                "items": [{"product_id": product.id, "ordered_qty": "100.00", "unit_cost": "18.00"}],
+            },
+            headers=manager_headers,
+        ).json()
+        receive_resp = client.post(
+            f"/api/v1/inventory/purchase-orders/{po['id']}/receive",
+            json={
+                "items": [{"item_id": po["items"][0]["id"], "received_qty": "100.00"}],
+                "warehouse_id": warehouse.id, "received_at": str(date.today()),
+            },
+            headers=manager_headers,
+        )
+        assert receive_resp.status_code == 200, receive_resp.text
+        return receive_resp.json(), supplier
+
+    def test_pay_purchase_order_http(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        po, _supplier = self._received_po(client, db, branch, manager_headers)
+        cash = make_account_committed(db, branch, "1100", "Cash", "asset")
+
+        pay_resp = client.post(
+            f"/api/v1/inventory/purchase-orders/{po['id']}/pay",
+            json={"amount": "1800.00", "settlement_account_id": cash.id, "paid_at": str(date.today())},
+            headers=manager_headers,
+        )
+        assert pay_resp.status_code == 200, pay_resp.text
+        body = pay_resp.json()
+        assert body["amount_paid"] == "1800.00"
+        assert body["payment_status"] == "paid"
+
+        payments_resp = client.get(
+            f"/api/v1/inventory/purchase-orders/{po['id']}/payments", headers=manager_headers,
+        )
+        assert payments_resp.status_code == 200
+        assert len(payments_resp.json()) == 1
+
+    def test_pay_purchase_order_requires_manager(self, client: TestClient, db, manager_headers, cashier_headers):
+        branch = make_branch_committed(db)
+        po, _supplier = self._received_po(client, db, branch, manager_headers)
+        cash = make_account_committed(db, branch, "1100", "Cash", "asset")
+
+        pay_resp = client.post(
+            f"/api/v1/inventory/purchase-orders/{po['id']}/pay",
+            json={"amount": "100.00", "settlement_account_id": cash.id, "paid_at": str(date.today())},
+            headers=cashier_headers,
+        )
+        assert pay_resp.status_code == 403
+
+
 class TestInventoryPermissions:
     def test_create_product_requires_manager(self, client: TestClient, db, cashier_headers):
         """cashier (40) must not create products — manager (60) required."""

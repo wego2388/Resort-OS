@@ -24,7 +24,7 @@ const props = defineProps<{
   tables?: VenueTable[]
   branchId: number | null
 }>()
-const emit = defineEmits<{ close: []; changed: [] }>()
+const emit = defineEmits<{ close: []; changed: []; addItems: [order: DiningOrderDetail] }>()
 
 const { t } = useI18n()
 const { formatDateTime, formatMoney, name } = useStaffFormat()
@@ -642,6 +642,19 @@ function paymentMethodLabel(method: string): string {
     </div>
 
     <template v-if="order" #footer>
+      <!-- 2026-08-16: كان مفيش أي طريقة تضيف صنف تاني على فاتورة مفتوحة
+      من الشاشة دي خالص — الباك إند (add_items_to_order) كان جاهز
+      ويدعم held/open/in_kitchen/served، الفجوة كانت في الفرونت إند بس. -->
+      <AppButton
+        v-if="['held', 'open', 'in_kitchen', 'served'].includes(order.status) && canApplyDiscount"
+        variant="outline"
+        size="lg"
+        block
+        class="mb-2"
+        @click="emit('addItems', order)"
+      >
+        ➕ {{ t('backoffice.pos.orderDetail.addItems') }}
+      </AppButton>
       <div class="grid grid-cols-2 gap-2">
         <AppButton variant="ghost" size="lg" @click="emit('close')">{{ t('backoffice.pos.close') }}</AppButton>
         <AppButton
