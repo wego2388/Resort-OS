@@ -56,11 +56,15 @@ def make_branch_linked_cashier_headers(db, branch) -> dict[str, str]:
     الكاشير (core.services.assert_branch_access عبر HR.Employee) — الـ
     cashier_headers المشترك (conftest.py) بلا Employee/فرع خالص، فبيترفض
     دلوقتي (403) لو استُخدم مباشرة على /checkin. نفس نمط
-    test_hr_me_http.py's make_linked_user_headers/link بالظبط."""
+    test_hr_me_http.py's make_linked_user_headers/link بالظبط.
+
+    كاشير الدفع المباشر (كاش/كارت/محفظة) دلوقتي محتاج وردية مفتوحة (زي
+    dining بالظبط) — بيفتح واحدة هنا تلقائيًا عشان كل تست بيستخدم الهيلبر
+    ده يمثّل كاشير حقيقي جاهز للبيع، مش لازم كل تست يفتحها بنفسه."""
     from datetime import date, timedelta
     from decimal import Decimal
 
-    from tests.conftest import _create_test_user, _make_token
+    from tests.conftest import _create_test_user, _make_token, open_cashier_shift
     from app.modules.core.models import UserBranchMembership
     from app.modules.hr.models import Employee
 
@@ -82,6 +86,7 @@ def make_branch_linked_cashier_headers(db, branch) -> dict[str, str]:
         ),
     ])
     db.commit()
+    open_cashier_shift(db, branch.id, user_id)
     return {"Authorization": f"Bearer {_make_token(email)}"}
 
 
@@ -89,10 +94,13 @@ def make_branch_linked_headers(db, branch, role: str) -> dict[str, str]:
     """مرآة make_branch_linked_cashier_headers لأي دور — بعد ما فحص الفرع
     (2026-07-28) بقى مطبَّق على كل عمليات الشاطئ تقريبًا، معظم تستات
     الـHTTP هنا محتاجة مستخدم مربوط فعليًا بالفرع (مش fixture مشترك بلا
-    أي عضوية) عشان تعكس سلوك حقيقي، مش بس تتجاوز الفحص."""
+    أي عضوية) عشان تعكس سلوك حقيقي، مش بس تتجاوز الفحص.
+
+    نفس منطق فتح الوردية في make_branch_linked_cashier_headers — أي دور
+    (مدير مثلاً) ممكن يبيع مباشرة برضو، فمحتاج وردية مفتوحة نفس الكاشير."""
     from datetime import date as _date, timedelta as _td
     from decimal import Decimal as _D
-    from tests.conftest import _create_test_user, _make_token
+    from tests.conftest import _create_test_user, _make_token, open_cashier_shift
     from app.modules.core.models import UserBranchMembership
     from app.modules.hr.models import Employee
 
@@ -108,6 +116,7 @@ def make_branch_linked_headers(db, branch, role: str) -> dict[str, str]:
         UserBranchMembership(user_id=user_id, branch_id=branch.id, is_default=True, is_active=True),
     ])
     db.commit()
+    open_cashier_shift(db, branch.id, user_id)
     return {"Authorization": f"Bearer {_make_token(email)}"}
 
 
@@ -116,10 +125,14 @@ def super_admin_headers_for_branch(db, branch) -> dict[str, str]:
     سياق فرع صريح في التوكن نفسه (claim bid) — العضويات مش بتتفحص له خالص
     (core.services.get_allowed_branches). لازم يستخدم حساب
     super_admin@test.local المشترك نفسه (عنده 2FA مفعّل فعليًا، شرط إجباري
-    لدخوله أصلاً — حساب جديد من غيره هيترفض قبل ما يوصل لفحص الفرع خالص)."""
+    لدخوله أصلاً — حساب جديد من غيره هيترفض قبل ما يوصل لفحص الفرع خالص).
+
+    السوبر أدمن نفسه ممكن يبيع/يسجّل دخول مباشر برضو (نفس أي كاشير) —
+    محتاج وردية مفتوحة لهذا الفرع بالظبط."""
     from app.core.kernel.models.user import User
-    from tests.conftest import _make_token
+    from tests.conftest import _make_token, open_cashier_shift
     user = db.query(User).filter(User.email == "super_admin@test.local").first()
+    open_cashier_shift(db, branch.id, user.id)
     return {"Authorization": f"Bearer {_make_token(user.email, branch_id=branch.id)}"}
 
 
@@ -234,7 +247,7 @@ class TestBeachReservationFlow:
         الكامل عبر العضويات (Decision 0003)، لكنه ما زال يختار سياق فرع
         صريحًا للجلسة بدل fallback لأول فرع."""
         from app.core.kernel.models.user import User
-        from tests.conftest import _make_token
+        from tests.conftest import _make_token, open_cashier_shift
 
         branch = make_branch_committed(db)
         branch_cashier_headers = make_branch_linked_cashier_headers(db, branch)
@@ -251,6 +264,7 @@ class TestBeachReservationFlow:
             User.role == "super_admin",
             User.two_factor_enabled.is_(True),
         ).first()
+        open_cashier_shift(db, branch.id, super_admin.id)
         selected_headers = {
             "Authorization": f"Bearer {_make_token(super_admin.email, branch_id=branch.id)}"
         }
@@ -419,12 +433,19 @@ class TestBeachValidation:
         assert resp.status_code == 422
 
     def test_sell_exceeding_capacity_rejected(self, client: TestClient, db, fake_redis, cashier_headers):
+        from app.modules.beach import crud as beach_crud
+
         branch = make_branch_committed(db)
         branch_cashier_headers = make_branch_linked_cashier_headers(db, branch)
+        # سعة صغيرة صراحةً — quantity=100 لسه جوّه حد الـschema (le=100) بس
+        # بيتخطى سعة اليوم المتاحة، فالرفض لازم يكون منطق عمل (400) مش
+        # validation عام (422).
+        beach_crud.get_or_create_inventory(db, branch.id, date.today(), capacity_max=5)
+        db.commit()
         resp = client.post(
             "/api/v1/beach/sell",
             params={"branch_id": branch.id},
-            json={"tx_type": "entry", "quantity": 999999},
+            json={"tx_type": "entry", "quantity": 100},
             headers=branch_cashier_headers,
         )
         assert resp.status_code == 400

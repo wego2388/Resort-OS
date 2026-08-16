@@ -38,6 +38,7 @@ from app.modules.finance.schemas import (
     ExchangeRateCreate, ExchangeRateRead,
     FolioChargeCreate, FolioChargeRead,
     FolioCreate, FolioRead, IncomeStatementReport, JournalEntryCreate, JournalEntryRead,
+    PaymentChannelCreate, PaymentChannelRead, PaymentChannelUpdate,
     PaymentCreate, PaymentRead,
     RevenueAuditLogRead,
     ShiftEndReport, ShiftInvoiceLine, TrialBalanceReport, VoidPaymentRequest,
@@ -1097,3 +1098,53 @@ def get_bank_reconciliation_summary(
         return services.get_bank_reconciliation_summary(db, bank_account_id, as_of)
     except ValueError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+
+
+# ── Payment Channels ─────────────────────────────────────────────────────
+
+@router.post("/finance/payment-channels", response_model=PaymentChannelRead,
+             status_code=status.HTTP_201_CREATED)
+def create_payment_channel(data: PaymentChannelCreate, db: DbDep, user=Depends(get_finance_user)):
+    try:
+        core_services.assert_branch_access(db, user, data.branch_id, "إضافة قناة تحصيل")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+    try:
+        return services.create_payment_channel(db, data)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "كود القناة ده مستخدم بالفعل في هذا الفرع")
+
+
+@router.get("/finance/payment-channels", response_model=list[PaymentChannelRead])
+def list_payment_channels(
+    db: DbDep, user=Depends(get_finance_user),
+    branch_id: int = Query(...),
+    active_only: bool = Query(False),
+    method: Optional[str] = Query(None, pattern=r"^(cash|card|wallet)$"),
+):
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "عرض قنوات التحصيل")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+    return services.list_payment_channels(db, branch_id, active_only, method)
+
+
+@router.patch("/finance/payment-channels/{channel_id}", response_model=PaymentChannelRead)
+def update_payment_channel(
+    channel_id: int, data: PaymentChannelUpdate, db: DbDep, user=Depends(get_finance_user),
+):
+    try:
+        channel = services.get_payment_channel_or_404(db, channel_id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+    try:
+        core_services.assert_branch_access(db, user, channel.branch_id, "تعديل قناة تحصيل")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+    try:
+        return services.update_payment_channel(db, channel_id, data)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))

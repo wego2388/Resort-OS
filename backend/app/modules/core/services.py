@@ -861,6 +861,14 @@ def upsert_setting(
         if branch_id is not None and user_level(actor) < 100:
             assert_branch_access(db, actor, branch_id, "تعديل إعدادات هذا الفرع")
 
+    # Typed operational settings must be validated before they can become a
+    # misleading saved value.  The Settings table is intentionally generic,
+    # so domain-specific parsing stays in the pure domain engine.
+    if key == "beach.capacity_max":
+        from app.resort_os.beach_engine import parse_beach_capacity_max  # noqa: PLC0415
+
+        value = str(parse_beach_capacity_max(value))
+
     old_row = crud.get_setting_exact(db, key, branch_id)
     old_value = old_row.value if old_row else None
 

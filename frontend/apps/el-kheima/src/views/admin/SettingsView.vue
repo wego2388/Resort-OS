@@ -56,7 +56,7 @@ const QUICK_LINKS = [
 //     get_effective_service_charge_percentage — بيتقروا في dining (POS)،
 //     beach، وeta_service (فاتورة إلكترونية) عبر نفس fallback الموجود
 //     أصلاً في get_setting_value (صف الفرع → الصف العام → env القديم).
-//   - الباقي (default_currency, timezone, beach.capacity_max, no_show_policy,
+//   - الباقي (default_currency, timezone, no_show_policy,
 //     discount_approval_threshold) — القيمة الفعلية دايمًا بتتاخد من متغيرات
 //     بيئة السيرفر (.env) أو من عمود تاني في الداتابيز، مش من الصف ده — تعديله
 //     من هنا مالوش أي أثر تشغيلي حاليًا (اتأكد بالبحث في الكود كله، مش افتراض).
@@ -132,10 +132,10 @@ const SETTINGS_META: Record<string, SettingMeta> = {
   },
   'beach.capacity_max': {
     description: {
-      ar: 'أقصى سعة استيعابية للشاطئ. تنبيه: السعة الفعلية المُستخدمة في التشغيل بتتحدد من بيانات مخزون الشاطئ في الداتابيز، مش من هنا — تعديل القيمة دي حاليًا بلا أثر.',
-      en: 'Maximum beach capacity. Note: the capacity actually used in operations comes from the beach inventory data in the database, not this — editing this value currently has no effect.',
+      ar: 'الحد اليومي لتذاكر دخول الشاطئ. يُطبَّق فعليًا على اليوم الحالي عند التحديث التالي، وتبدأ به الأيام الجديدة تلقائيًا؛ سجلات الأيام السابقة لا تتغير.',
+      en: 'Daily beach-admission limit. It applies to today on the next refresh and is inherited automatically by new days; prior-day records remain unchanged.',
     },
-    live: false,
+    live: true,
   },
   no_show_policy: {
     description: {

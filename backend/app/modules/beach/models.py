@@ -66,6 +66,14 @@ class BeachTransaction(Base, TimestampMixin):
     # Persist the tender selected at sale time. Credit posting validates this
     # source-of-truth field so a cash ticket cannot later be charged to credit.
     payment_method:  Mapped[str | None]   = mapped_column(String(30), nullable=True)
+    # قناة التحصيل المحاسبية المختارة (مثلاً Visa CIB/Vodafone Cash/الصندوق)
+    # مع snapshot للحساب الفعلي حتى ينعكس الـvoid على نفس GL التاريخي.
+    payment_channel_id: Mapped[int | None] = mapped_column(
+        ForeignKey("payment_channels.id", ondelete="SET NULL"), nullable=True, index=True,
+    )
+    payment_channel_code: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    payment_channel_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    settlement_account_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
     folio_id:        Mapped[int | None]   = mapped_column(ForeignKey("folios.id", ondelete="SET NULL"), nullable=True)
     b2b_contract_id: Mapped[int | None]   = mapped_column(ForeignKey("b2b_contracts.id", ondelete="SET NULL"), nullable=True)
     notes:           Mapped[str | None]   = mapped_column(String(300), nullable=True)

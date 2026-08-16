@@ -39,6 +39,12 @@ interface SplitRow {
   amount: string
   roomId: string
   cashCurrency: CashCurrency
+  paymentChannelId: number | null
+}
+
+interface PaymentChannel {
+  id: number; code: string; name: string; name_ar: string | null
+  method: 'cash' | 'card' | 'wallet'; is_default: boolean; is_active: boolean
 }
 
 interface PMSRoom {
@@ -86,6 +92,34 @@ const currency = 'EGP'
 
 const mode = ref<'single' | 'split'>('single')
 const paymentMethod = ref<PaymentMethod>('cash')
+
+// ── قنوات التحصيل (الصندوق/Visa CIB/Vodafone Cash...) — فرع بلا أي قنوات
+// مُعرَّفة يفضل يشتغل زي الأول (legacy)، مفيش أي تغيير سلوك إجباري.
+const paymentChannels = ref<PaymentChannel[]>([])
+const selectedPaymentChannelId = ref<number | null>(null)
+const channelsForCurrentMethod = computed(() =>
+  paymentChannels.value.filter(c => c.method === paymentMethod.value),
+)
+function channelsForMethod(method: PaymentMethod): PaymentChannel[] {
+  return paymentChannels.value.filter(c => c.method === method)
+}
+async function loadPaymentChannels() {
+  if (!props.branchId) return
+  try {
+    const { data } = await api.get(ENDPOINTS.finance.paymentChannels, {
+      params: { branch_id: props.branchId, active_only: true },
+    })
+    paymentChannels.value = data
+  } catch {
+    paymentChannels.value = []
+  }
+}
+watch([paymentMethod, channelsForCurrentMethod], () => {
+  const options = channelsForCurrentMethod.value
+  if (!options.some(c => c.id === selectedPaymentChannelId.value)) {
+    selectedPaymentChannelId.value = options.find(c => c.is_default)?.id ?? null
+  }
+})
 const cashReceived = ref('')
 const selectedRoomId = ref('')
 const roomSearch = ref('')
@@ -201,8 +235,8 @@ const roomOptions = computed<SelectOption[]>(() => checkedInRooms.value.map(room
 
 function initialSplitRows(): SplitRow[] {
   return [
-    { key: 1, paymentMethod: 'cash', amount: '', roomId: '', cashCurrency: 'EGP' },
-    { key: 2, paymentMethod: 'card', amount: '', roomId: '', cashCurrency: 'EGP' },
+    { key: 1, paymentMethod: 'cash', amount: '', roomId: '', cashCurrency: 'EGP', paymentChannelId: null },
+    { key: 2, paymentMethod: 'card', amount: '', roomId: '', cashCurrency: 'EGP', paymentChannelId: null },
   ]
 }
 
@@ -231,6 +265,7 @@ watch(
     resetPaymentState()
     if (!roomsLoaded.value) loadCheckedInRooms()
     loadCreditAccount()
+    loadPaymentChannels()
     // POS-03: جلب أسعار الصرف عند فتح المودال
     fetchFxRates()
   },
@@ -267,6 +302,19 @@ function selectCreditHolderType(holderType: 'customer' | 'employee') {
   creditLookupDone.value = false
   loadCreditAccount()
 }
+
+// ⚠️ باج حقيقي اتصلح: تعديل رقم الموظف بعد lookup ناجح كان بيسيب
+// creditAccount.value قديم محمّل (حساب الرقم القديم) من غير أي تحديث —
+// لو الكاشير غيّر الرقم (تصحيح غلطة إملائية مثلاً) بس نسي يضغط "بحث"
+// تاني، البيع كان ممكن يترحّل على حساب الموظف الغلط تمامًا. أي تغيير في
+// الرقم الخام لازم يمسح الحساب المحمّل فورًا، عشان الدفع يترفض (creditAccount
+// = null) لحد ما بحث جديد يتم فعليًا.
+watch(employeeCreditHolderId, () => {
+  if (creditAccount.value || creditLookupDone.value) {
+    creditAccount.value = null
+    creditLookupDone.value = false
+  }
+})
 
 watch(
   () => props.branchId,
@@ -390,6 +438,7 @@ function addSplitRow() {
     amount: '',
     roomId: '',
     cashCurrency: 'EGP',
+    paymentChannelId: null,
   })
 }
 
@@ -484,6 +533,9 @@ async function paySingle(approval: Approval | null = null) {
     payload.payment_currency = cashCurrency.value
     payload.payment_fx_rate = currentFxRate.value
   }
+  if (selectedPaymentChannelId.value && ['cash', 'card', 'wallet'].includes(paymentMethod.value)) {
+    payload.payment_channel_id = selectedPaymentChannelId.value
+  }
 
   try {
     const { data } = await api.patch(
@@ -562,6 +614,9 @@ function buildSplitPayments() {
       ...(row.paymentMethod === 'cash' && rowCur !== 'EGP' ? { currency: rowCur, fx_rate: rowFx } : {}),
       ...(row.paymentMethod === 'credit_account' && creditAccount.value
         ? { credit_account_id: creditAccount.value.id }
+        : {}),
+      ...(row.paymentChannelId && ['cash', 'card', 'wallet'].includes(row.paymentMethod)
+        ? { payment_channel_id: row.paymentChannelId }
         : {}),
     })
   }
@@ -688,6 +743,18 @@ async function onCreditApproval(approval: Approval) {
             <span class="text-xl" aria-hidden="true">{{ method.icon }}</span>
             <span>{{ method.label }}</span>
           </button>
+        </div>
+
+        <div v-if="channelsForCurrentMethod.length" class="space-y-1">
+          <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400">{{ t('backoffice.pos.payment.channel') }}</label>
+          <select
+            v-model.number="selectedPaymentChannelId"
+            class="w-full rounded-lg border-2 border-stone-200 dark:border-border bg-white dark:bg-surface px-3 py-2 text-sm font-medium"
+          >
+            <option v-for="ch in channelsForCurrentMethod" :key="ch.id" :value="ch.id">
+              {{ ch.name_ar || ch.name }}{{ ch.is_default ? ` (${t('backoffice.pos.payment.channelDefault')})` : '' }}
+            </option>
+          </select>
         </div>
 
         <div v-if="paymentMethod === 'cash'" class="rounded-2xl border border-stone-200 dark:border-border p-4 space-y-4">
@@ -908,6 +975,17 @@ async function onCreditApproval(approval: Approval) {
               :placeholder="t('backoffice.pos.payment.selectRoom')"
               :options="roomOptions"
               @update:model-value="row.roomId = String($event)"
+            />
+            <AppSelect
+              v-if="channelsForMethod(row.paymentMethod).length"
+              :model-value="row.paymentChannelId ?? ''"
+              class="mt-3"
+              :label="t('backoffice.pos.payment.channel')"
+              :options="channelsForMethod(row.paymentMethod).map(ch => ({
+                value: ch.id,
+                label: (ch.name_ar || ch.name) + (ch.is_default ? ` (${t('backoffice.pos.payment.channelDefault')})` : ''),
+              }))"
+              @update:model-value="row.paymentChannelId = Number($event) || null"
             />
           </div>
           <AppButton

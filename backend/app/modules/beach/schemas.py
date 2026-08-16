@@ -50,7 +50,9 @@ class BeachInventoryRead(BaseModel):
 class BeachSellRequest(BaseModel):
     """طلب بيع تذكرة دخول أو فوطة."""
     tx_type:         str = Field(..., pattern=r"^(entry|entry_child|entry_resident|entry_towel|towel_rent|towel_return)$")
-    quantity:        int = Field(1, ge=1)
+    # حد أعلى تشغيلي — يمنع إدخال غلط بالغلط (زفير رقم زيادة) من غير ما
+    # يقيّد حجوزات مجموعات حقيقية معقولة لمنتجع واحد.
+    quantity:        int = Field(1, ge=1, le=100)
     cashier_id:      Optional[int] = None
     folio_id:        Optional[int] = None
     room_id:         Optional[int] = None
@@ -82,11 +84,73 @@ class BeachSellRequest(BaseModel):
         pattern=r"^(cash|card|wallet|room|credit_account)$",
         description="طريقة الدفع — افتراضي: cash أو room (لو folio_id/room_id موجود)",
     )
+    # قناة التحصيل المختارة (صندوق/Visa CIB/Vodafone Cash...) — اختياري:
+    # None يعني "استخدم الـdefault المُعرَّف لهذه الطريقة"، وفرع لسه معملوش
+    # أي قنوات بيفضل يشتغل بمسار الحساب القديم (legacy) بدون أي تغيير.
+    payment_channel_id: Optional[int] = Field(None, gt=0)
     approver_user_id: Optional[int] = Field(None, gt=0)
     approver_pin: Optional[str] = Field(None, min_length=4, max_length=12)
 
     @model_validator(mode="after")
     def _validate_fx(self) -> "BeachSellRequest":
+        cur = (self.payment_currency or "EGP").upper()
+        if cur != "EGP" and not self.payment_fx_rate:
+            raise ValueError(
+                "payment_fx_rate مطلوب لو payment_currency ≠ EGP — "
+                "مرّر سعر الصرف الحالي عبر GET /finance/exchange-rates"
+            )
+        if self.payment_method == "credit_account" and not (
+            self.customer_id or self.credit_account_id
+        ):
+            raise ValueError(
+                "customer_id أو credit_account_id مطلوب للدفع على حساب آجل"
+            )
+        if self.credit_account_id and self.payment_method != "credit_account":
+            raise ValueError("credit_account_id يُستخدم فقط مع payment_method = credit_account")
+        has_room_target = self.folio_id is not None or self.room_id is not None
+        if self.payment_method == "room" and not has_room_target:
+            raise ValueError("payment_method = room يتطلب folio_id أو room_id")
+        if has_room_target and self.payment_method not in (None, "room", "credit_account"):
+            raise ValueError("طريقة الدفع لا تطابق تحميل البيع على الغرفة")
+        if (self.approver_user_id is None) != (self.approver_pin is None):
+            raise ValueError("بيانات موافقة المدير يجب أن تُرسل كاملة")
+        return self
+
+
+class BeachCartLineItem(BaseModel):
+    """صنف واحد داخل سلة بيع متعددة الأصناف (زي "2 بالغ + فوطة")."""
+    tx_type:  str = Field(..., pattern=r"^(entry|entry_child|entry_resident|entry_towel|towel_rent|towel_return)$")
+    quantity: int = Field(1, ge=1, le=100)
+
+
+class BeachCartSellRequest(BaseModel):
+    """سلة بيع شاطئ متعددة الأصناف — تُنفَّذ كـtransaction واحدة atomic:
+    إما كل الأصناف تنجح مع بعض أو ولا واحد فيهم يترحّل (راجع
+    services.sell_cart). كل الحقول المشتركة (طريقة الدفع، العميل، الفوليو...)
+    نفسها على مستوى السلة كلها؛ كل صنف بس عنده tx_type/quantity الخاصين بيه."""
+    items: list[BeachCartLineItem] = Field(..., min_length=1, max_length=20)
+    cashier_id:      Optional[int] = None
+    folio_id:        Optional[int] = None
+    room_id:         Optional[int] = None
+    b2b_contract_id: Optional[int] = None
+    customer_id:     Optional[int] = None
+    credit_account_id: Optional[int] = Field(None, gt=0)
+    notes:           Optional[str] = None
+    location_id:     Optional[int] = None
+    # مفتاح idempotency على مستوى السلة كلها (مش صنف واحد) — راجع
+    # services.sell_cart لكيفية اشتقاق local_id لكل صنف منه.
+    cart_local_id:   Optional[str] = Field(None, max_length=60)
+    payment_currency: Optional[str]    = Field(None, pattern=r"^[A-Z]{3}$")
+    payment_fx_rate:  Optional[Decimal] = Field(None, gt=0)
+    payment_method:   Optional[str]    = Field(
+        None, pattern=r"^(cash|card|wallet|room|credit_account)$",
+    )
+    payment_channel_id: Optional[int] = Field(None, gt=0)
+    approver_user_id: Optional[int] = Field(None, gt=0)
+    approver_pin: Optional[str] = Field(None, min_length=4, max_length=12)
+
+    @model_validator(mode="after")
+    def _validate_fx(self) -> "BeachCartSellRequest":
         cur = (self.payment_currency or "EGP").upper()
         if cur != "EGP" and not self.payment_fx_rate:
             raise ValueError(
@@ -132,6 +196,10 @@ class BeachTransactionRead(BaseModel):
     voided_reason:   Optional[str] = None
     shift_id:        Optional[int] = None
     location_id:     Optional[int] = None
+    payment_channel_id:   Optional[int] = None
+    payment_channel_code: Optional[str] = None
+    payment_channel_name: Optional[str] = None
+    settlement_account_code: Optional[str] = None
     created_at:      datetime
 
 

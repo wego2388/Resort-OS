@@ -7,6 +7,7 @@ import { useToast } from '@resort-os/ui'
 import POSCustomerModal from '../../components/dining-pos/POSCustomerModal.vue'
 import PinGuardModal from '../../components/PinGuardModal.vue'
 import type { POSCustomer } from '../../components/dining-pos/types'
+import { moneyToMinor, minorToMoney } from '../../components/dining-pos/money'
 
 const toast = useToast()
 const { t } = useI18n()
@@ -131,6 +132,48 @@ type BeachPaymentMethod = 'cash' | 'card' | 'wallet' | 'credit_account'
 type Approval = { approverUserId: number | null; approverPin: string | null }
 const paymentMethod = ref<BeachPaymentMethod>('cash')
 
+// ── قنوات التحصيل (الصندوق/Visa CIB/Vodafone Cash...) ─────────────────────
+// فرع بلا أي قنوات مُعرَّفة لسه يشتغل زي الأول (mode legacy) — الاختيار هنا
+// اختياري تمامًا، الـbackend بيحل الـdefault لو محددش الكاشير حاجة.
+interface PaymentChannel {
+  id: number; code: string; name: string; name_ar: string | null
+  method: 'cash' | 'card' | 'wallet'; is_default: boolean; is_active: boolean
+}
+const paymentChannels = ref<PaymentChannel[]>([])
+const selectedPaymentChannelId = ref<number | null>(null)
+
+const channelsForCurrentMethod = computed(() =>
+  paymentChannels.value.filter(c => c.method === paymentMethod.value),
+)
+
+async function loadPaymentChannels() {
+  if (!branchId.value) return
+  try {
+    const { data } = await api.get(ENDPOINTS.finance.paymentChannels, {
+      params: { branch_id: branchId.value, active_only: true },
+    })
+    paymentChannels.value = data
+  } catch {
+    paymentChannels.value = []  // legacy fallback — الشاشة تفضل تشتغل عادي
+  }
+}
+
+watch([paymentMethod, channelsForCurrentMethod], () => {
+  const options = channelsForCurrentMethod.value
+  if (!options.some(c => c.id === selectedPaymentChannelId.value)) {
+    selectedPaymentChannelId.value = options.find(c => c.is_default)?.id ?? null
+  }
+})
+
+// ── استلام كاش بالجنيه + الفكة (وحدات صحيحة/قروش، بدون float drift) ──────
+const cashReceivedEGP = ref('')
+const totalMinorEGP = computed(() => moneyToMinor(total.value) ?? 0)
+const receivedMinorEGP = computed(() => moneyToMinor(cashReceivedEGP.value))
+const changeMinorEGP = computed(() => {
+  if (receivedMinorEGP.value === null) return null
+  return receivedMinorEGP.value - totalMinorEGP.value
+})
+
 async function selectCustomer(customer: POSCustomer) {
   selectedCustomer.value = customer
   creditHolderType.value = 'customer'
@@ -167,6 +210,14 @@ function selectCreditHolderType(holderType: 'customer' | 'employee') {
   creditAccount.value = null
   loadCreditAccount()
 }
+
+// ⚠️ باج حقيقي اتصلح: تعديل رقم الموظف بعد lookup ناجح كان بيسيب
+// creditAccount.value قديم محمّل من غير أي تحديث — لو الكاشير غيّر الرقم
+// (تصحيح غلطة إملائية) بس نسي يضغط "بحث" تاني، البيع كان ممكن يترحّل على
+// حساب موظف غلط. أي تغيير في الرقم الخام لازم يمسح الحساب المحمّل فورًا.
+watch(employeeCreditHolderId, () => {
+  if (creditAccount.value) creditAccount.value = null
+})
 
 // Ref for auto-focus after sale
 const firstButtonRef = ref<HTMLButtonElement | null>(null)
@@ -295,6 +346,13 @@ async function completeSale(approval: Approval | null = null) {
       setTimeout(() => { errorMsg.value = '' }, 4000)
       return
     }
+  } else if (paymentMethod.value === 'cash') {
+    // استلام كاش بالجنيه إجباري — مينفعش نقفل البيع من غير نعرف الفكة
+    if (receivedMinorEGP.value === null || receivedMinorEGP.value < totalMinorEGP.value) {
+      errorMsg.value = t('backoffice.beachPos.cashReceivedInsufficient')
+      setTimeout(() => { errorMsg.value = '' }, 4000)
+      return
+    }
   }
 
   submitting.value = true
@@ -303,41 +361,45 @@ async function completeSale(approval: Approval | null = null) {
     const soldTxIds: number[] = []
     let anyQueued = false
 
-    // POS-03: payload إضافي للعملة — يُضاف لكل صنف في السلة
+    // POS-03: payload إضافي للعملة
     const fxPayload = cashCurrency.value !== 'EGP' && currentFxRate.value > 0
       ? { payment_currency: cashCurrency.value, payment_fx_rate: currentFxRate.value }
       : {}
+    const sharedPayload = {
+      payment_method: paymentMethod.value,
+      ...(creditHolderType.value === 'customer' && selectedCustomer.value
+        ? { customer_id: selectedCustomer.value.id }
+        : {}),
+      ...(paymentMethod.value === 'credit_account' && creditAccount.value
+        ? { credit_account_id: creditAccount.value.id }
+        : {}),
+      ...(approval?.approverUserId ? {
+        approver_user_id: approval.approverUserId,
+        approver_pin: approval.approverPin,
+      } : {}),
+      ...(selectedPaymentChannelId.value ? { payment_channel_id: selectedPaymentChannelId.value } : {}),
+      ...fxPayload,
+    }
 
-    for (const item of lineItems) {
-      // submitOrder بيرجّع null لو اتقفل في الطابور (offline أو انقطاع نت
-      // لحظي)، ويرمي الخطأ نفسه لو السيرفر رفضه صراحة (زي تجاوز السعة) —
-      // نوقف هنا في الحالة دي، الأصناف اللي اتباعت قبل كده فعلاً اتسجّلت
-      // (مش rollback جماعي، كل عملية مستقلة).
-      const payload = {
-        tx_type: item.tx_type,
-        quantity: item.quantity,
-        payment_method: paymentMethod.value,
-        ...(creditHolderType.value === 'customer' && selectedCustomer.value
-          ? { customer_id: selectedCustomer.value.id }
-          : {}),
-        ...(paymentMethod.value === 'credit_account' && creditAccount.value
-          ? { credit_account_id: creditAccount.value.id }
-          : {}),
-        ...(approval?.approverUserId ? {
-          approver_user_id: approval.approverUserId,
-          approver_pin: approval.approverPin,
-        } : {}),
-        ...fxPayload,
+    // سلة أونلاين (بما فيها الحساب الآجل، دايمًا أونلاين) لازم تترحّل كـ
+    // transaction واحدة atomic — إما كل الأصناف تنجح مع بعض أو ولا واحد
+    // فيهم يترحّل، بدل الحلقة القديمة اللي كانت بتبعت طلب منفصل لكل صنف
+    // (وممكن جزء ينجح وجزء يفشل نص السلة). أوفلاين فقط لسه بيستخدم طابور
+    // per-item القديم (submitBeachSale) — نفس عقد التزامن الموجود.
+    if (isOnline.value) {
+      const { data } = await api.post(ENDPOINTS.beach.sellCart, {
+        items: lineItems.map(item => ({ tx_type: item.tx_type, quantity: item.quantity })),
+        cart_local_id: crypto.randomUUID(),
+        ...sharedPayload,
+      }, { params: { branch_id: branchId.value } })
+      for (const tx of data as { id: number }[]) soldTxIds.push(tx.id)
+    } else {
+      for (const item of lineItems) {
+        const payload = { tx_type: item.tx_type, quantity: item.quantity, ...sharedPayload }
+        const data = await submitBeachSale(branchId.value ?? 0, payload)
+        if (data === null) { anyQueued = true; continue }
+        soldTxIds.push(data.id)
       }
-      // Credit-limit decisions and manager approval can never be replayed
-      // from an offline queue; submit this financial tender online only.
-      const data = paymentMethod.value === 'credit_account'
-        ? (await api.post(ENDPOINTS.beach.sell, payload, {
-            params: { branch_id: branchId.value },
-          })).data
-        : await submitBeachSale(branchId.value ?? 0, payload)
-      if (data === null) { anyQueued = true; continue }
-      soldTxIds.push(data.id)
     }
 
     for (const txId of soldTxIds) await printTicket(txId)
@@ -385,6 +447,7 @@ let refreshInterval: ReturnType<typeof setInterval> | null = null
 onMounted(() => {
   fetchInventory()
   fetchFxRates()  // POS-03: جلب أسعار الصرف عند فتح الشاشة
+  loadPaymentChannels()
   refreshInterval = setInterval(fetchInventory, 30_000)
 })
 
@@ -456,6 +519,7 @@ onUnmounted(() => {
                 <span class="text-xs text-gray-400">({{ occupancyPct }}%)</span>
               </span>
             </div>
+            <div class="mb-1 text-[11px] text-gray-400 dark:text-gray-400">{{ t('backoffice.beachPos.occupancyHint') }}</div>
             <div class="h-3 w-full rounded-full bg-gray-200 dark:bg-gray-700">
               <div
                 class="h-3 rounded-full transition-all duration-500"
@@ -656,7 +720,7 @@ onUnmounted(() => {
                 { val: 'credit_account', label: t('backoffice.beachPos.payCredit'), icon: '📒' },
               ]"
               :key="m.val"
-              @click="paymentMethod = (m.val as BeachPaymentMethod); cashCurrency = 'EGP'; foreignReceived = ''"
+              @click="paymentMethod = (m.val as BeachPaymentMethod); cashCurrency = 'EGP'; foreignReceived = ''; cashReceivedEGP = ''"
               :class="[
                 'py-2 rounded-lg text-sm font-medium transition-all border-2',
                 paymentMethod === m.val
@@ -664,6 +728,20 @@ onUnmounted(() => {
                   : 'border-stone-200 text-gray-600 hover:border-blue-300 hover:bg-gray-50 dark:border-border dark:text-gray-400 dark:hover:bg-gray-800',
               ]"
             >{{ m.icon }} {{ m.label }}</button>
+          </div>
+
+          <!-- قناة التحصيل — تظهر بس لو الفرع عنده قنوات مُعرَّفة لطريقة الدفع
+               دي؛ فرع بلا قنوات (legacy) يشتغل عادي من غير الاختيار ده. -->
+          <div v-if="channelsForCurrentMethod.length" class="space-y-1">
+            <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400">{{ t('backoffice.beachPos.paymentChannel') }}</label>
+            <select
+              v-model.number="selectedPaymentChannelId"
+              class="w-full rounded-lg border-2 border-stone-200 dark:border-border bg-white dark:bg-surface px-3 py-2 text-sm font-medium"
+            >
+              <option v-for="ch in channelsForCurrentMethod" :key="ch.id" :value="ch.id">
+                {{ ch.name_ar || ch.name }}{{ ch.is_default ? ` (${t('backoffice.beachPos.paymentChannelDefault')})` : '' }}
+              </option>
+            </select>
           </div>
 
           <div v-if="paymentMethod === 'credit_account'" class="rounded-xl border border-amber-200 bg-amber-50/70 p-3 dark:border-amber-800 dark:bg-amber-950/20 space-y-2">
@@ -730,7 +808,7 @@ onUnmounted(() => {
                     ? 'border-blue-600 bg-blue-50 text-blue-700 dark:border-blue-500 dark:bg-blue-950/40 dark:text-blue-300'
                     : 'border-stone-200 text-gray-600 hover:border-blue-300 dark:border-border dark:text-gray-400',
                 ]"
-                @click="cashCurrency = cur; foreignReceived = ''"
+                @click="cashCurrency = cur; foreignReceived = ''; cashReceivedEGP = ''"
               >
                 {{ cur === 'EGP' ? '🇪🇬 EGP' : cur === 'USD' ? '🇺🇸 USD' : '🇪🇺 EUR' }}
               </button>
@@ -779,6 +857,35 @@ onUnmounted(() => {
               >
                 <span>{{ t('backoffice.beachPos.changeInEGP') }}</span>
                 <span class="tabular-nums">{{ changeInEGP >= 0 ? `${changeInEGP.toFixed(2)} ج` : '—' }}</span>
+              </div>
+            </template>
+
+            <!-- استلام الكاش بالجنيه + الفكة — نفس منطق الوحدات الصحيحة
+                 (قروش) المستخدم في POSPaymentModal.vue بالضبط، بدل float. -->
+            <template v-else>
+              <div>
+                <label class="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">
+                  {{ t('backoffice.beachPos.cashReceivedLabel') }}
+                </label>
+                <input
+                  v-model="cashReceivedEGP"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  inputmode="decimal"
+                  class="w-full rounded-lg border-2 border-stone-200 dark:border-border bg-white dark:bg-surface px-3 py-2 text-base font-bold tabular-nums focus:outline-none focus:border-blue-500"
+                  :placeholder="total.toFixed(2)"
+                />
+              </div>
+              <div
+                v-if="changeMinorEGP !== null"
+                :class="[
+                  'rounded-lg px-3 py-2 flex items-center justify-between text-sm font-bold',
+                  changeMinorEGP >= 0 ? 'bg-green-50 text-green-700 dark:bg-green-950/30 dark:text-green-300' : 'bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-300',
+                ]"
+              >
+                <span>{{ t('backoffice.beachPos.changeDueEGP') }}</span>
+                <span class="tabular-nums">{{ changeMinorEGP >= 0 ? `${minorToMoney(changeMinorEGP)} ج` : '—' }}</span>
               </div>
             </template>
           </div>

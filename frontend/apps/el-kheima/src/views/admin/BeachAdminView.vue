@@ -197,6 +197,34 @@ async function downloadTicket(txId: number) {
   } catch { toast.error(t('backoffice.beachAdmin.ticketDownloadError')) }
 }
 
+// ── إلغاء معاملة — الصلاحية الحقيقية على الـbackend (require_permission
+// min_role_level=60)، الزر هنا مجرد واجهة؛ السبب إجباري ومُسجَّل في سجل
+// التدقيق مع القيد المحاسبي المعكوس (راجع beach.services.void_transaction).
+const voidingTx = ref<BeachTransaction | null>(null)
+const voidReason = ref('')
+const voidSubmitting = ref(false)
+
+function openVoidModal(tx: BeachTransaction) {
+  voidingTx.value = tx
+  voidReason.value = ''
+}
+
+async function confirmVoid() {
+  if (!voidingTx.value || voidReason.value.trim().length < 3) return
+  voidSubmitting.value = true
+  try {
+    await api.post(ENDPOINTS.beach.transactionVoid(voidingTx.value.id), { reason: voidReason.value.trim() })
+    toast.success(t('backoffice.beachAdmin.voidSuccess'))
+    voidingTx.value = null
+    await loadTransactions()
+  } catch (e: unknown) {
+    const detail = (e as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
+    toast.error(typeof detail === 'string' ? detail : t('backoffice.beachAdmin.voidError'))
+  } finally {
+    voidSubmitting.value = false
+  }
+}
+
 async function downloadEodPdf() {
   downloadingPdf.value = true
   try {
@@ -341,6 +369,7 @@ onMounted(() => switchTab('summary'))
             <div :class="['text-3xl font-black', capacityTextColor]">
               {{ inventory?.capacity_used ?? 0 }} / {{ inventory?.capacity_max ?? 0 }}
             </div>
+            <div class="text-xs text-gray-400 dark:text-gray-400">{{ t('backoffice.beachAdmin.currentCapacityHint') }}</div>
             <div class="mt-3 h-3 rounded-full bg-gray-100 dark:bg-gray-700">
               <div :class="['h-3 rounded-full transition-all', capacityColor]"
                 :style="{ width: (inventory?.capacity_pct ?? 0) + '%' }"></div>
@@ -440,9 +469,11 @@ onMounted(() => switchTab('summary'))
                   <AppBadge v-else-if="tx.surge_applied" variant="warning">{{ t('backoffice.beachAdmin.surge') }}</AppBadge>
                   <AppBadge v-else variant="success">{{ t('backoffice.beachAdmin.completed') }}</AppBadge>
                 </td>
-                <td class="px-4 py-3">
+                <td class="px-4 py-3 whitespace-nowrap">
                   <button v-if="!tx.voided_at" @click="downloadTicket(tx.id)"
-                    class="text-xs text-blue-600 hover:underline dark:text-blue-300">🖨️ {{ t('backoffice.beachAdmin.ticket') }}</button>
+                    class="text-xs text-blue-600 hover:underline dark:text-blue-300 me-3">🖨️ {{ t('backoffice.beachAdmin.ticket') }}</button>
+                  <button v-if="!tx.voided_at && auth.hasRole('manager')" @click="openVoidModal(tx)"
+                    class="text-xs text-red-600 hover:underline dark:text-red-300">✕ {{ t('backoffice.beachAdmin.void') }}</button>
                 </td>
               </tr>
             </tbody>
@@ -688,6 +719,25 @@ onMounted(() => switchTab('summary'))
         <div class="flex gap-3 justify-end">
           <AppButton variant="ghost" @click="creditModal = false">{{ t('backoffice.beachAdmin.cancel') }}</AppButton>
           <AppButton :loading="savingCredit" @click="saveCreditEdit">{{ t('backoffice.beachAdmin.save') }}</AppButton>
+        </div>
+      </div>
+    </AppModal>
+
+    <!-- ══ MODAL: VOID TRANSACTION ══ -->
+    <AppModal :open="!!voidingTx" @close="voidingTx = null" :title="t('backoffice.beachAdmin.voidModalTitle', { id: voidingTx?.id ?? '' })">
+      <div class="space-y-4">
+        <p class="text-sm text-gray-600 dark:text-gray-400">{{ t('backoffice.beachAdmin.voidHint') }}</p>
+        <div>
+          <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">{{ t('backoffice.beachAdmin.voidReason') }}</label>
+          <textarea v-model="voidReason" rows="2" minlength="3" maxlength="200"
+            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            :placeholder="t('backoffice.beachAdmin.voidReasonPlaceholder')" />
+        </div>
+        <div class="flex gap-3 justify-end">
+          <AppButton variant="ghost" @click="voidingTx = null">{{ t('backoffice.beachAdmin.cancel') }}</AppButton>
+          <AppButton variant="danger" :disabled="voidReason.trim().length < 3" :loading="voidSubmitting" @click="confirmVoid">
+            {{ t('backoffice.beachAdmin.confirmVoid') }}
+          </AppButton>
         </div>
       </div>
     </AppModal>

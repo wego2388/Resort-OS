@@ -386,6 +386,8 @@ def upsert_setting(
             status.HTTP_409_CONFLICT,
             {"error_code": "ACTOR_AUTHORIZATION_CHANGED", "message": str(exc)},
         )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
 # ─────────────────────── Audit Logs ──────────────────────────────────

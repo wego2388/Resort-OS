@@ -456,6 +456,9 @@ class OrderStatusUpdate(BaseModel):
     charge_to_room_id: int | None = None
     payment_method: str | None = Field(None, pattern=r"^(cash|card|room|wallet|credit_account)$")
     credit_account_id: int | None = Field(None, gt=0)
+    # قناة التحصيل المختارة (صندوق/Visa CIB/...) — اختياري: None يعني
+    # استخدم الـdefault المُعرَّف لهذه الطريقة، وفرع بلا قنوات يشتغل زي الأول.
+    payment_channel_id: int | None = Field(None, gt=0)
     approver_user_id: int | None = Field(None, gt=0)
     approver_pin: str | None = Field(None, min_length=4, max_length=12)
     # POS-03: عملة الدفع الكاش — اختيارية، افتراضية EGP. لو currency ≠ EGP
@@ -501,6 +504,9 @@ class SplitBillPayment(BaseModel):
     # POS-03: عملة الدفع الكاش — اختيارية، افتراضية EGP
     currency: str | None = Field(None, pattern=r"^[A-Z]{3}$")
     fx_rate:  Decimal | None = Field(None, gt=0)
+    # قناة التحصيل لهذا الصف بالذات — كل صف في التقسيم ممكن يستخدم قناة
+    # مختلفة (كاش من الصندوق + كارت عبر Visa CIB مثلاً).
+    payment_channel_id: int | None = Field(None, gt=0)
 
     @model_validator(mode="after")
     def _validate_fx(self) -> SplitBillPayment:

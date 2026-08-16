@@ -51,6 +51,7 @@ export const ENDPOINTS = {
     inventory: '/api/v1/beach/inventory',
     summary: '/api/v1/beach/summary',
     sell: '/api/v1/beach/sell',
+    sellCart: '/api/v1/beach/sell-cart',
     transactions: '/api/v1/beach/transactions',
     ticket: (txId: number) => `/api/v1/beach/transactions/${txId}/ticket`,
     b2bContracts: '/api/v1/beach/b2b-contracts',
@@ -176,6 +177,8 @@ export const ENDPOINTS = {
     depreciationRun: '/api/v1/finance/depreciation/run',
     etaInvoices: '/api/v1/finance/eta/invoices',
     etaInvoice: (id: number) => `/api/v1/finance/eta/invoices/${id}`,
+    paymentChannels: '/api/v1/finance/payment-channels',
+    paymentChannel: (id: number) => `/api/v1/finance/payment-channels/${id}`,
   },
   hr: {
     employees: '/api/v1/hr/employees',

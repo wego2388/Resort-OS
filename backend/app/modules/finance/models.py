@@ -88,6 +88,43 @@ class FolioCharge(Base, TimestampMixin):
     folio: Mapped["Folio"] = relationship("Folio", back_populates="charges")
 
 
+class PaymentChannel(Base, TimestampMixin):
+    """قناة تحصيل يختارها الكاشير وتُرحَّل إلى حساب GL محدد.
+
+    ``method`` يظل التصنيف التشغيلي العام (cash/card/wallet)، بينما السجل ده
+    يحدد الوجهة الفعلية مثل «صندوق الاستقبال»، «Visa CIB» أو «Vodafone Cash».
+    التعطيل يحافظ على التاريخ؛ لا يوجد مسار حذف من الـAPI.
+    """
+    __tablename__ = "payment_channels"
+    __table_args__ = (
+        UniqueConstraint("branch_id", "code", name="uq_payment_channel_branch_code"),
+        Index(
+            "uq_payment_channel_default_method",
+            "branch_id", "method",
+            unique=True,
+            postgresql_where=text("is_default = true"),
+            sqlite_where=text("is_default = 1"),
+        ),
+    )
+
+    id:              Mapped[int]        = mapped_column(primary_key=True)
+    branch_id:       Mapped[int]        = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"), index=True)
+    code:            Mapped[str]        = mapped_column(String(50))
+    name:            Mapped[str]        = mapped_column(String(200))
+    name_ar:         Mapped[str | None] = mapped_column(String(200), nullable=True)
+    method:          Mapped[str]        = mapped_column(String(20), index=True)  # cash|card|wallet
+    gl_account_id:   Mapped[int]        = mapped_column(ForeignKey("accounts.id", ondelete="RESTRICT"), index=True)
+    bank_account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("bank_accounts.id", ondelete="SET NULL"), nullable=True, index=True,
+    )
+    is_default:      Mapped[bool]       = mapped_column(Boolean, default=False, server_default=text("false"))
+    is_active:       Mapped[bool]       = mapped_column(Boolean, default=True, server_default=text("true"))
+    sort_order:      Mapped[int]        = mapped_column(Integer, default=0, server_default="0")
+
+    gl_account:   Mapped["Account"]           = relationship("Account")
+    bank_account: Mapped["BankAccount | None"] = relationship("BankAccount")
+
+
 class Payment(Base, TimestampMixin):
     # ⚠️ باج حقيقي اتصلح: migration 504f42d2c755 (2026-07-15) عمل
     # folio_id nullable + ضاف عمود ref_order_id على جدول payments فعليًا
@@ -137,9 +174,20 @@ class Payment(Base, TimestampMixin):
     # منطقي، بدون FK حقيقي عشان مايكسرش أي حذف نظري للأصل) — بيدّي أثر مالي
     # قابل للتتبّع من العكس للأصل. NULL لأي tender أصلي (مش عكس).
     original_payment_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    # قناة التحصيل المختارة وقت البيع + snapshot مقروء يحافظ على التاريخ حتى
+    # لو القناة اتعطلت/اتغير اسمها. settlement_account_code هو حساب GL الفعلي
+    # الذي استُخدم في القيد ويُعاد استخدامه في المرتجع بدل حل إعداد حالي قد
+    # يكون تغيّر بعد البيع.
+    payment_channel_id: Mapped[int | None] = mapped_column(
+        ForeignKey("payment_channels.id", ondelete="SET NULL"), nullable=True, index=True,
+    )
+    payment_channel_code: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    payment_channel_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    settlement_account_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     folio: Mapped["Folio | None"] = relationship("Folio", back_populates="payments")
     shift: Mapped["CashierShift"] = relationship("CashierShift", back_populates="payments")
+    payment_channel: Mapped["PaymentChannel | None"] = relationship("PaymentChannel")
 
 
 class CashierShift(Base, TimestampMixin):

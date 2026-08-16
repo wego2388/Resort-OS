@@ -10,6 +10,7 @@ from decimal import Decimal
 import pytest
 
 from app.resort_os.beach_engine import (
+    BEACH_CAPACITY_MAX_LIMIT,
     TX_CONFIG,
     TX_TYPES,
     B2BContractState,
@@ -18,6 +19,7 @@ from app.resort_os.beach_engine import (
     calculate_inventory_delta,
     calculate_tx_price,
     is_contract_overdue,
+    parse_beach_capacity_max,
     validate_b2b_checkin,
     validate_entry,
     would_exceed_credit_limit,
@@ -70,6 +72,24 @@ def _base_prices() -> dict[str, Decimal]:
         "entry_towel": Decimal("250"),
         "towel_rent":  Decimal("50"),
     }
+
+
+# ─── BeachInventoryState Properties ──────────────────────────────────
+
+class TestBeachCapacitySetting:
+
+    @pytest.mark.parametrize(("raw", "expected"), [("1", 1), ("350", 350), (" 200 ", 200)])
+    def test_valid_capacity(self, raw, expected):
+        assert parse_beach_capacity_max(raw) == expected
+
+    @pytest.mark.parametrize("raw", ["", "0", "-1", "200.5", "abc", True])
+    def test_invalid_capacity(self, raw):
+        with pytest.raises(ValueError):
+            parse_beach_capacity_max(raw)
+
+    def test_capacity_upper_guard(self):
+        with pytest.raises(ValueError):
+            parse_beach_capacity_max(BEACH_CAPACITY_MAX_LIMIT + 1)
 
 
 # ─── BeachInventoryState Properties ──────────────────────────────────

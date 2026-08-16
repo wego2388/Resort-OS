@@ -403,10 +403,25 @@ const displayedSubtotal = computed(() => {
   return order.value.items.reduce((sum, item) => sum + lineTotal(item), 0)
 })
 
+// ⚠️ باج حقيقي اتصلح: القيمة المخزّنة فعليًا للدفع المقسّم هي
+// "split:cash,card" (تفصيل طرق التحصيل الفعلية، راجع dining.services'
+// order.payment_method = "split:" + ",".join(...)) — مش "split" وحدها. كان
+// بيفشل في المطابقة الحرفية ويطلع النص الخام زي ما هو للمستخدم بدل ترجمته.
+const METHOD_KEYS: Record<string, string> = { credit_account: 'creditAccount' }
+
+function tenderLabel(method: string): string {
+  const key = METHOD_KEYS[method] ?? method
+  const known = ['cash', 'card', 'room', 'wallet', 'creditAccount']
+  return known.includes(key) ? t(`backoffice.pos.payment.methods.${key}`) : method
+}
+
 function paymentMethodLabel(method: string): string {
+  if (method.startsWith('split:')) {
+    const tenders = method.slice('split:'.length).split(',').filter(Boolean).map(tenderLabel)
+    return `${t('backoffice.pos.payment.split')} (${tenders.join(' + ')})`
+  }
   if (method === 'split') return t('backoffice.pos.payment.split')
-  const known = ['cash', 'card', 'room', 'wallet']
-  return known.includes(method) ? t(`backoffice.pos.payment.methods.${method}`) : method
+  return tenderLabel(method)
 }
 </script>
 

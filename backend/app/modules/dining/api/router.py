@@ -774,6 +774,7 @@ async def update_order_status(
             credit_account_id=data.credit_account_id,
             payment_currency=data.payment_currency,
             payment_fx_rate=data.payment_fx_rate,
+            payment_channel_id=data.payment_channel_id,
             settled_by=user.id,
             acting_user_level=user_level(user),
             approver_user_id=data.approver_user_id,

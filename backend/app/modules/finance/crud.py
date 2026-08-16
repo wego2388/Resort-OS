@@ -14,13 +14,13 @@ from app.modules.finance.models import (
     Account, AccountingPeriod, AssetDepreciationEntry, BankAccount, BankStatementLine,
     CashierShift, CashierShiftCashCount, CashMovement, ConditionalDiscount,
     CostCenter, ETAInvoice, ExchangeRate, Folio, FolioCharge, JournalEntry, JournalLine, Payment,
-    Check, CheckMovement, RevenueAuditLog,
+    PaymentChannel, Check, CheckMovement, RevenueAuditLog,
 )
 from app.modules.finance.schemas import (
     AccountCreate, BankAccountCreate, BankAccountUpdate, BankStatementLineCreate,
     ConditionalDiscountCreate, ConditionalDiscountUpdate,
     CostCenterCreate, ExchangeRateCreate, FolioCreate, FolioChargeCreate,
-    JournalEntryCreate, PaymentCreate,
+    JournalEntryCreate, PaymentChannelCreate, PaymentChannelUpdate, PaymentCreate,
 )
 
 
@@ -305,6 +305,7 @@ def create_direct_payment(
     fx_rate: Optional[Decimal] = None,
     source: Optional[str] = None,
     original_payment_id: Optional[int] = None,
+    channel_snapshot: Optional[dict] = None,
 ) -> Payment:
     """يسجّل دفعة POS مباشرة (folio_id=None) — بيع نقدي/كارت فوري من موديول
     عمل تاني (شاطئ/دايننج) مش محمّل على فوليو غرفة، عشان يظهر في تقرير نهاية
@@ -315,13 +316,22 @@ def create_direct_payment(
 
     POS-03: currency/fx_rate — amount دايمًا EGP-equivalent؛ لو الكاشير استلم
     كاش بعملة أجنبية، amount = المعادل بالجنيه، currency = العملة الحقيقية،
-    fx_rate = سعر الصرف المستخدم. fx_rate=None تعني EGP (بيتحوّل لـ 1.0 تلقائيًا)."""
+    fx_rate = سعر الصرف المستخدم. fx_rate=None تعني EGP (بيتحوّل لـ 1.0 تلقائيًا).
+
+    ``channel_snapshot``: dict بـ payment_channel_id/code/name/
+    settlement_account_code (راجع finance.services.payment_channel_snapshot)
+    — لقطة تاريخية لقناة التحصيل وقت البيع، مش مرجع حي."""
     _fx = fx_rate if fx_rate is not None else Decimal("1")
+    _channel_fields = channel_snapshot or {}
     payment = Payment(
         folio_id=None, branch_id=branch_id, amount=amount, currency=currency,
         fx_rate=_fx, method=method, reference=reference, posted_at=posted_at,
         cashier_id=cashier_id, shift_id=shift_id, ref_order_id=ref_order_id,
         source=source, original_payment_id=original_payment_id,
+        payment_channel_id=_channel_fields.get("payment_channel_id"),
+        payment_channel_code=_channel_fields.get("payment_channel_code"),
+        payment_channel_name=_channel_fields.get("payment_channel_name"),
+        settlement_account_code=_channel_fields.get("settlement_account_code"),
     )
     db.add(payment)
     db.flush()
@@ -599,6 +609,10 @@ def create_account(db: Session, data: AccountCreate) -> Account:
     db.add(account)
     db.flush()
     return account
+
+
+def get_account(db: Session, account_id: int) -> Optional[Account]:
+    return db.query(Account).filter(Account.id == account_id).first()
 
 
 def get_account_by_code(db: Session, branch_id: int, code: str) -> Optional[Account]:
@@ -1091,14 +1105,21 @@ def list_bank_statement_lines(
 
 def find_matching_payment_candidates(
     db: Session, branch_id: int, amount: Decimal, target_date, window_days: int = 3,
+    bank_account_id: Optional[int] = None,
 ) -> list[Payment]:
     """دفعات غير مربوطة بأي سطر كشف حساب حتى الآن، بنفس المبلغ (± قرش) وفي
-    نطاق تاريخ قريب — أساس المطابقة الأوتوماتيكية."""
+    نطاق تاريخ قريب — أساس المطابقة الأوتوماتيكية.
+
+    ``bank_account_id``: لو موجود، بيقصر المرشحين على الدفعات اللي قناة
+    تحصيلها مربوطة *بنفس* الحساب البنكي ده — دفعة كاش من الصندوق مايترشحش
+    كمطابقة لسطر تحويل بنكي حتى لو المبلغ اتفق بالصدفة. توافق آمن للحركات
+    القديمة (قبل payment_channels): payment_channel_id فارغ لسه بيترشّح
+    عادي، مش مستبعد."""
     from datetime import timedelta  # noqa: PLC0415
     already_matched = db.query(BankStatementLine.matched_payment_id).filter(
         BankStatementLine.matched_payment_id.isnot(None),
     )
-    return (
+    q = (
         db.query(Payment)
         .filter(
             Payment.branch_id == branch_id,
@@ -1108,8 +1129,13 @@ def find_matching_payment_candidates(
             Payment.posted_at <= target_date + timedelta(days=window_days),
             Payment.id.notin_(already_matched),
         )
-        .all()
     )
+    if bank_account_id is not None:
+        q = q.outerjoin(PaymentChannel, Payment.payment_channel_id == PaymentChannel.id).filter(
+            (Payment.payment_channel_id.is_(None))
+            | (PaymentChannel.bank_account_id == bank_account_id),
+        )
+    return q.all()
 
 
 def match_statement_line(
@@ -1186,3 +1212,84 @@ def unmatched_payments_summary(db: Session, branch_id: int, as_of) -> tuple[int,
         Payment.id.notin_(already_matched),
     ).scalar()
     return count, Decimal(total or 0)
+
+
+# ── Payment Channels ─────────────────────────────────────────────────────
+
+def _payment_channel_query(db: Session):
+    return db.query(PaymentChannel).options(
+        joinedload(PaymentChannel.gl_account),
+        joinedload(PaymentChannel.bank_account),
+    )
+
+
+def get_payment_channel(db: Session, channel_id: int) -> Optional[PaymentChannel]:
+    return _payment_channel_query(db).filter(PaymentChannel.id == channel_id).first()
+
+
+def get_payment_channel_by_code(db: Session, branch_id: int, code: str) -> Optional[PaymentChannel]:
+    return (
+        _payment_channel_query(db)
+        .filter(PaymentChannel.branch_id == branch_id, PaymentChannel.code == code)
+        .first()
+    )
+
+
+def list_payment_channels(
+    db: Session, branch_id: int, active_only: bool = False, method: Optional[str] = None,
+) -> list[PaymentChannel]:
+    q = _payment_channel_query(db).filter(PaymentChannel.branch_id == branch_id)
+    if active_only:
+        q = q.filter(PaymentChannel.is_active.is_(True))
+    if method:
+        q = q.filter(PaymentChannel.method == method)
+    return q.order_by(PaymentChannel.sort_order, PaymentChannel.id).all()
+
+
+def get_default_payment_channel(db: Session, branch_id: int, method: str) -> Optional[PaymentChannel]:
+    return (
+        _payment_channel_query(db)
+        .filter(
+            PaymentChannel.branch_id == branch_id,
+            PaymentChannel.method == method,
+            PaymentChannel.is_default.is_(True),
+            PaymentChannel.is_active.is_(True),
+        )
+        .first()
+    )
+
+
+def clear_default_payment_channel(db: Session, branch_id: int, method: str, exclude_id: Optional[int] = None) -> None:
+    """يشيل is_default من أي قناة تانية لنفس (branch, method) قبل ما نعيّن
+    default جديدة — الـUNIQUE index الجزئي بيمنع اتنين default في نفس
+    اللحظة، فلازم نفضي القديمة أولًا داخل نفس المعاملة."""
+    q = db.query(PaymentChannel).filter(
+        PaymentChannel.branch_id == branch_id,
+        PaymentChannel.method == method,
+        PaymentChannel.is_default.is_(True),
+    )
+    if exclude_id is not None:
+        q = q.filter(PaymentChannel.id != exclude_id)
+    q.update({"is_default": False}, synchronize_session=False)
+    db.flush()
+
+
+def create_payment_channel(db: Session, data: PaymentChannelCreate) -> PaymentChannel:
+    if data.is_default:
+        clear_default_payment_channel(db, data.branch_id, data.method)
+    channel = PaymentChannel(**data.model_dump())
+    db.add(channel)
+    db.flush()
+    return channel
+
+
+def update_payment_channel(db: Session, channel: PaymentChannel, data: PaymentChannelUpdate) -> PaymentChannel:
+    updates = data.model_dump(exclude_unset=True, exclude={"clear_bank_account"})
+    if updates.get("is_default"):
+        clear_default_payment_channel(db, channel.branch_id, channel.method, exclude_id=channel.id)
+    for field, value in updates.items():
+        setattr(channel, field, value)
+    if data.clear_bank_account:
+        channel.bank_account_id = None
+    db.flush()
+    return channel

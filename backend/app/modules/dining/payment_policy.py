@@ -20,7 +20,12 @@ module.
 """
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, NamedTuple, Optional
+
 from app.core.config import settings
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
 
 # طرق الدفع المباشرة (بتحصّل كاش/مقاصّة فورًا في درج الوردية) مقابل room
 # (ذمّة على فوليو الغرفة، بتتسوّى وقت الـ checkout — مش tender مباشر).
@@ -65,3 +70,35 @@ def resolve_direct_tender_account(method: str) -> str:
             )
         return acc
     raise PaymentMethodNotConfiguredError(f"طريقة دفع غير معروفة: {method}")
+
+
+class TenderResolution(NamedTuple):
+    """حساب GL الفعلي لـtender مباشر + لقطة قناة التحصيل (لو موجودة).
+
+    ``channel_snapshot`` بقيمه الأربعة ``None`` يعني مسار legacy (الفرع
+    مفيهوش أي payment_channels لهذه الطريقة بعد) — الحساب راجع من
+    ``resolve_direct_tender_account`` القديمة بدل قناة حقيقية."""
+    account_code: str
+    channel_snapshot: dict
+
+
+def resolve_tender_channel(
+    db: "Session", branch_id: int, method: str, channel_id: Optional[int] = None,
+) -> TenderResolution:
+    """المصدر الموحّد لحساب GL + لقطة قناة أي tender مباشر (شاطئ ودايننج
+    الاتنين بينادوها). قنوات التحصيل المُعرَّفة في الداتابيز (finance.
+    PaymentChannel) هي المصدر الأساسي؛ ``resolve_direct_tender_account``
+    القديمة (متغيرات بيئة) تفضل fallback بس لفرع لسه معملوش أي قناة
+    لهذه الطريقة — توافق مع الحركات القديمة، مش الحالة الافتراضية الجديدة."""
+    from app.modules.finance import services as finance_services  # noqa: PLC0415
+
+    channel = finance_services.resolve_payment_channel(db, branch_id, method, channel_id)
+    if channel is not None:
+        return TenderResolution(
+            account_code=channel.gl_account.code,
+            channel_snapshot=finance_services.payment_channel_snapshot(channel),
+        )
+    return TenderResolution(
+        account_code=resolve_direct_tender_account(method),
+        channel_snapshot=finance_services.payment_channel_snapshot(None),
+    )

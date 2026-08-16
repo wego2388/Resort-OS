@@ -1272,6 +1272,20 @@ def _seed_beach_locations(db: Session, branch_id: int | None = None) -> None:
     cashier = db.query(User).filter(User.email == "cashier@resortos.local").first()
     cashier_id = cashier.id if cashier else None
 
+    # دفع مباشر (زي أي checkin هنا) محتاج وردية كاشير مفتوحة (راجع
+    # beach.services.NoOpenShiftError) — فتح واحدة تشغيلية للبيانات
+    # التوضيحية دي، نفس ما كان بيحصل ضمنيًا قبل ما القاعدة دي تتفرض.
+    if cashier_id:
+        from app.modules.finance import crud as finance_crud
+        from app.modules.finance import services as finance_services
+        from app.modules.finance.schemas import CashierShiftOpen
+
+        if not finance_crud.get_open_shift(db, branch.id, cashier_id):
+            finance_services.open_shift(
+                db, cashier_id=cashier_id, opened_by=cashier_id,
+                data=CashierShiftOpen(branch_id=branch.id, opening_float=Decimal("0")),
+            )
+
     demo_checkins = [
         (umbrellas[0], "منى إبراهيم السيد", "01012345678", 2, True),
         (umbrellas[3], "كريم عبد الرحمن",    "01298765432", 1, False),

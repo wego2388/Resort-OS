@@ -10,6 +10,30 @@ from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional
 
 
+# ── Daily capacity setting ────────────────────────────────────────────────────
+
+BEACH_CAPACITY_SETTING_KEY = "beach.capacity_max"
+DEFAULT_BEACH_CAPACITY_MAX = 200
+# Operational guard, not a commercial assumption: keeps a malformed setting
+# within PostgreSQL Integer and prevents accidental multi-million-entry limits.
+BEACH_CAPACITY_MAX_LIMIT = 100_000
+
+
+def parse_beach_capacity_max(value: object) -> int:
+    """Parse the typed daily-capacity setting or reject it explicitly."""
+    if isinstance(value, bool):
+        raise ValueError("سعة الشاطئ لازم تكون رقمًا صحيحًا موجبًا")
+    raw = str(value).strip()
+    if not raw or not raw.isascii() or not raw.isdecimal():
+        raise ValueError("سعة الشاطئ لازم تكون رقمًا صحيحًا موجبًا")
+    parsed = int(raw)
+    if parsed < 1 or parsed > BEACH_CAPACITY_MAX_LIMIT:
+        raise ValueError(
+            f"سعة الشاطئ لازم تكون بين 1 و{BEACH_CAPACITY_MAX_LIMIT:,} شخص"
+        )
+    return parsed
+
+
 # ── TX types (المصدر الوحيد للحقيقة) ─────────────────────────────────────────
 # base_amount:     السعر الافتراضي (يُحدَّث من Settings في DB)
 # capacity_delta:  -1 = يستهلك مقعداً | 0 = لا يؤثر

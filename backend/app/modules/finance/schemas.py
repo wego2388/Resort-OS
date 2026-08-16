@@ -374,6 +374,19 @@ class ShiftEndReport(BaseModel):
     reporting_currency:    str = "EGP"
     # كل الإجماليات هنا EGP equivalent — أي دفعة بعملة غير EGP بتتحوّل بسعر
     # الصرف وقت تاريخ الدفعة قبل الجمع (راجع build_shift_end_report).
+    # تفصيل حسب قناة التحصيل الفعلية (الصندوق/Visa CIB/...) — إضافي، مش بديل
+    # لـtotal_cash/total_card فوق. دفعات legacy (بلا قناة) بتتجمّع تحت اسم
+    # الطريقة الخام (cash/card/wallet) بدل ما تختفي من التقرير.
+    channel_breakdown:     list["ShiftChannelSummary"] = Field(default_factory=list)
+
+
+class ShiftChannelSummary(BaseModel):
+    payment_channel_id:   Optional[int]
+    payment_channel_code: Optional[str]
+    label:                str  # اسم القناة، أو الطريقة الخام لو legacy
+    method:                str
+    amount:                Decimal
+    count:                 int
 
 
 class ActiveShiftSummary(BaseModel):
@@ -920,3 +933,68 @@ class DiscountCalcResponse(BaseModel):
 
 class AutoMatchResponse(BaseModel):
     matched_count: int
+
+
+# ── Payment Channels ───────────────────────────────────────────────────────
+
+class PaymentChannelCreate(BaseModel):
+    branch_id:       int
+    code:            str = Field(..., max_length=50)
+    name:            str = Field(..., max_length=200)
+    name_ar:         Optional[str] = Field(None, max_length=200)
+    method:          str = Field(..., pattern=r"^(cash|card|wallet)$")
+    gl_account_id:   int
+    bank_account_id: Optional[int] = None
+    is_default:      bool = False
+    is_active:       bool = True
+    sort_order:      int = 0
+
+
+class PaymentChannelUpdate(BaseModel):
+    name:            Optional[str]  = Field(None, max_length=200)
+    name_ar:         Optional[str]  = Field(None, max_length=200)
+    gl_account_id:   Optional[int]  = None
+    bank_account_id: Optional[int]  = None
+    # لا يوجد unset حقيقي لعمود بنكي — ``False`` صراحةً بيمسحه، None يسيبه
+    # زي ما هو (نفس مشكلة الصفر/False المعروفة في CLAUDE.md §13 بند ❷).
+    clear_bank_account: bool = False
+    is_default:      Optional[bool] = None
+    is_active:       Optional[bool] = None
+    sort_order:      Optional[int]  = None
+
+
+class PaymentChannelRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id:                int
+    branch_id:         int
+    code:              str
+    name:              str
+    name_ar:           Optional[str]
+    method:            str
+    gl_account_id:     int
+    gl_account_code:   str = ""
+    gl_account_name:   str = ""
+    bank_account_id:   Optional[int]
+    bank_account_name: Optional[str] = None
+    is_default:        bool
+    is_active:         bool
+    sort_order:        int
+    created_at:        datetime
+    updated_at:        datetime
+
+    @model_validator(mode="before")
+    @classmethod
+    def _inject_account_display_fields(cls, obj):
+        """نفس نمط JournalLineRead._inject_account_display_fields — الحقول دي
+        مش أعمدة حقيقية، لازم gl_account/bank_account متحمّلين مسبقًا (eager
+        load في crud) وإلا N+1 على كل صف قناة."""
+        if isinstance(obj, dict):
+            return obj
+        data = {name: getattr(obj, name, None) for name in cls.model_fields
+                if name not in ("gl_account_code", "gl_account_name", "bank_account_name")}
+        gl_account = getattr(obj, "gl_account", None)
+        data["gl_account_code"] = gl_account.code if gl_account else ""
+        data["gl_account_name"] = gl_account.name if gl_account else ""
+        bank_account = getattr(obj, "bank_account", None)
+        data["bank_account_name"] = bank_account.account_name if bank_account else None
+        return data

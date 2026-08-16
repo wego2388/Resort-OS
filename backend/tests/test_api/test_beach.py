@@ -111,6 +111,50 @@ class TestBeachInventory:
         db.commit()
         assert inv1.id == inv2.id
 
+    def test_new_day_uses_branch_capacity_setting(self, db):
+        from app.modules.core.crud import upsert_setting
+        from app.resort_os.timezone_utils import local_today
+        from app.core.config import settings
+
+        branch = make_branch(db)
+        upsert_setting(db, "beach.capacity_max", "350", branch_id=branch.id)
+        db.commit()
+
+        # نفس مصدر "النهاردة" اللي services.get_inventory بيستخدمه فعليًا
+        # (توقيت القاهرة)، مش date.today() الخام — وإلا التست ممكن يفشل لو
+        # اتشغّل قرب منتصف ليل UTC بينما القاهرة بالفعل في يوم تاني.
+        business_today = local_today(settings.TIMEZONE)
+        inv = services.get_inventory(db, branch.id, business_today)
+        assert inv.capacity_max == 350
+
+    def test_setting_change_updates_today_but_preserves_past_snapshot(self, db):
+        from app.modules.core.crud import upsert_setting
+        from app.resort_os.timezone_utils import local_today
+        from app.core.config import settings
+
+        branch = make_branch(db)
+        business_today = local_today(settings.TIMEZONE)
+        yesterday = business_today - timedelta(days=1)
+        past = crud.get_or_create_inventory(db, branch.id, yesterday, capacity_max=175)
+        today = crud.get_or_create_inventory(db, branch.id, business_today, capacity_max=200)
+        db.commit()
+
+        upsert_setting(db, "beach.capacity_max", "275", branch_id=branch.id)
+        db.commit()
+
+        assert services.get_inventory(db, branch.id, business_today).capacity_max == 275
+        assert services.get_inventory(db, branch.id, yesterday).capacity_max == 175
+        assert today.id != past.id
+
+    def test_control_plane_rejects_invalid_capacity_setting(self, db):
+        from app.modules.core import services as core_services
+
+        branch = make_branch(db)
+        with pytest.raises(ValueError, match="سعة الشاطئ"):
+            core_services.upsert_setting(
+                db, "beach.capacity_max", "0", branch_id=branch.id,
+            )
+
     def test_auto_surge_at_80_pct(self, db):
         branch = make_branch(db)
         today = date.today()
@@ -476,11 +520,18 @@ class TestShiftAttachment:
         tx = services.sell_ticket(db, branch.id, req)
         assert tx.shift_id == shift.id
 
-    def test_sale_without_open_shift_has_no_shift_id(self, db):
+    def test_sale_with_cashier_id_but_no_open_shift_is_rejected(self, db):
+        """قاعدة تشغيلية حقيقية (زي dining بالظبط): دفع مباشر (كاش/كارت/
+        محفظة) بهوية كاشير حقيقية من غير وردية مفتوحة لازم يترفض بوضوح —
+        مش يتسجّل بصمت بدون shift_id زي ما كان بيحصل قبل كده."""
         branch = make_branch(db)
         req = BeachSellRequest(tx_type="entry", quantity=1, cashier_id=999)
-        tx = services.sell_ticket(db, branch.id, req)
-        assert tx.shift_id is None
+        with pytest.raises(services.NoOpenShiftError, match="وردية"):
+            services.sell_ticket(db, branch.id, req)
+        # مفيش تذكرة ولا خصم سعة اتسجّل من العملية المرفوضة
+        inv = crud.get_or_create_inventory(db, branch.id, date.today())
+        db.commit()
+        assert inv.capacity_used == 0
 
     def test_sale_without_cashier_id_has_no_shift_id(self, db):
         branch = make_branch(db)
@@ -950,8 +1001,11 @@ class TestQRCheckin:
     """تسجيل دخول فوري عبر QR — يحوّل الحجز لعملية بيع حقيقية (يستهلك capacity/فوط)."""
 
     def test_checkin_creates_transaction_and_consumes_capacity(self, db):
+        from tests.conftest import open_cashier_shift
+
         branch = make_branch(db)
         cashier = make_branch_linked_cashier(db, branch)
+        open_cashier_shift(db, branch.id, cashier.id)
         today = date.today()
         data = BeachReservationCreate(
             branch_id=branch.id, guest_name="Ahmed", guest_phone="01001234567",
@@ -1557,8 +1611,11 @@ class TestBeachLocations:
             services.bulk_remove_locations(db, branch.id, "pergola", 3)
 
     def test_checkin_creates_real_transaction_and_occupies_location(self, db):
+        from tests.conftest import open_cashier_shift
+
         branch = make_branch(db)
         loc = services.bulk_add_locations(db, branch.id, "umbrella", 1)[0]
+        open_cashier_shift(db, branch.id, 7)
 
         updated = services.checkin_location(
             db, branch.id, loc.id,

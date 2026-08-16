@@ -234,7 +234,8 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-5">
         <!-- Capacity gauge -->
         <AppCard padding="md" class="flex flex-col items-center justify-center">
-          <p class="text-xs text-gray-400 dark:text-gray-400 font-bold uppercase tracking-wide mb-3">{{ t('backoffice.beachLive.currentCapacity') }}</p>
+          <p class="text-xs text-gray-400 dark:text-gray-400 font-bold uppercase tracking-wide mb-1">{{ t('backoffice.beachLive.currentCapacity') }}</p>
+          <p class="text-[10px] text-gray-400 dark:text-gray-400 mb-2 text-center max-w-[9rem]">{{ t('backoffice.beachLive.currentCapacityHint') }}</p>
           <div class="relative w-32 h-32">
             <svg class="w-32 h-32 -rotate-90" viewBox="0 0 100 100">
               <circle cx="50" cy="50" r="42" fill="none" stroke="#F1F0EC" stroke-width="10" />

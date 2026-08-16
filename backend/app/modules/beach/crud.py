@@ -5,6 +5,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.modules.beach.models import (
@@ -18,6 +19,17 @@ from app.modules.beach.schemas import (
 
 # ── BeachInventory ────────────────────────────────────────────────────
 
+def get_inventory(db: Session, branch_id: int, inv_date: date) -> Optional[BeachInventory]:
+    return (
+        db.query(BeachInventory)
+        .filter(
+            BeachInventory.branch_id == branch_id,
+            BeachInventory.inventory_date == inv_date,
+        )
+        .first()
+    )
+
+
 def get_or_create_inventory(
     db: Session,
     branch_id: int,
@@ -25,21 +37,33 @@ def get_or_create_inventory(
     capacity_max: int = 200,
     towels_total: int = 200,
 ) -> BeachInventory:
-    row = (
-        db.query(BeachInventory)
-        .filter(BeachInventory.branch_id == branch_id, BeachInventory.inventory_date == inv_date)
-        .first()
+    """⚠️ باج حقيقي اتصلح هنا: check-then-insert بسيط من غير أي حماية —
+    أول بيعتين في نفس اليوم بالظبط (زي الساعة 6 الصبح لما أول كاشير يفتح
+    الشاشة) ممكن الاتنين يقروا row=None في نفس اللحظة، فيحاولوا يعملوا
+    INSERT مرتين لنفس (branch_id, inventory_date) — الصف الأول ينجح، التاني
+    كان بيرمي IntegrityError خام (500 غير متوقع) بدل ما يتعامل مع السباق
+    ويرجّع نفس صف اليوم اللي اتعمل بالفعل. الحل: SAVEPOINT (begin_nested)
+    حوالين الـINSERT بس — لو اتصادم، بنرجّع للـSAVEPOINT فقط (مش
+    db.rollback() الكامل، اللي كان هيمسح أي تعديلات تانية غير ملتزمة لسه
+    في نفس الـtransaction الأكبر، زي أصناف سابقة في سلة atomic)."""
+    row = get_inventory(db, branch_id, inv_date)
+    if row:
+        return row
+    row = BeachInventory(
+        branch_id=branch_id,
+        inventory_date=inv_date,
+        capacity_max=capacity_max,
+        towels_total=towels_total,
+        towels_available=towels_total,
     )
-    if not row:
-        row = BeachInventory(
-            branch_id=branch_id,
-            inventory_date=inv_date,
-            capacity_max=capacity_max,
-            towels_total=towels_total,
-            towels_available=towels_total,
-        )
-        db.add(row)
-        db.flush()
+    try:
+        with db.begin_nested():
+            db.add(row)
+            db.flush()
+    except IntegrityError:
+        row = get_inventory(db, branch_id, inv_date)
+        if row is None:
+            raise
     return row
 
 
@@ -122,6 +146,18 @@ def get_transaction(db: Session, tx_id: int) -> Optional[BeachTransaction]:
 
 def get_transaction_by_local_id(db: Session, local_id: str) -> Optional[BeachTransaction]:
     return db.query(BeachTransaction).filter(BeachTransaction.client_local_id == local_id).first()
+
+
+def get_transactions_by_cart_local_id(db: Session, cart_local_id: str) -> list[BeachTransaction]:
+    """كل تذاكر سلة atomic اتسجّلت بمفتاح idempotency السلة ده — كل صنف بيتخزّن
+    بـclient_local_id = f"{cart_local_id}:{index}" (راجع services.sell_cart).
+    إما الكل موجود (السلة اتسجّلت بنجاح) أو ولا واحد (rollback كامل)."""
+    return (
+        db.query(BeachTransaction)
+        .filter(BeachTransaction.client_local_id.like(f"{cart_local_id}:%"))
+        .order_by(BeachTransaction.id)
+        .all()
+    )
 
 
 def void_transaction(db: Session, tx: BeachTransaction, voided_by: int, reason: str) -> BeachTransaction:
