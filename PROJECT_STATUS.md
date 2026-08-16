@@ -1,12 +1,19 @@
 # حالة المشروع الحالية — El Kheima Beach Resort OS
 
 **آخر تحديث:** 2026-08-16 — REL-16: قنوات تحصيل حقيقية (Payment
-Channels) + تحصين كاشير الشاطئ، مُختبر بالكامل ومُدفوع على الفرع
-(commit التنفيذ `4b08698`)، النشر جارٍ حسب DEPLOYMENT.md.
+Channels) + تحصين كاشير الشاطئ، منشور ومتحقق فعليًا على الـVPS
+(release commit `43eae4c`؛ Alembic `a7b3f2c8e9d1` فعّال على الإنتاج).
 
-## REL-16 — قنوات التحصيل + تحصين كاشير الشاطئ (2026-08-16)
+## REL-16 — قنوات التحصيل + تحصين كاشير الشاطئ (2026-08-16) — DEPLOYED
 
-- **Implementation commit:** `4b08698` (فرع `codex/rel-15-auth-ops-readiness`)
+- **Implementation commit:** `4b08698` — **Release commit المنشور فعليًا:**
+  `43eae4c` (فرع `codex/rel-15-auth-ops-readiness`)
+- **الإنتاج**: `/opt/resort-os-current` → `/opt/resort-os-releases/43eae4c...`؛
+  الستة containers (backend/celery_worker/celery_beat/el_kheima/owner/nginx)
+  استُبدلوا بالترتيب المحكوم، RestartCount=0، صفر خطأ جديد في اللوجات،
+  health gate الرسمي `passes=16`. تفاصيل كاملة (checksums، rollback
+  manifest، smoke tests حقيقية بدون معاملات وهمية) في §10 من
+  `docs/agent-workflow/handoffs/2026-08-16_REL-16_payment-channels-beach-cashier_claude_handoff.md`.
 - **Migration:** `a7b3f2c8e9d1` — إضافية بحتة فوق `e2f3a4b5c6d7`، head
   واحد. تُنشئ `payment_channels` + 4 أعمدة snapshot على
   `payments`/`beach_transactions`، وتزرع default واحد لكل (فرع، طريقة)

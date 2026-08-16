@@ -2,8 +2,59 @@
 
 **التاريخ:** 2026-08-16
 **Branch:** `codex/rel-15-auth-ops-readiness`
-**Implementation commit:** `4b08698` (branch commit; not yet deployed)
+**Implementation commit:** `4b08698`
+**Docs/release commit (deployed):** `43eae4c`
 **Alembic:** `a7b3f2c8e9d1 (head)` — additive, single head, downgrade rehearsed
+**Status:** DEPLOYED / VERIFIED — see §10 below
+
+## 10. سجل النشر على VPS (2026-08-16)
+
+- **Release commit:** `43eae4cac3a50feb44308d5482e7ba77cafb74a2`
+- **Release directory:** `/opt/resort-os-releases/43eae4cac3a50feb44308d5482e7ba77cafb74a2`
+  (`/opt/resort-os-current` يشاور عليه الآن)
+- **Release archive SHA-256:**
+  `fda0d944e11c7c499bdc9959f1dd9f9117e023cb17bf4f7309877126763474a8`
+  (اتحقق منه محليًا وعلى الـVPS، متطابق)
+- **Active release قبل النشر:** `df27697d53a7ec93a10ed2f8898945ecb4a434a6`
+- **DB backup قبل الـmigration:**
+  `/opt/resort-os-releases/df27697d53a7ec93a10ed2f8898945ecb4a434a6/backups/resort_os_20260816_052337.dump`
+  (744K، اتحقق `pg_restore --list` قرأه صح — 1537 TOC entries)
+- **Rollback images manifest:**
+  `/var/backups/resort-os/source-releases/43eae4cac3a50feb44308d5482e7ba77cafb74a2-rollback-images.txt`
+  (backend/celery-worker/celery-beat/el-kheima/owner/marketing-site/nginx كلهم
+  متعلّمين `pre-43eae4c...`)
+- **Migration:** `e2f3a4b5c6d7 -> a7b3f2c8e9d1` نجحت بلا أخطاء؛ `alembic current`
+  بعدها = `a7b3f2c8e9d1 (head)`. الـbackfill أنشأ 3 قنوات فعلية للفرع
+  الوحيد (CASH→1100، CARD→1120، WALLET→1130)، كلهم `is_default=true`
+  `is_active=true` — اتأكد بـSQL مباشر بعد الترحيل.
+- **الاستبدال:** backend → celery_worker+celery_beat → el_kheima+owner →
+  nginx (force-recreate)، بالترتيب المطلوب بالظبط. Postgres/Redis
+  ماتلمسوش. RestartCount=0 على الستة كلهم، صورة/revision متطابقين
+  (`org.opencontainers.image.revision` = `43eae4c...` على backend/worker/beat).
+- **القبول بعد النشر:** الأربع دومينز (`elkheima.com`, `www.`, `app.`,
+  `owner.`) بترجع 200 من برّه الخادم؛ `/health` نظيف (DB/Redis latency
+  طبيعية)؛ TLS SAN يغطي الأربعة لحد 2026-11-05؛ منافذ 5436/6381 مقفولة من
+  برّه (اتأكد فعليًا من الإنترنت مش من جوه الخادم)؛ صفر traceback/critical
+  جديد في لوجات backend/celery/nginx بعد الاستبدال.
+- **Smoke tests حقيقية (بدون أي معاملة مالية وهمية)**: نداء Python
+  read-only جوه container الـbackend الحيّ (rollback بعد كل حاجة، صفر
+  كتابة) أكّد: `resolve_tender_channel` بيرجّع الحساب/اللقطة الصح لكل من
+  cash/card/wallet مطابقين للـbackfill بالظبط؛ `beach.capacity_max` غير
+  مُعرَّف بعد فيرجع fallback 200 صح (القرار التشغيلي المتبقي، راجع تحت).
+  نداءات HTTP حقيقية غير مصادَق عليها عبر `app.elkheima.com` الحقيقي
+  أكّدت المسارات الجديدة مسجّلة ومحمية (401 مش 404): `/finance/payment-channels`،
+  `/beach/sell-cart`، `/beach/inventory`.
+- **Health gate الرسمي**: `resort-os-healthcheck.service` — `RESORT_HEALTHCHECK_OK
+  passes=16`.
+- **Rollback point**: لو محتاج تراجع — retag صور `resort-os-rollback/*:pre-43eae4c...`
+  (المانفست فوق)، استبدال بنفس الترتيب المحكوم في §5.E من `DEPLOYMENT.md`،
+  إعادة تشغيل كل فحوصات health/TLS/DB/logs. الـmigration إضافية بحتة
+  (downgrade نظيف اتأكد منه محليًا قبل النشر) — رجوع التطبيق فقط لا يبرر
+  استرجاع الداتابيز.
+- **القرار التشغيلي المتبقي**: زُر Finance ← "قنوات التحصيل" وأضِف
+  القنوات الحقيقية (Visa CIB، Vodafone Cash، ...) بحساب GL/بنك حقيقيين؛
+  حتى وقتها كل الفروع شغالة زي الأول تمامًا. برضو محتاج تُدخل رقم
+  `beach.capacity_max` الحقيقي في الإعدادات — لحد كده الشاشة شغالة بـfallback 200.
 
 ## 1. الخلفية
 

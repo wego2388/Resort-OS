@@ -1,11 +1,11 @@
 # لوحة التنفيذ الحية — El Kheima
 
 **آخر تحديث:** 2026-08-16 — REL-16: قنوات تحصيل حقيقية + تحصين كاشير
-الشاطئ، مُختبر بالكامل ومُدفوع (تفويض مباشر من Mohamed خارج دورة Codex)،
-النشر جارٍ حسب DEPLOYMENT.md
+الشاطئ، منشور ومتحقق فعليًا على الـVPS (تفويض مباشر من Mohamed خارج
+دورة Codex)
 **المالك:** Mohamed
 **قائد التنفيذ والمراجع النهائي:** Codex
-**المرحلة الحالية:** REL-16 deployment، بالتوازي مع ACC-01 real-person roster + UAT-01
+**المرحلة الحالية:** ACC-01 real-person roster + UAT-01
 **قرار الإطلاق:** CREDIT-0005 DEPLOYED؛ قرار Go/No-Go التشغيلي العام ما زال
 مرتبطًا بالـUAT والبيانات الحقيقية
 
@@ -56,7 +56,7 @@
 | REL-12 — PMS checkout/folio settlement fix — بتأكيد صريح من Mohamed (تفويض مباشر خارج دورة Codex) | COMPLETE / DEPLOYED | `403bbd7` فعال؛ راجع `docs/agent-workflow/handoffs/2026-08-09_REL-12_claude_handoff.md` — لا migration؛ تسوية الـcheckout بقت تشمل شحنات beach/dining على الغرفة مش سعر الغرفة بس | — |
 | REL-13 — financial integrity + fractional ownership naming + Owner PWA hotfix | COMPLETE / DEPLOYED | `8fbda3c` فعال؛ Alembic `c9d0e1f2a3b4`؛ 2806 backend + 103 frontend؛ مصالحة PMS/Leasing صفر نواقص؛ PWA meta حي؛ راجع handoff 2026-08-11 | — |
 | REL-15 — auth/role isolation + single branch + Timeshare/Owner readiness | COMPLETE / DEPLOYED | `6f1f6e1` فعال؛ Alembic `e2f3a4b5c6d7`؛ 2869 backend collected؛ Staff/Owner responsive gates؛ 9 containers؛ live browser 6/6 | — |
-| REL-16 — قنوات تحصيل حقيقية (Payment Channels) + تحصين كاشير الشاطئ (atomic cart، وردية إجبارية، إصلاح باج commit ضمني وrace أول صف يومي) — تفويض مباشر من Mohamed خارج دورة Codex | IMPLEMENTED / DEPLOYING | commit التنفيذ `4b08698`؛ Alembic `a7b3f2c8e9d1`؛ 2850 backend (صفر فشل) + 106 frontend + 8 mock e2e + 12 owner e2e؛ راجع `docs/agent-workflow/handoffs/2026-08-16_REL-16_payment-channels-beach-cashier_claude_handoff.md` | نشر VPS جارٍ حسب DEPLOYMENT.md |
+| REL-16 — قنوات تحصيل حقيقية (Payment Channels) + تحصين كاشير الشاطئ (atomic cart، وردية إجبارية، إصلاح باج commit ضمني وrace أول صف يومي) — تفويض مباشر من Mohamed خارج دورة Codex | COMPLETE / DEPLOYED | `43eae4c` فعال (release)؛ Alembic `a7b3f2c8e9d1`؛ 2850 backend (صفر فشل) + 106 frontend + 8 mock e2e + 12 owner e2e؛ health gate passes=16؛ راجع `docs/agent-workflow/handoffs/2026-08-16_REL-16_payment-channels-beach-cashier_claude_handoff.md` | — |
 | ACC-01 — employee/account workflow | CORE RECONCILED؛ REAL ROSTER PENDING | كل حساب فعلي باسم شخص + HR link + temporary credential handoff | ملف `docs/templates/REL15_STAFF_ROSTER_TEMPLATE.xlsx` بعد تعبئته |
 | OPS-01 — burn-in and alerting | BASELINE COMPLETE | مراقبة مستمرة + إرسال خارجي | اختيار قناة التنبيه |
 | UAT-01 — operational acceptance | PENDING | جهاز/دور/لغة/شبكة/مال | ممثلو التشغيل والمالية |
@@ -118,9 +118,9 @@
 | Owner app | `https://owner.elkheima.com` |
 | Containers | 9 Running؛ healthchecks ناجحة؛ كل RestartCount=0 |
 | Ports | 5436/6381/8005 loopback-only؛ 80/443 public |
-| Resort release | `/opt/resort-os-current -> .../6f1f6e1c703f2ecb88851691864525e22e5071d5` |
+| Resort release | `/opt/resort-os-current -> .../43eae4cac3a50feb44308d5482e7ba77cafb74a2` |
 | Marketing release | `/opt/elkheima-marketing-current -> .../088cab4c5dc4de85953895abcf9247f7a3cb2773` |
-| Database | Alembic `e2f3a4b5c6d7`؛ فرع نشط واحد؛ operational_without_membership=0 |
+| Database | Alembic `a7b3f2c8e9d1`؛ فرع نشط واحد؛ operational_without_membership=0 |
 | TLS | Let's Encrypt SAN للأصل/www/app/owner حتى `2026-11-05 21:32:26 UTC` |
 | DNS rollback | Hostinger snapshot `167902017` |
 | Chatbot | Active؛ live Gemini E2E passed من `elkheima.com` |
