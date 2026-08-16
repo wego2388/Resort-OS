@@ -1,8 +1,9 @@
 # لوحة التنفيذ الحية — El Kheima
 
-**آخر تحديث:** 2026-08-16 — REL-16: قنوات تحصيل حقيقية + تحصين كاشير
-الشاطئ، منشور ومتحقق فعليًا على الـVPS (تفويض مباشر من Mohamed خارج
-دورة Codex)
+**آخر تحديث:** 2026-08-16 — REL-17: استرداد بيانات دخول الموظفين +
+إصلاح إضافة أصناف لطلب دايننج مفتوح + اختيار وحدة زيارة التيم شير +
+3 سندات محاسبية حقيقية، منشور ومتحقق فعليًا على الـVPS (تفويض مباشر
+من Mohamed خارج دورة Codex)
 **المالك:** Mohamed
 **قائد التنفيذ والمراجع النهائي:** Codex
 **المرحلة الحالية:** ACC-01 real-person roster + UAT-01
@@ -57,6 +58,7 @@
 | REL-13 — financial integrity + fractional ownership naming + Owner PWA hotfix | COMPLETE / DEPLOYED | `8fbda3c` فعال؛ Alembic `c9d0e1f2a3b4`؛ 2806 backend + 103 frontend؛ مصالحة PMS/Leasing صفر نواقص؛ PWA meta حي؛ راجع handoff 2026-08-11 | — |
 | REL-15 — auth/role isolation + single branch + Timeshare/Owner readiness | COMPLETE / DEPLOYED | `6f1f6e1` فعال؛ Alembic `e2f3a4b5c6d7`؛ 2869 backend collected؛ Staff/Owner responsive gates؛ 9 containers؛ live browser 6/6 | — |
 | REL-16 — قنوات تحصيل حقيقية (Payment Channels) + تحصين كاشير الشاطئ (atomic cart، وردية إجبارية، إصلاح باج commit ضمني وrace أول صف يومي) — تفويض مباشر من Mohamed خارج دورة Codex | COMPLETE / DEPLOYED | `43eae4c` فعال (release)؛ Alembic `a7b3f2c8e9d1`؛ 2850 backend (صفر فشل) + 106 frontend + 8 mock e2e + 12 owner e2e؛ health gate passes=16؛ راجع `docs/agent-workflow/handoffs/2026-08-16_REL-16_payment-channels-beach-cashier_claude_handoff.md` | — |
+| REL-17 — استرداد بيانات دخول الموظفين (SuperAdmin) + إصلاح إضافة أصناف لطلب دايننج مفتوح + خريطة وحدات التيم شير عند تأكيد الزيارة + 3 سندات محاسبية (قيد يدوي/مصروفات/دفع موردين) — تفويض مباشر من Mohamed خارج دورة Codex | COMPLETE / DEPLOYED | `3f44a14` فعال (release)؛ Alembic `79d4d53e7109`؛ backend `pytest -q` صفر فشل (2947 مجمّعة) + 106 frontend + 8 mock e2e؛ health gate passes=16؛ راجع `docs/agent-workflow/handoffs/2026-08-16_REL-17_credential-reset-dining-timeshare-finance-vouchers_claude_handoff.md` | — |
 | ACC-01 — employee/account workflow | CORE RECONCILED؛ REAL ROSTER PENDING | كل حساب فعلي باسم شخص + HR link + temporary credential handoff | ملف `docs/templates/REL15_STAFF_ROSTER_TEMPLATE.xlsx` بعد تعبئته |
 | OPS-01 — burn-in and alerting | BASELINE COMPLETE | مراقبة مستمرة + إرسال خارجي | اختيار قناة التنبيه |
 | UAT-01 — operational acceptance | PENDING | جهاز/دور/لغة/شبكة/مال | ممثلو التشغيل والمالية |
@@ -118,9 +120,9 @@
 | Owner app | `https://owner.elkheima.com` |
 | Containers | 9 Running؛ healthchecks ناجحة؛ كل RestartCount=0 |
 | Ports | 5436/6381/8005 loopback-only؛ 80/443 public |
-| Resort release | `/opt/resort-os-current -> .../43eae4cac3a50feb44308d5482e7ba77cafb74a2` |
+| Resort release | `/opt/resort-os-current -> .../3f44a14a93d3863a8e287ed757da78a4e29d6ca3` |
 | Marketing release | `/opt/elkheima-marketing-current -> .../088cab4c5dc4de85953895abcf9247f7a3cb2773` |
-| Database | Alembic `a7b3f2c8e9d1`؛ فرع نشط واحد؛ operational_without_membership=0 |
+| Database | Alembic `79d4d53e7109`؛ فرع نشط واحد؛ operational_without_membership=0 |
 | TLS | Let's Encrypt SAN للأصل/www/app/owner حتى `2026-11-05 21:32:26 UTC` |
 | DNS rollback | Hostinger snapshot `167902017` |
 | Chatbot | Active؛ live Gemini E2E passed من `elkheima.com` |
@@ -148,12 +150,18 @@
 
 ## آخر تسليم
 
-`docs/agent-workflow/handoffs/2026-08-16_REL-16_payment-channels-beach-cashier_claude_handoff.md`
-(السابق: `docs/agent-workflow/handoffs/2026-08-14_REL-15_auth-ops-owner-readiness_codex_handoff.md`)
+`docs/agent-workflow/handoffs/2026-08-16_REL-17_credential-reset-dining-timeshare-finance-vouchers_claude_handoff.md`
+(السابق: `docs/agent-workflow/handoffs/2026-08-16_REL-16_payment-channels-beach-cashier_claude_handoff.md`)
 
 ## التحديث التالي المطلوب
 
-**تم**: قنوات التحصيل الحقيقية اتضافت على الإنتاج (16 أغسطس، بعد
+**تم**: REL-17 كامل على الإنتاج (16 أغسطس) — استرداد بيانات دخول
+الموظفين من شاشة السوبرادمن، إصلاح إضافة أصناف لطلب دايننج مفتوح،
+خريطة وحدات حقيقية عند تأكيد زيارة التيم شير، وسندات القيد اليدوي/
+المصروفات/دفع الموردين. راجع
+`docs/agent-workflow/handoffs/2026-08-16_REL-17_credential-reset-dining-timeshare-finance-vouchers_claude_handoff.md`.
+
+**تم سابقًا**: قنوات التحصيل الحقيقية اتضافت على الإنتاج (16 أغسطس، بعد
 تأكيد Mohamed) — Visa CIB (كارت، فيزا وماستركارد بيعدّوا على نفس
 الجهاز/الحساب)، Vodafone Cash (افتراضية للمحفظة)، Orange Cash،
 Etisalat Cash، InstaPay (الأربعة على نفس حساب المحفظة). القنوات

@@ -1,6 +1,78 @@
 # حالة المشروع الحالية — El Kheima Beach Resort OS
 
-**آخر تحديث:** 2026-08-16 — REL-16: قنوات تحصيل حقيقية (Payment
+**آخر تحديث:** 2026-08-16 — REL-17: استرداد بيانات دخول الموظفين +
+إصلاح إضافة أصناف لطلب دايننج مفتوح + اختيار وحدة زيارة التيم شير +
+3 سندات محاسبية حقيقية (قيد يدوي/مصروفات/دفع موردين)، منشور ومتحقق
+فعليًا على الـVPS (release commit `3f44a14`؛ Alembic `79d4d53e7109`
+فعّال على الإنتاج).
+
+## REL-17 — استرداد الدخول + إصلاحات دايننج/تيم شير + سندات محاسبية (2026-08-16) — DEPLOYED
+
+- **Release commit المنشور فعليًا:** `3f44a14` (فرع
+  `codex/rel-15-auth-ops-readiness`)
+- **الإنتاج**: `/opt/resort-os-current` → `/opt/resort-os-releases/3f44a14...`؛
+  الستة containers (backend/celery_worker/celery_beat/el_kheima/owner/nginx)
+  استُبدلوا بالترتيب المحكوم، RestartCount=0، صفر خطأ جديد في اللوجات،
+  health gate الرسمي `passes=16`. تفاصيل كاملة في §10 من
+  `docs/agent-workflow/handoffs/2026-08-16_REL-17_credential-reset-dining-timeshare-finance-vouchers_claude_handoff.md`.
+- **Migration:** `79d4d53e7109` — إضافية بحتة فوق `a7b3f2c8e9d1`، head
+  واحد. تُنشئ `expenses` + `supplier_payments`، وتضيف
+  `purchase_orders.amount_paid`/`payment_status`.
+- **استرداد بيانات دخول الموظفين (SuperAdmin)**: سبب حقيقي — قفل حساب
+  المحاسب "يوسف رمضان بخيت" بمحاولات باسورد خاطئة متكررة، ومفيش أداة
+  ويب لاسترداد موظف عادي (الأداة الوحيدة كانت CLI مقصورة على
+  super_admin/owner). `core.services.reset_staff_credentials` جديدة
+  (محمية step-up) — بترفض صراحة أي هدف super_admin/owner (نفس حدود
+  `BOOTSTRAP_CREATABLE_ROLES` بالظبط)، بتولّد باسورد مؤقت + enrollment
+  token جديد لو الدور محتاج 2FA إجباري، تمسح قفل الحساب، تلغي كل
+  refresh tokens وrecovery codes القديمة، وتكتب `AuditLog`. زرار جديد
+  في شاشة `/admin/super-admin` لكل صف موظف (مخفي لصفوف
+  super_admin/owner).
+- **إصلاح كاشير الدايننج — إضافة أصناف لطلب مفتوح**: باج UX حقيقي —
+  مفيش طريقة كانت موجودة لإضافة صنف لطلب اتبعت للمطبخ بالفعل غير عمل
+  طلب منفصل بالكامل. اتضاف "وضع الإضافة" في `POSCartPanel.vue` (بيعيد
+  استخدام نفس شاشة بناء السلة الموجودة، مفيش تكرار لمنطق تصفح المنيو)
+  + زرار "➕ إضافة أصناف للفاتورة" في `DiningOrderDetailModal.vue`.
+- **التيم شير — خريطة وحدات حقيقية عند تأكيد الزيارة**: قبل كده كان
+  تعيين الوحدة تلقائي بالكامل وأعمى (`find_available_unit`) بلا أي
+  رؤية للموظف. `GET /timeshare/units/availability` جديد +
+  `TimeshareUnitPicker.vue` — شبكة وحدات فعلية قابلة للاختيار في مودالي
+  الموافقة/جدولة الزيارة، بيحترم عقود الوحدة الثابتة (يرفض اختيار
+  يدوي يخالف العقد) وعقود Family Compound (لسه تلقائي زي ما هو).
+- **3 سندات محاسبية حقيقية جديدة** (بعد سؤال Mohamed عن أنواع السندات
+  المحاسبية المصرية القياسية):
+  1. **سند القيد اليدوي** (`FinanceView.vue`، تاب جديد) — واجهة حقيقية
+     أول مرة لـ`POST /finance/journal-entries` الموجود من قبل بلا أي
+     شاشة تستخدمه، بميزان مدين/دائن حي قبل الإرسال.
+  2. **سند المصروفات المصنّفة** (`finance.Expense` جديد) —
+     `POST/GET /finance/expenses`، الفئة = حساب حقيقي من دليل
+     الحسابات (مفيش enum موازي)، بيستخدم
+     `post_simple_revenue_journal(..., strict=True)` +
+     `validate_period_open` صراحة (فعل محاسبي بيبدأه محاسب، مش ترحيل
+     تلقائي من نقطة بيع).
+  3. **سند دفع الموردين** (`inventory.SupplierPayment` جديد +
+     `PurchaseOrder.amount_paid`/`payment_status`) — كان فيه فجوة
+     محاسبية حقيقية: استلام أمر شراء بيرحّل Dr.1200/Cr.2200 (ذمم
+     دائنة) من الأساس، لكن مفيش أي طريقة كانت موجودة لتسجيل سداد
+     الذمة دي أبدًا. `POST /inventory/purchase-orders/{id}/pay` بيقفل
+     الذمة (Dr.2200/Cr.حساب التسوية) بنفس نمط `strict=True` +
+     `validate_period_open`. شاشة "مستحقات الموردين" جديدة في
+     `InventoryView.vue`.
+- **باج dark-mode حقيقي اتصلح قبل الديبلوي**: تاب المصروفات الجديد في
+  `FinanceView.vue` استخدم `dark:text-gray-500` (تباين منخفض جدًا على
+  الخلفية الداكنة) بدل النمط المعتمد `dark:text-gray-400` في باقي
+  الملف — اكتشفه test guard موجود بالفعل (`themeContrast.spec.ts`)،
+  اتصلح قبل الـcommit.
+- **البوابات**: backend `pytest tests/ -q` → صفر فشل (2947 test
+  collected)، `agent-check.sh` PASS، `alembic heads` → head واحد
+  `79d4d53e7109`، `git diff --check` نظيف. frontend `type-check:all`
+  نظيف (el-kheima + owner)، `validate-i18n` نظيف (6445 مفتاح كل لغة،
+  صفر ناقص)، `test:frontend` **106/106**، `test:e2e:mock` **8/8**،
+  `build:all` نظيف.
+- تفاصيل كاملة:
+  `docs/agent-workflow/handoffs/2026-08-16_REL-17_credential-reset-dining-timeshare-finance-vouchers_claude_handoff.md`
+
+**السابق:** 2026-08-16 — REL-16: قنوات تحصيل حقيقية (Payment
 Channels) + تحصين كاشير الشاطئ، منشور ومتحقق فعليًا على الـVPS
 (release commit `43eae4c`؛ Alembic `a7b3f2c8e9d1` فعّال على الإنتاج).
 
