@@ -18,6 +18,8 @@ import type {
   DiningItemDetailResponse,
   BeachTypeDetailResponse,
   ExpenseDetailResponse,
+  RevenueBreakdownResponse,
+  RevenueDetailResponse,
   SupplierDetailResponse,
   ProductDetailResponse,
   OwnerSearchResponse,
@@ -149,6 +151,27 @@ export async function fetchExpenseDetail(params: {
   size?: number
 }): Promise<ExpenseDetailResponse> {
   const res = await api.get<ExpenseDetailResponse>('/api/v1/owner/expense-detail', { params })
+  return res.data
+}
+
+// ─── تفصيل الإيراد بالحساب (2026-08-17) — نظير Expense فوق ────────────
+
+export async function fetchRevenueBreakdown(params?: {
+  date_from?: string
+  date_to?: string
+}): Promise<RevenueBreakdownResponse> {
+  const res = await api.get<RevenueBreakdownResponse>('/api/v1/owner/revenue-breakdown', { params })
+  return res.data
+}
+
+export async function fetchRevenueDetail(params: {
+  account_code: string
+  date_from?: string
+  date_to?: string
+  page?: number
+  size?: number
+}): Promise<RevenueDetailResponse> {
+  const res = await api.get<RevenueDetailResponse>('/api/v1/owner/revenue-detail', { params })
   return res.data
 }
 

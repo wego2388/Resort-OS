@@ -71,6 +71,10 @@ from app.modules.owner.schemas import (
     PeriodSnapshot,
     PRPOVarianceRow,
     ProcurementAnalyticsResponse,
+    RevenueBreakdownResponse,
+    RevenueDetailResponse,
+    RevenueJournalLine,
+    RevenueLineResponse,
     SalesPerformanceResponse,
     SearchResultItem,
     ShiftHistoryItem,
@@ -1184,6 +1188,49 @@ def get_expense_analytics(
     )
 
 
+def get_revenue_breakdown(
+    db: Session,
+    branch_id: int,
+    date_from: date,
+    date_to: date,
+) -> RevenueBreakdownResponse:
+    """
+    تفصيل الإيراد بالحساب لأي فترة (2026-08-17، طلب Mohamed الصريح بعد
+    تجربة تطبيق المالك: الضغط على كارت إيراد اليوم لازم يوريه من أنهي
+    حسابات جه الرقم ده).
+
+    مصدر: finance.services.get_income_statement — نفس الدالة المستخدمة
+    لكل رقم مالي أساسي تاني في التطبيق (Decision 0004 §Numbers must equal
+    source). صفر حساب جديد هنا — مجرد تحويل شكل الاستجابة.
+    """
+    from app.modules.finance.services import get_income_statement  # noqa: PLC0415
+
+    stmt = get_income_statement(db, branch_id, date_from, date_to)
+    is_prov = _is_period_provisional(db, branch_id, date_to)
+
+    revenue_lines = sorted(
+        (
+            RevenueLineResponse(
+                account_code=line.account_code,
+                account_name=line.account_name,
+                amount=line.amount,
+            )
+            for line in stmt.revenue_lines
+        ),
+        key=lambda item: item.amount,
+        reverse=True,
+    )
+
+    return RevenueBreakdownResponse(
+        period_from=date_from,
+        period_to=date_to,
+        total_revenue=stmt.total_revenue,
+        revenue_lines=revenue_lines,
+        is_provisional=is_prov,
+        computed_at=datetime.utcnow(),
+    )
+
+
 # ══════════════════════════════════════════════════════════════════════
 # Phase 6 — Procurement Analytics (E-1, E-2)
 # ══════════════════════════════════════════════════════════════════════
@@ -2183,6 +2230,71 @@ def get_expense_detail(
     ]
 
     return ExpenseDetailResponse(
+        account_code=account_code,
+        account_name=account.name,
+        period_from=date_from,
+        period_to=date_to,
+        lines=lines,
+        total_amount=total_amount,
+        **_pagination_meta(page, size, total_items),
+        computed_at=datetime.utcnow(),
+    )
+
+
+def get_revenue_detail(
+    db: Session, branch_id: int, account_code: str, date_from: date, date_to: date,
+    *, page: int = 1, size: int = 50,
+) -> RevenueDetailResponse:
+    """كل قيود اليومية (سطور الدائن) داخل حساب إيراد معيّن — نظير
+    get_expense_detail بالظبط على الجانب الآخر (الإيراد يزيد بالدائن،
+    عكس المصروف اللي يزيد بالمدين)."""
+    from sqlalchemy import func as sa_func  # noqa: PLC0415
+    from app.modules.finance.models import Account, JournalEntry, JournalLine  # noqa: PLC0415
+
+    account = db.query(Account).filter(
+        Account.branch_id == branch_id, Account.code == account_code,
+    ).first()
+    if not account:
+        return RevenueDetailResponse(
+            account_code=account_code, account_name=account_code,
+            period_from=date_from, period_to=date_to, lines=[],
+            total_amount=Decimal("0"), computed_at=datetime.utcnow(),
+            **_pagination_meta(page, size, 0),
+        )
+
+    base_query = (
+        db.query(JournalLine, JournalEntry)
+        .join(JournalEntry, JournalEntry.id == JournalLine.entry_id)
+        .filter(
+            JournalLine.account_id == account.id,
+            JournalEntry.branch_id == branch_id,
+            JournalEntry.entry_date >= date_from,
+            JournalEntry.entry_date <= date_to,
+            JournalLine.credit > 0,
+        )
+    )
+
+    total_items = base_query.count()
+    total_amount = Decimal(str(
+        base_query.with_entities(sa_func.sum(JournalLine.credit)).scalar() or 0
+    ))
+    rows = (
+        base_query.order_by(JournalEntry.entry_date.desc(), JournalEntry.id.desc())
+        .offset((page - 1) * size).limit(size).all()
+    )
+    lines = [
+        RevenueJournalLine(
+            entry_id=entry.id,
+            entry_date=entry.entry_date,
+            reference=entry.reference,
+            description=line.description or entry.description,
+            amount=line.credit,
+            source=entry.source,
+        )
+        for line, entry in rows
+    ]
+
+    return RevenueDetailResponse(
         account_code=account_code,
         account_name=account.name,
         period_from=date_from,

@@ -7,8 +7,10 @@
  */
 import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { useOwnerNow, useOwnerNowHistory, useOwnerCreditReceivables, useOwnerExceptions, useOwnerWatchlist } from '../composables/useOwnerData'
-import { formatMoney, formatOccupancyPct } from '../composables/useFormat'
+import { useOwnerNow, useOwnerNowHistory, useOwnerCreditReceivables, useOwnerExceptions, useOwnerWatchlist, useAccountBreakdownDrilldown } from '../composables/useOwnerData'
+import { fetchRevenueBreakdown, fetchRevenueDetail, fetchExpenseAnalytics, fetchExpenseDetail } from '../api/owner'
+import type { RevenueBreakdownResponse, RevenueDetailResponse, ExpenseAnalyticsResponse, ExpenseDetailResponse } from '../api/types'
+import { formatMoney, formatMoneyFull, formatOccupancyPct } from '../composables/useFormat'
 import MetricCard from '../components/MetricCard.vue'
 import ErrorState from '../components/ErrorState.vue'
 import SkeletonCards from '../components/SkeletonCards.vue'
@@ -58,6 +60,37 @@ const listTitle: Record<Exclude<ListKey, null>, string> = {
   b2b: 'كل ذمم فنادق B2B',
   timeshare: 'كل ذمم الملكية الجزئية المتأخرة',
   credit: 'كل الحسابات الآجلة',
+}
+
+// ── تفصيل إيراد/مصروف اليوم بالحساب (2026-08-17، طلب Mohamed الصريح) ────
+// نفس فترة الرقم المعروض بالظبط — من data.period، مش تاريخ متحسوب في
+// الفرونت إند (CLAUDE.md §13 بند ❿: تاريخ العميل ممكن يكون توقيت غلط).
+const revenueDrill = useAccountBreakdownDrilldown<RevenueBreakdownResponse, RevenueDetailResponse>(
+  (params) => fetchRevenueBreakdown(params),
+  (params) => fetchRevenueDetail(params),
+)
+const expenseDrill = useAccountBreakdownDrilldown<ExpenseAnalyticsResponse, ExpenseDetailResponse>(
+  (params) => fetchExpenseAnalytics(params),
+  (params) => fetchExpenseDetail(params),
+)
+
+function openRevenueBreakdown() {
+  if (!data.value) return
+  revenueDrill.openBreakdown({ date_from: data.value.period.date_from, date_to: data.value.period.date_to })
+}
+function openExpenseBreakdown() {
+  if (!data.value) return
+  expenseDrill.openBreakdown({ date_from: data.value.period.date_from, date_to: data.value.period.date_to })
+}
+
+const expenseBreakdownTotal = computed(() =>
+  expenseDrill.breakdown.data.value?.expense_lines.reduce(
+    (sum, line) => sum + (Number.parseFloat(line.current_amount) || 0), 0,
+  ) ?? null,
+)
+
+function formatEntryDate(d: string) {
+  return new Date(d).toLocaleDateString('ar-EG', { month: 'short', day: 'numeric' })
 }
 
 const metricLabels: Record<string, string> = {
@@ -184,7 +217,9 @@ const spark = computed(() => {
             :spark-values="spark.revenue"
             color-scheme="green"
             :pinned="watchlist.isPinned('revenue_today')"
+            clickable
             @toggle-pin="watchlist.togglePin('revenue_today')"
+            @click="openRevenueBreakdown"
           />
 
           <MetricCard
@@ -194,7 +229,9 @@ const spark = computed(() => {
             :spark-values="spark.cash"
             color-scheme="default"
             :pinned="watchlist.isPinned('cash_in_drawers')"
+            clickable
             @toggle-pin="watchlist.togglePin('cash_in_drawers')"
+            @click="router.push('/shifts')"
           />
 
           <MetricCard
@@ -204,7 +241,9 @@ const spark = computed(() => {
             :spark-values="spark.expense"
             color-scheme="amber"
             :pinned="watchlist.isPinned('expense_today')"
+            clickable
             @toggle-pin="watchlist.togglePin('expense_today')"
+            @click="openExpenseBreakdown"
           />
         </div>
       </section>
@@ -408,6 +447,132 @@ const spark = computed(() => {
             <span v-if="account.status === 'suspended'" class="text-owner-amber">معلق</span>
           </div>
           <span class="font-mono text-owner-text font-semibold">{{ formatMoney(account.current_balance) }}</span>
+        </div>
+      </div>
+    </DetailSheet>
+
+    <!-- تفصيل إيراد اليوم بالحساب (المستوى الأول) -->
+    <DetailSheet
+      :open="revenueDrill.breakdown.isOpen.value"
+      title="تفصيل إيراد اليوم بالحساب"
+      :subtitle="revenueDrill.breakdown.data.value ? formatMoney(revenueDrill.breakdown.data.value.total_revenue) : undefined"
+      :loading="revenueDrill.breakdown.loading.value"
+      :error="revenueDrill.breakdown.error.value"
+      @close="revenueDrill.breakdown.close()"
+      @retry="revenueDrill.breakdown.retry()"
+    >
+      <div v-if="revenueDrill.breakdown.data.value?.revenue_lines.length === 0" class="text-xs text-owner-muted text-center py-8">
+        لا يوجد إيراد مسجّل اليوم
+      </div>
+      <div v-else class="space-y-1">
+        <button
+          v-for="line in revenueDrill.breakdown.data.value?.revenue_lines ?? []"
+          :key="line.account_code"
+          class="w-full flex items-center justify-between py-2.5 border-b border-owner-border/50 last:border-0 text-xs text-right active:bg-owner-bg transition-colors rounded-lg -mx-1 px-1"
+          @click="revenueDrill.openDetail(line.account_code)"
+        >
+          <span class="font-semibold text-owner-text">{{ line.account_name }}</span>
+          <span class="flex items-center gap-1">
+            <span class="font-mono font-semibold text-owner-green">{{ formatMoney(line.amount) }}</span>
+            <span class="text-owner-muted" aria-hidden="true">‹</span>
+          </span>
+        </button>
+      </div>
+    </DetailSheet>
+
+    <!-- تفصيل حساب إيراد معيّن — قيود اليومية الفعلية (المستوى الثاني) -->
+    <DetailSheet
+      :open="revenueDrill.detail.isOpen.value"
+      :title="revenueDrill.detail.data.value?.account_name ?? 'تفاصيل الحساب'"
+      :subtitle="revenueDrill.detail.data.value ? formatMoney(revenueDrill.detail.data.value.total_amount) : undefined"
+      :loading="revenueDrill.detail.loading.value"
+      :error="revenueDrill.detail.error.value"
+      @close="revenueDrill.detail.close()"
+      @retry="revenueDrill.detail.retry()"
+    >
+      <button
+        class="mb-3 flex items-center gap-1 text-xs font-semibold text-owner-green"
+        @click="revenueDrill.backToBreakdown()"
+      >
+        <span aria-hidden="true">›</span> رجوع لتفصيل الحساب
+      </button>
+      <div v-if="revenueDrill.detail.data.value?.lines.length === 0" class="text-xs text-owner-muted text-center py-8">
+        لا توجد قيود في هذه الفترة
+      </div>
+      <div v-else class="space-y-1">
+        <div
+          v-for="line in revenueDrill.detail.data.value?.lines ?? []"
+          :key="line.entry_id"
+          class="flex items-center justify-between py-2.5 border-b border-owner-border/50 last:border-0 text-xs"
+        >
+          <div class="min-w-0">
+            <div class="font-semibold text-owner-text truncate">{{ line.description }}</div>
+            <div class="text-owner-muted mt-0.5">{{ line.reference }} · {{ formatEntryDate(line.entry_date) }}</div>
+          </div>
+          <div class="font-mono font-semibold text-owner-text shrink-0">{{ formatMoneyFull(line.amount) }}</div>
+        </div>
+      </div>
+    </DetailSheet>
+
+    <!-- تفصيل مصروفات اليوم بالحساب (المستوى الأول) -->
+    <DetailSheet
+      :open="expenseDrill.breakdown.isOpen.value"
+      title="تفصيل مصروفات اليوم بالحساب"
+      :subtitle="expenseBreakdownTotal != null ? formatMoney(expenseBreakdownTotal) : undefined"
+      :loading="expenseDrill.breakdown.loading.value"
+      :error="expenseDrill.breakdown.error.value"
+      @close="expenseDrill.breakdown.close()"
+      @retry="expenseDrill.breakdown.retry()"
+    >
+      <div v-if="expenseDrill.breakdown.data.value?.expense_lines.length === 0" class="text-xs text-owner-muted text-center py-8">
+        لا توجد مصروفات مسجّلة اليوم
+      </div>
+      <div v-else class="space-y-1">
+        <button
+          v-for="line in expenseDrill.breakdown.data.value?.expense_lines ?? []"
+          :key="line.account_code"
+          class="w-full flex items-center justify-between py-2.5 border-b border-owner-border/50 last:border-0 text-xs text-right active:bg-owner-bg transition-colors rounded-lg -mx-1 px-1"
+          @click="expenseDrill.openDetail(line.account_code)"
+        >
+          <span class="font-semibold text-owner-text">{{ line.account_name }}</span>
+          <span class="flex items-center gap-1">
+            <span class="font-mono font-semibold text-owner-amber">{{ formatMoney(line.current_amount) }}</span>
+            <span class="text-owner-muted" aria-hidden="true">‹</span>
+          </span>
+        </button>
+      </div>
+    </DetailSheet>
+
+    <!-- تفصيل حساب مصروف معيّن — قيود اليومية الفعلية (المستوى الثاني) -->
+    <DetailSheet
+      :open="expenseDrill.detail.isOpen.value"
+      :title="expenseDrill.detail.data.value?.account_name ?? 'تفاصيل الحساب'"
+      :subtitle="expenseDrill.detail.data.value ? formatMoney(expenseDrill.detail.data.value.total_amount) : undefined"
+      :loading="expenseDrill.detail.loading.value"
+      :error="expenseDrill.detail.error.value"
+      @close="expenseDrill.detail.close()"
+      @retry="expenseDrill.detail.retry()"
+    >
+      <button
+        class="mb-3 flex items-center gap-1 text-xs font-semibold text-owner-green"
+        @click="expenseDrill.backToBreakdown()"
+      >
+        <span aria-hidden="true">›</span> رجوع لتفصيل الحساب
+      </button>
+      <div v-if="expenseDrill.detail.data.value?.lines.length === 0" class="text-xs text-owner-muted text-center py-8">
+        لا توجد قيود في هذه الفترة
+      </div>
+      <div v-else class="space-y-1">
+        <div
+          v-for="line in expenseDrill.detail.data.value?.lines ?? []"
+          :key="line.entry_id"
+          class="flex items-center justify-between py-2.5 border-b border-owner-border/50 last:border-0 text-xs"
+        >
+          <div class="min-w-0">
+            <div class="font-semibold text-owner-text truncate">{{ line.description }}</div>
+            <div class="text-owner-muted mt-0.5">{{ line.reference }} · {{ formatEntryDate(line.entry_date) }}</div>
+          </div>
+          <div class="font-mono font-semibold text-owner-text shrink-0">{{ formatMoneyFull(line.amount) }}</div>
         </div>
       </div>
     </DetailSheet>

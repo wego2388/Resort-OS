@@ -360,6 +360,34 @@ class ExpenseAnalyticsResponse(BaseModel):
     computed_at:     datetime
 
 
+# ── تفصيل الإيراد بالحساب (2026-08-17) ─────────────────────────────────
+# طلب Mohamed الصريح بعد تجربة تطبيق المالك: الضغط على كارت "إيراد اليوم"/
+# "مصروفات اليوم" لازم يوريه تفاصيل أكتر من الحسابات نفسها. جانب المصروف
+# جاهز أصلاً (ExpenseAnalyticsResponse.expense_lines فوق). دول نظيرهم على
+# جانب الإيراد — نفس مصدر الحقيقة (get_income_statement) بالظبط.
+
+class RevenueLineResponse(BaseModel):
+    """سطر إيراد واحد لفترة معيّنة — بدون مقارنة فترة سابقة (عرض سريع للحظة
+    الحالية فقط، عكس ExpenseLineResponse اللي مبني لمقارنة D-1/D-2)."""
+    account_code: str
+    account_name: str
+    amount:       Decimal
+
+
+class RevenueBreakdownResponse(BaseModel):
+    """
+    GET /api/v1/owner/revenue-breakdown
+    تفصيل الإيراد بالحساب لأي فترة — من نفس get_income_statement المستخدم
+    لكل رقم مالي أساسي تاني (Decision 0004 §Numbers must equal source).
+    """
+    period_from:    date
+    period_to:      date
+    total_revenue:  Decimal
+    revenue_lines:  list[RevenueLineResponse]
+    is_provisional: bool
+    computed_at:    datetime
+
+
 # ── E: Procurement Analytics ──────────────────────────────────────────
 
 class SupplierSpendRow(BaseModel):
@@ -729,6 +757,28 @@ class ExpenseDetailResponse(PaginationMeta):
     lines:         list[ExpenseJournalLine]
     total_amount:  Decimal
     computed_at:   datetime
+
+
+class RevenueJournalLine(BaseModel):
+    entry_id:    int
+    entry_date:  date
+    reference:   str
+    description: str
+    amount:      Decimal
+    source:      Optional[str] = None
+
+
+class RevenueDetailResponse(PaginationMeta):
+    """GET /api/v1/owner/revenue-detail — كل قيود اليومية داخل حساب إيراد
+    معيّن. نظير ExpenseDetailResponse بالظبط على جانب الدائن (الإيراد يزيد
+    بالدائن، عكس المصروف اللي يزيد بالمدين)."""
+    account_code: str
+    account_name: str
+    period_from:  date
+    period_to:    date
+    lines:        list[RevenueJournalLine]
+    total_amount: Decimal
+    computed_at:  datetime
 
 
 class SupplierPurchaseOrder(BaseModel):

@@ -13,6 +13,8 @@ defineProps<{
   loading?: boolean
 }>()
 
+const emit = defineEmits<{ 'click-revenue': []; 'click-expense': [] }>()
+
 const showBreakdown = ref(false)
 </script>
 
@@ -37,9 +39,13 @@ const showBreakdown = ref(false)
     <template v-else>
       <!-- ثلاثة صفوف: إيراد / مصروف / صافي -->
       <div class="space-y-3">
-        <!-- إيراد -->
-        <div class="flex items-center justify-between py-2 border-b border-owner-border">
-          <span class="text-xs text-owner-muted">الإيراد</span>
+        <!-- إيراد — قابل للضغط لتفصيل بالحساب (2026-08-17) -->
+        <button
+          type="button"
+          class="w-full flex items-center justify-between py-2 border-b border-owner-border text-start active:bg-owner-bg transition-colors rounded-lg -mx-1 px-1"
+          @click="emit('click-revenue')"
+        >
+          <span class="text-xs text-owner-muted flex items-center gap-1">الإيراد <span class="text-owner-border" aria-hidden="true">‹</span></span>
           <div class="text-right">
             <div class="text-sm font-bold text-owner-text">
               {{ formatMoney(comparison.current.total_revenue) }}
@@ -55,11 +61,15 @@ const showBreakdown = ref(false)
               <span>{{ formatPct(comparison.revenue_pct) }}</span>
             </div>
           </div>
-        </div>
+        </button>
 
-        <!-- مصروف -->
-        <div class="flex items-center justify-between py-2 border-b border-owner-border">
-          <span class="text-xs text-owner-muted">المصروفات</span>
+        <!-- مصروف — قابل للضغط لتفصيل بالحساب (2026-08-17) -->
+        <button
+          type="button"
+          class="w-full flex items-center justify-between py-2 border-b border-owner-border text-start active:bg-owner-bg transition-colors rounded-lg -mx-1 px-1"
+          @click="emit('click-expense')"
+        >
+          <span class="text-xs text-owner-muted flex items-center gap-1">المصروفات <span class="text-owner-border" aria-hidden="true">‹</span></span>
           <div class="text-right">
             <div class="text-sm font-bold text-owner-text">
               {{ formatMoney(comparison.current.total_expense) }}
@@ -77,7 +87,7 @@ const showBreakdown = ref(false)
               <span>{{ formatPct(comparison.expense_pct) }}</span>
             </div>
           </div>
-        </div>
+        </button>
 
         <!-- صافي الدخل -->
         <div class="flex items-center justify-between py-2">

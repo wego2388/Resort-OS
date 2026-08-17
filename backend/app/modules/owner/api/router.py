@@ -42,6 +42,8 @@ from app.modules.owner.schemas import (
     OwnerWatchlistRead,
     ProcurementAnalyticsResponse,
     ProductDetailResponse,
+    RevenueBreakdownResponse,
+    RevenueDetailResponse,
     SalesPerformanceResponse,
     ShiftHistoryResponse,
     ShiftMonitorResponse,
@@ -293,6 +295,34 @@ def owner_expense_analytics(
         return services.get_expense_analytics(db, branch_id, date_from, date_to)
     except Exception as exc:
         raise _owner_error("OWNER_EXPENSE_FAILED", exc) from exc
+
+
+@router.get(
+    "/revenue-breakdown",
+    response_model=RevenueBreakdownResponse,
+    name="owner_revenue_breakdown",
+    summary="تفصيل الإيراد بالحساب لأي فترة",
+)
+def owner_revenue_breakdown(
+    response: Response,
+    db: OwnerReadDb,
+    user=Depends(get_owner_reader),
+    date_from: date = Query(default=None),
+    date_to:   date = Query(default=None),
+):
+    """
+    2026-08-17: تفصيل إيراد أي فترة بالحساب — نظير expense-analytics على
+    جانب الإيراد. من نفس get_income_statement (Decision 0004 §Numbers must
+    equal source)، صفر حساب جديد.
+    """
+    response.headers["Cache-Control"] = _NO_STORE
+    branch_id = _get_branch(user)
+    if date_from is None or date_to is None:
+        date_from, date_to = _default_range()
+    try:
+        return services.get_revenue_breakdown(db, branch_id, date_from, date_to)
+    except Exception as exc:
+        raise _owner_error("OWNER_REVENUE_BREAKDOWN_FAILED", exc) from exc
 
 
 @router.get(
@@ -660,6 +690,34 @@ def owner_expense_detail(
     except Exception as exc:
         raise _owner_error("OWNER_EXPENSE_DETAIL_FAILED", exc) from exc
     _log_owner_audit(db, user, "owner_drill_down", "expense_account")
+    return result
+
+
+@router.get(
+    "/revenue-detail",
+    response_model=RevenueDetailResponse,
+    name="owner_revenue_detail",
+    summary="تفاصيل كل قيود اليومية داخل حساب إيراد معيّن",
+)
+def owner_revenue_detail(
+    response: Response,
+    db: OwnerReadDb,
+    user=Depends(get_owner_reader),
+    account_code: str = Query(...),
+    date_from: date = Query(default=None),
+    date_to:   date = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    size: int = Query(default=50, ge=1, le=200),
+):
+    response.headers["Cache-Control"] = _NO_STORE
+    branch_id = _get_branch(user)
+    if date_from is None or date_to is None:
+        date_from, date_to = _default_range()
+    try:
+        result = services.get_revenue_detail(db, branch_id, account_code, date_from, date_to, page=page, size=size)
+    except Exception as exc:
+        raise _owner_error("OWNER_REVENUE_DETAIL_FAILED", exc) from exc
+    _log_owner_audit(db, user, "owner_drill_down", "revenue_account")
     return result
 
 
