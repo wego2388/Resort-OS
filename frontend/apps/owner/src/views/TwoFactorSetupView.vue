@@ -107,12 +107,12 @@ onMounted(() => {
             class="mt-1 min-h-12 w-full rounded-xl border border-owner-border bg-owner-bg px-4 font-mono text-owner-text outline-none focus:border-owner-green">
         </label>
         <p class="text-xs leading-5 text-owner-muted">استخدم الرمز المنفصل الذي ظهر مرة واحدة عند إنشاء الحساب أو استعادة 2FA.</p>
-        <p v-if="error" role="alert" class="rounded-xl border border-red-900/50 bg-red-950/40 px-4 py-3 text-xs text-owner-red">{{ error }}</p>
+        <p v-if="error" role="alert" class="rounded-xl border border-owner-red/30 bg-owner-red/10 px-4 py-3 text-xs text-owner-red">{{ error }}</p>
         <button class="min-h-12 w-full rounded-xl bg-owner-green font-bold text-black">متابعة</button>
       </form>
 
       <div v-else-if="step === 'error'" class="text-center">
-        <p role="alert" class="rounded-xl border border-red-900/50 bg-red-950/40 px-4 py-3 text-sm text-owner-red">{{ error }}</p>
+        <p role="alert" class="rounded-xl border border-owner-red/30 bg-owner-red/10 px-4 py-3 text-sm text-owner-red">{{ error }}</p>
         <button class="mt-4 min-h-12 w-full rounded-xl bg-owner-green font-bold text-black" @click="step = 'proof'">مراجعة رمز التهيئة</button>
       </div>
 
@@ -132,13 +132,13 @@ onMounted(() => {
           <input v-model="otpCode" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" autofocus dir="ltr"
             class="mt-3 min-h-14 w-full rounded-xl border border-owner-border bg-owner-bg px-4 text-center font-mono text-2xl tracking-[0.5em] text-owner-text outline-none focus:border-owner-green">
         </label>
-        <p v-if="error" role="alert" class="rounded-xl border border-red-900/50 bg-red-950/40 px-4 py-3 text-xs text-owner-red">{{ error }}</p>
+        <p v-if="error" role="alert" class="rounded-xl border border-owner-red/30 bg-owner-red/10 px-4 py-3 text-xs text-owner-red">{{ error }}</p>
         <button :disabled="busy" class="min-h-12 w-full rounded-xl bg-owner-green font-bold text-black disabled:opacity-50">{{ busy ? 'جارٍ التحقق...' : 'تأكيد التفعيل' }}</button>
         <button type="button" class="w-full text-xs text-owner-muted" @click="step = 'show_qr'">العودة لرمز QR</button>
       </form>
 
       <div v-else-if="step === 'recovery'">
-        <div class="rounded-xl border border-amber-900/50 bg-amber-950/30 p-4">
+        <div class="rounded-xl border border-owner-amber/30 bg-owner-amber/10 p-4">
           <h2 class="font-bold text-owner-amber">احفظ أكواد الاسترداد الآن</h2>
           <p class="mt-1 text-xs leading-5 text-owner-muted">كل كود يُستخدم مرة واحدة لو فقدت هاتفك. لن تظهر الأكواد مرة ثانية.</p>
         </div>

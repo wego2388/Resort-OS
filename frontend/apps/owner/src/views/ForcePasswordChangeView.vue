@@ -66,7 +66,7 @@ function returnToLogin() {
     <section class="w-full max-w-md rounded-2xl border border-owner-border bg-owner-card p-6 shadow-2xl sm:p-8">
       <template v-if="completed">
         <div class="py-3 text-center">
-          <div class="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-green-950 text-2xl text-owner-green">✓</div>
+          <div class="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-owner-green/10 text-2xl text-owner-green">✓</div>
           <h1 class="text-xl font-bold text-owner-text">تم تغيير كلمة المرور</h1>
           <p class="mt-2 text-sm leading-6 text-owner-muted">
             سجّل الدخول بكلمة المرور الجديدة، ثم أكمل ربط تطبيق المصادقة.
@@ -110,11 +110,11 @@ function returnToLogin() {
         </label>
 
         <label class="flex cursor-pointer items-center gap-2 text-xs text-owner-muted">
-          <input v-model="showPasswords" type="checkbox" class="accent-green-500">
+          <input v-model="showPasswords" type="checkbox" class="accent-owner-green">
           إظهار كلمات المرور أثناء الكتابة
         </label>
 
-        <p v-if="error" role="alert" class="rounded-xl border border-red-900/50 bg-red-950/40 px-4 py-3 text-xs text-owner-red">{{ error }}</p>
+        <p v-if="error" role="alert" class="rounded-xl border border-owner-red/30 bg-owner-red/10 px-4 py-3 text-xs text-owner-red">{{ error }}</p>
 
         <button type="submit" :disabled="loading" class="min-h-12 w-full rounded-xl bg-owner-green font-bold text-black disabled:opacity-50">
           {{ loading ? 'جارٍ الحفظ...' : 'حفظ كلمة المرور الجديدة' }}

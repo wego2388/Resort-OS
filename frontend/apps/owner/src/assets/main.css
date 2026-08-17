@@ -1,35 +1,80 @@
+/* Accessibility base rules shared with el-kheima (focus-visible ring +
+   prefers-reduced-motion) — genuinely generic per Decision 0004's carve-out
+   for "@resort-os/ui... genuinely generic parts". Its own --color-* tokens
+   are entirely separate from this file's --owner-* tokens below (no
+   collision); the owner app keeps its own distinct palette/design language,
+   only the accessibility primitives are shared. Must load before @tailwind
+   base so the vars/layers exist by the time Tailwind-generated rules
+   reference them (same order as el-kheima's main.css). */
+@import '@resort-os/ui/src/styles/tokens.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* DS tokens inline — نفس packages/ui/src/styles/tokens.css لكن بدون @import */
-:root {
-  --color-secondary: 201 150 60;
-  --color-success: 22 163 74;
-  --color-warning: 217 119 6;
-  --color-danger: 220 38 38;
-  --color-info: 37 99 235;
-  --color-surface: 255 255 255;
-  --color-border: 229 224 216;
-  --color-muted: 120 113 108;
-  --color-background: 249 247 244;
-  --color-dark: 28 25 23;
-  --color-light: 255 255 255;
-  --color-primary-ring: 11 79 138;
-}
-
 /*
  * Owner PWA — Global styles
- * Decision 0004: dark-first، mobile-first، لا light mode.
+ *
+ * Decision 0004 originally shipped this app dark-only ("dark-first,
+ * mobile-first, no light mode"). Mohamed tried it himself, reads with
+ * reading glasses, and asked for a real light mode plus more readable text
+ * (2026-08-17) — that is a direct product decision from the owner, not a
+ * cosmetic preference, and supersedes the original dark-only choice.
+ *
+ * Theme toggling reuses the exact mechanism already built and proven for
+ * el-kheima: `initTheme()`/`useTheme()` from `@resort-os/core` toggles a
+ * `.dark` class on <html> (Tailwind `darkMode: 'class'`), persisted to
+ * localStorage, defaulting to the OS `prefers-color-scheme` when no
+ * preference is saved yet — see src/main.ts and the <ThemeToggle> button in
+ * AppShell.vue. Nothing here reinvents that mechanism; this file only
+ * supplies the owner app's own --owner-* token values for each theme so the
+ * ~450 existing `owner-*` Tailwind class usages across every screen repaint
+ * correctly without themselves having to change.
  */
 
 :root {
+  /* Light (default) — same warm neutrals as the rest of the product's DS
+     tokens (packages/ui/src/styles/tokens.css :root) for brand consistency,
+     with owner-green/red/amber deliberately one shade darker (700-weight
+     instead of 500/600) than a typical UI accent: these tokens double as
+     small status/delta TEXT color (not just fills/badges) throughout the
+     app, so they must clear WCAG AA (4.5:1) against a white/near-white
+     card — verified: green-700 ≈4.8:1, red-700 ≈5.9:1, amber-700 ≈4.5:1. */
+  --owner-bg: 249 247 244;      /* #F9F7F4 */
+  --owner-card: 255 255 255;    /* #FFFFFF */
+  --owner-border: 229 224 216;  /* #E5E0D8 */
+  --owner-text: 28 25 23;       /* #1C1917 (stone-900) */
+  --owner-muted: 87 83 78;      /* #57534E (stone-600 — stone-500 measured too close to 4.5:1 at text-xs sizes) */
+  --owner-green: 21 128 61;     /* #15803D (green-700) */
+  --owner-red: 185 28 28;       /* #B91C1C (red-700) */
+  --owner-amber: 180 83 9;      /* #B45309 (amber-700) */
+  color-scheme: light;
+}
+
+/* Dark — the app's original, already-shipped-and-liked palette, unchanged. */
+.dark {
+  --owner-bg: 10 9 8;           /* #0A0908 */
+  --owner-card: 28 27 26;       /* #1C1B1A */
+  --owner-border: 44 43 42;     /* #2C2B2A */
+  --owner-text: 245 245 244;    /* #F5F5F4 */
+  --owner-muted: 168 162 158;   /* #A8A29E */
+  --owner-green: 34 197 94;     /* #22C55E */
+  --owner-red: 239 68 68;       /* #EF4444 */
+  --owner-amber: 245 158 11;    /* #F59E0B */
   color-scheme: dark;
 }
 
 html {
-  /* دايماً dark — مش class toggle */
-  background-color: #0A0908;
+  background-color: rgb(var(--owner-bg));
+  /* Readable-text preference (Normal/Large/Extra Large) applied by
+     initTextScale()/useTextScale() in src/composables/useTextScale.ts —
+     scales this root font-size, which every rem-based Tailwind text-size
+     utility and the .metric-value clamp() below are relative to. Answers
+     Mohamed's "numbers and text are small, I wear reading glasses" directly
+     and universally, without touching the ~200 individual text-size classes
+     across every screen. 17px default is a modest +6% over the browser's
+     16px baseline even before the owner picks "Large"/"X-Large". */
+  font-size: 17px;
 }
 
 body {
@@ -66,8 +111,8 @@ body {
  * Card base — shared across NowScreen & PerformanceScreen
  */
 .owner-card {
-  background-color: #1C1B1A;
-  border: 1px solid #2C2B2A;
+  background-color: rgb(var(--owner-card));
+  border: 1px solid rgb(var(--owner-border));
   border-radius: 0.75rem;
   padding: 1.25rem;
   touch-action: pan-y;
@@ -104,9 +149,9 @@ body {
   text-transform: uppercase;
   padding: 0.125rem 0.375rem;
   border-radius: 9999px;
-  background-color: rgba(245, 158, 11, 0.15);
-  color: #F59E0B;
-  border: 1px solid rgba(245, 158, 11, 0.3);
+  background-color: rgb(var(--owner-amber) / 0.15);
+  color: rgb(var(--owner-amber));
+  border: 1px solid rgb(var(--owner-amber) / 0.3);
 }
 
 /*
@@ -123,8 +168,13 @@ body {
  */
 .owner-main {
   /* The fixed navigation does not participate in layout. Reserve its full
-   * height here once for every screen, including the iPhone safe area. */
-  padding-bottom: calc(56px + env(safe-area-inset-bottom));
+   * height here once for every screen, including the iPhone safe area.
+   * rem-based (not 56px) so this stays locked to .bottom-nav-item's own
+   * min-height at any text-scale preference (useTextScale.ts scales the
+   * root font-size) — a flat px budget here desynced from the nav's actual
+   * rendered height by ~1.3px at the "large" text-scale root size, tripping
+   * the 320/390/768 viewport "navigation never covers content" e2e check. */
+  padding-bottom: calc(3.5rem + env(safe-area-inset-bottom));
 }
 
 .bottom-nav {
@@ -133,8 +183,8 @@ body {
   left: 0;
   right: 0;
   padding-bottom: env(safe-area-inset-bottom);
-  background-color: #1C1B1A;
-  border-top: 1px solid #2C2B2A;
+  background-color: rgb(var(--owner-card));
+  border-top: 1px solid rgb(var(--owner-border));
   display: flex;
   z-index: 50;
 }
@@ -146,8 +196,8 @@ body {
   align-items: center;
   justify-content: center;
   padding: 0.625rem 0;
-  min-height: 56px;
-  color: #A8A29E;
+  min-height: 3.5rem;
+  color: rgb(var(--owner-muted));
   text-decoration: none;
   transition: color 0.15s ease;
   cursor: pointer;
@@ -156,7 +206,7 @@ body {
 }
 
 .bottom-nav-item.active {
-  color: #22C55E;
+  color: rgb(var(--owner-green));
 }
 
 .bottom-nav-item span {
@@ -188,13 +238,13 @@ body {
     padding-bottom: env(safe-area-inset-bottom);
     flex-direction: column;
     border-top: 0;
-    border-inline-start: 1px solid #2C2B2A;
+    border-inline-start: 1px solid rgb(var(--owner-border));
   }
 
   .bottom-nav-item {
     flex: 0 0 5.25rem;
     width: 100%;
-    border-bottom: 1px solid #2C2B2A;
+    border-bottom: 1px solid rgb(var(--owner-border));
   }
 }
 
@@ -205,7 +255,7 @@ body {
   display: flex;
   justify-content: center;
   padding: 0.75rem;
-  color: #A8A29E;
+  color: rgb(var(--owner-muted));
   font-size: 0.75rem;
   transition: opacity 0.2s;
 }
@@ -213,9 +263,9 @@ body {
 /*
  * Delta badge — يوم/أسبوع/شهر مقارنة
  */
-.delta-up   { color: #22C55E; }
-.delta-down { color: #EF4444; }
-.delta-flat { color: #A8A29E; }
+.delta-up   { color: rgb(var(--owner-green)); }
+.delta-down { color: rgb(var(--owner-red)); }
+.delta-flat { color: rgb(var(--owner-muted)); }
 
 /*
  * Section divider
@@ -225,7 +275,7 @@ body {
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: #A8A29E;
+  color: rgb(var(--owner-muted));
   margin-bottom: 0.75rem;
 }
 
@@ -237,11 +287,11 @@ body {
   margin: 0.25rem 0 0.75rem;
   font-size: 0.875rem;
   font-weight: 700;
-  color: #F5F5F4;
+  color: rgb(var(--owner-text));
 }
 
 .screen-section-title small {
-  color: #A8A29E;
+  color: rgb(var(--owner-muted));
   font-size: 0.6875rem;
   font-weight: 500;
 }
@@ -263,9 +313,9 @@ body {
   font-weight: 700;
   padding: 0.125rem 0.5rem;
   border-radius: 9999px;
-  background-color: rgba(239, 68, 68, 0.15);
-  color: #EF4444;
-  border: 1px solid rgba(239, 68, 68, 0.3);
+  background-color: rgb(var(--owner-red) / 0.15);
+  color: rgb(var(--owner-red));
+  border: 1px solid rgb(var(--owner-red) / 0.3);
 }
 
 /*
@@ -277,7 +327,7 @@ body {
 }
 
 .skeleton {
-  background-color: #2C2B2A;
+  background-color: rgb(var(--owner-border));
   border-radius: 0.375rem;
   animation: skeleton-pulse 1.5s ease-in-out infinite;
 }

@@ -4,16 +4,21 @@
  * - Safe area top/bottom (iPhone notch/Dynamic Island)
  * - Bottom navigation (Now + Performance + Sales + Expenses + Shifts + HR)
  * - Logout button في الـ header (Decision 0004 §7b)
+ * - Theme toggle + text-size control في الـ header (2026-08-17، طلب محمد
+ *   الصريح بعد تجربة حقيقية: نص/أرقام صغيرة وهو لابس نظارة قراءة)
  * - RouterView في المنتصف
  */
 import { computed, ref } from 'vue'
 import { useRoute, useRouter, RouterView } from 'vue-router'
 import { useAuthStore } from '@resort-os/core'
+import { ThemeToggle } from '@resort-os/ui'
 import SearchOverlay from '../components/SearchOverlay.vue'
+import { useTextScale } from '../composables/useTextScale'
 
 const route  = useRoute()
 const router = useRouter()
 const auth   = useAuthStore()
+const { cycleScale, label: textScaleLabel } = useTextScale()
 
 const searchOpen = ref(false)
 const activeTitle = computed(() => String(route.meta.title || 'نظرة المالك'))
@@ -70,6 +75,18 @@ function vibrate(ms = 6) {
             <path stroke-linecap="round" d="M21 21l-4.35-4.35" />
           </svg>
         </button>
+        <!-- حجم النص — عادي/كبير/أكبر (طلب محمد الصريح 2026-08-17) -->
+        <button
+          class="touch-target text-owner-muted active:text-owner-green transition-colors text-xs font-bold"
+          :aria-label="`حجم النص: ${textScaleLabel()} — اضغط للتغيير`"
+          :title="`حجم النص: ${textScaleLabel()}`"
+          @click="cycleScale"
+        >Aa</button>
+        <!-- الوضع الليلي/النهاري (طلب محمد الصريح 2026-08-17) -->
+        <ThemeToggle
+          light-label="التبديل للوضع الفاتح"
+          dark-label="التبديل للوضع الداكن"
+        />
         <!-- Logout — أمان أساسي (Decision 0004 §7b) -->
         <button
           class="text-xs text-owner-muted hover:text-owner-red active:text-owner-red transition-colors touch-target px-1"

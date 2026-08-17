@@ -326,7 +326,7 @@ async function submit() {
       <!-- Error -->
       <div
         v-if="error"
-        class="text-xs text-owner-red bg-red-950/40 border border-red-900/50 rounded-xl px-4 py-3"
+        class="text-xs text-owner-red bg-owner-red/10 border border-owner-red/30 rounded-xl px-4 py-3"
         role="alert"
       >
         {{ error }}

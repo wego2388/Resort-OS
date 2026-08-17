@@ -34,8 +34,8 @@ function toggleShift(id: number) {
 }
 
 const tierStyle: Record<string, string> = {
-  critical:  'text-owner-red border-owner-red/30 bg-red-950/20',
-  attention: 'text-owner-amber border-owner-amber/30 bg-amber-950/20',
+  critical:  'text-owner-red border-owner-red/30 bg-owner-red/10',
+  attention: 'text-owner-amber border-owner-amber/30 bg-owner-amber/10',
   watch:     'text-owner-muted border-owner-border bg-owner-card',
 }
 
@@ -94,7 +94,7 @@ function formatDateTime(iso: string) {
         {{ tabLabels[tab] }}
         <span
           v-if="tab === 'exceptions' && excData && excData.critical_count > 0"
-          class="absolute top-1.5 right-3 bg-owner-red text-black text-xs font-bold rounded-full w-4 h-4 flex items-center justify-center"
+          class="absolute top-1.5 right-3 bg-owner-red text-white text-xs font-bold rounded-full w-4 h-4 flex items-center justify-center"
         >{{ excData.critical_count }}</span>
       </button>
     </div>
