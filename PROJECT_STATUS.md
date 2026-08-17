@@ -1,6 +1,39 @@
 # حالة المشروع الحالية — El Kheima Beach Resort OS
 
-**آخر تحديث:** 2026-08-17 — REL-17b: لايت مود كامل + تفضيل حجم نص
+**آخر تحديث:** 2026-08-17 — REL-17c: الضغط على كارت الإيراد/المصروف في
+تطبيق المالك بيفتح تفصيل حقيقي بالحساب ثم قيود اليومية، منشور ومتحقق
+فعليًا على الـVPS (release commit `b162bbe`؛ مفيش migration).
+
+## REL-17c — تفصيل الإيراد/المصروف بالحساب في تطبيق المالك (2026-08-17) — DEPLOYED
+
+- Mohamed طلب: الضغط على كارت زي "إيراد اليوم"/"مصروفات اليوم" يوريه
+  تفاصيل أكتر، مسحوبة من الحسابات نفسها، بطريقة كويسة وذكية.
+  **Release commit:** `b162bbed78a0d169c13b59f92d9fa9c1cae75b4a`.
+- جانب المصروف كان عنده بنية تحتية جاهزة من قبل ("Phase 8" drill-down في
+  `ExpensesScreen.vue`) لكن مالهاش أي اختبار خالص، ومش موصول بكروت
+  "الآن"/"الأداء" الرئيسية. جانب الإيراد ملوش أي endpoint تفصيل بالحساب
+  خالص.
+- Backend إضافي بحت (مفيش migration): `GET /owner/revenue-breakdown`
+  (غلاف رفيع فوق `finance.get_income_statement`'s الموجودة أصلاً
+  `revenue_lines` — صفر حساب جديد) و`GET /owner/revenue-detail` (نظير
+  `expense-detail` على جانب الدائن — الإيراد يزيد بالدائن). 9 اختبار
+  جديد يغطي المسارين (كان صفر تغطية للعائلة دي كلها قبل كده).
+- Frontend: `MetricCard.vue` بقى قابل للضغط (`clickable` prop، بيتحول
+  لـ`<button>` حقيقي)، composable مشترك جديد
+  `useAccountBreakdownDrilldown` (مستويين: قائمة حسابات → قيود يومية
+  فعلية داخل حساب منها، مع زرار رجوع) — مستخدم في `NowScreen` (فترة =
+  اليوم) و`PerformanceScreen` (فترة = أي تاب نشط: اليوم/الأسبوع/الشهر).
+  "كاش الأدراج" بيودّي لشاشة `/shifts` بدل drill-down (تفاصيله الحقيقية
+  هناك أصلاً).
+- اتحقق منه فعليًا بتفاعل حي (Playwright، ضغطات فعلية): كارت → تفصيل
+  بالحساب → حساب → قيود يومية فعلية → رجوع → إغلاق، صفر overflow طول
+  التسلسل. Backend `pytest -q` صفر فشل (2956 مجمّعة)، `type-check:all`
+  نظيف، `test:e2e` owner **12/12**. النشر: `backend`/`celery`/`owner`
+  اتبنوا واتستبدلوا (`el_kheima`/`nginx` متلمسوش)، health gate الرسمي
+  `passes=16`. تفاصيل كاملة:
+  `docs/agent-workflow/handoffs/2026-08-17_REL-17c_owner-app-account-drilldown_claude_handoff.md`
+
+**السابق:** 2026-08-17 — REL-17b: لايت مود كامل + تفضيل حجم نص
 (عادي/كبير/أكبر) لتطبيق المالك، منشور ومتحقق فعليًا على الـVPS
 (release commit `65a0605`؛ تغيير frontend بحت، مفيش migration).
 
