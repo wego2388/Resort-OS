@@ -15,7 +15,8 @@ from app.resort_os.timezone_utils import local_today
 
 from app.modules.inventory import crud
 from app.modules.inventory.models import (
-    Product, PurchaseOrder, PurchaseRequest, StockCount, StockCountLine, StockMovement, Supplier, Warehouse,
+    Product, PurchaseOrder, PurchaseRequest, StockCount, StockCountLine, StockMovement,
+    Supplier, SupplierPayment, Warehouse,
 )
 from app.modules.inventory.schemas import (
     CategoryCreate, ProductCreate, ProductUpdate,
@@ -435,6 +436,65 @@ def pay_purchase_order(
     db.commit()
     db.refresh(po)
     return po
+
+
+def void_supplier_payment(
+    db: Session, payment_id: int, voided_by: int, reason: str = "voided via API",
+) -> SupplierPayment:
+    """إلغاء سند دفع مورد اتسجّل بالفعل (2026-08-19، طلب Mohamed) — عكس
+    Dr.2200/Cr.تسوية اللي pay_purchase_order رحّله، وبيرجّع amount_paid/
+    payment_status لأمر الشراء لحالته قبل الدفعة دي. نفس نمط
+    finance.services.void_expense بالظبط (نفس فئة الخطورة — قيد اتسجّل
+    فعليًا في الدفاتر، مش قبل الحفظ)."""
+    from app.modules.finance import crud as finance_crud  # noqa: PLC0415
+    from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
+
+    payment = crud.get_supplier_payment(db, payment_id)
+    if not payment:
+        raise ValueError(f"سند دفع المورد {payment_id} غير موجود")
+    if payment.voided_at is not None:
+        raise ValueError(f"سند دفع المورد {payment_id} ملغى بالفعل")
+
+    po = crud.get_purchase_order(db, payment.purchase_order_id)
+    if not po:
+        raise ValueError(f"أمر الشراء {payment.purchase_order_id} غير موجود")
+
+    settlement_account = finance_crud.get_account(db, payment.settlement_account_id)
+    if not settlement_account:
+        raise ValueError(f"حساب التسوية {payment.settlement_account_id} غير موجود")
+
+    try:
+        original_amount = payment.amount
+        payment = crud.void_supplier_payment(db, payment, voided_by)
+        finance_crud.create_revenue_audit_log(
+            db, branch_id=payment.branch_id, entity_type="supplier_payment", entity_id=payment.id,
+            old_value=original_amount, new_value=Decimal("0.00"), reason=reason, changed_by=voided_by,
+        )
+        from app.resort_os.timezone_utils import business_today  # noqa: PLC0415
+        post_simple_revenue_journal(
+            db, payment.branch_id, business_today(settings.TIMEZONE),
+            debit_account_code=settlement_account.code, credit_account_code="2200",
+            amount=original_amount,
+            reference=f"PO-PAY-VOID-{payment.id}",
+            description=f"إلغاء سند دفع مورد — أمر شراء {po.order_number}",
+            source="supplier_payment_void", source_id=payment.id,
+            created_by=voided_by,
+            strict=True, commit_cost_centers=False,
+        )
+        po.amount_paid = po.amount_paid - original_amount
+        if po.amount_paid <= Decimal("0.01"):
+            po.amount_paid = Decimal("0")
+            po.payment_status = "unpaid"
+        elif po.amount_paid >= po.total_amount - Decimal("0.01"):
+            po.payment_status = "paid"
+        else:
+            po.payment_status = "partial"
+        db.commit()
+        db.refresh(payment)
+        return payment
+    except Exception:
+        db.rollback()
+        raise
 
 
 def create_purchase_order(db: Session, data: PurchaseOrderCreate) -> PurchaseOrder:

@@ -35,7 +35,10 @@ from app.modules.finance.schemas import (
     CostCenterCreate, CostCenterRead, CostCenterReport,
     DepreciationRunRequest, DepreciationRunResult,
     DiscountCalculateRequest, ETAInvoiceRead, ETAInvoiceSubmitRequest,
-    ExchangeRateCreate, ExchangeRateRead, ExpenseCreate, ExpenseRead,
+    CashReceiptCreate, CashReceiptRead,
+    CustodyCreate, CustodyRead, CustodySettleRequest, CustodySettlementLineRead,
+    ExchangeRateCreate, ExchangeRateRead, ExpenseCreate, ExpensePaymentCreate, ExpensePaymentRead,
+    ExpenseRead,
     FolioChargeCreate, FolioChargeRead,
     FolioCreate, FolioRead, IncomeStatementReport, JournalEntryCreate, JournalEntryRead,
     PaymentChannelCreate, PaymentChannelRead, PaymentChannelUpdate,
@@ -761,6 +764,298 @@ def list_expenses(
     return PaginatedResponse(total=total, page=page, size=size, items=items)
 
 
+@router.post("/finance/expenses/{expense_id}/void", response_model=ExpenseRead,
+             dependencies=[Depends(require_permission("finance.void_expense", "execute", min_role_level=60))])
+def void_expense(
+    expense_id: int, data: VoidPaymentRequest, db: DbDep, request: Request,
+    user=Depends(get_finance_user),
+    x_step_up_token: Optional[str] = Header(default=None, alias="X-Step-Up-Token"),
+):
+    """2026-08-19 (طلب Mohamed): إلغاء سند مصروفات اتسجّل بالفعل — نفس
+    خطورة إلغاء دفعة، محتاج step-up فوق صلاحية مدير+ العادية. راجع
+    app.core.kernel.auth.step_up.expense_void_scope."""
+    from app.core.kernel.auth.step_up import expense_void_scope  # noqa: PLC0415
+    from app.modules.core.api.step_up_utils import consume_step_up_or_raise  # noqa: PLC0415
+
+    expense = crud.get_expense(db, expense_id)
+    if not expense:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"سند المصروفات {expense_id} غير موجود")
+    try:
+        core_services.assert_branch_access(db, user, expense.branch_id, "إلغاء سند مصروفات")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+
+    scope_hash = expense_void_scope(expense_id=expense_id, reason=data.reason)
+    consume_step_up_or_raise(
+        db, user, request,
+        purpose="expense_void", scope_hash=scope_hash, x_step_up_token=x_step_up_token,
+    )
+    try:
+        expense = services.void_expense(db, expense_id, voided_by=user.id, reason=data.reason)
+    except services.FinancialConfigurationError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {
+            "code": "FINANCIAL_CONFIGURATION_ERROR", "message": str(exc),
+        })
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    row = ExpenseRead.model_validate(expense).model_dump()
+    row["expense_account_code"] = expense.expense_account.code if expense.expense_account else ""
+    row["expense_account_name"] = expense.expense_account.name if expense.expense_account else ""
+    row["settlement_account_code"] = expense.settlement_account.code if expense.settlement_account else ""
+    return row
+
+
+@router.post(
+    "/finance/expenses/{expense_id}/pay", response_model=ExpenseRead,
+)
+def pay_expense(
+    expense_id: int, data: ExpensePaymentCreate, db: DbDep,
+    user=Depends(get_finance_user),
+):
+    """2026-08-19 (طلب Mohamed): سداد فعلي لسند مصروفات آجل (defer_payment=true
+    وقت الإنشاء). راجع services.pay_expense."""
+    expense = crud.get_expense(db, expense_id)
+    if not expense:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"سند المصروفات {expense_id} غير موجود")
+    try:
+        core_services.assert_branch_access(db, user, expense.branch_id, "سداد سند مصروفات")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+    try:
+        expense = services.pay_expense(db, expense_id, data, recorded_by=user.id)
+    except services.FinancialConfigurationError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {
+            "code": "FINANCIAL_CONFIGURATION_ERROR", "message": str(exc),
+        })
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    row = ExpenseRead.model_validate(expense).model_dump()
+    row["expense_account_code"] = expense.expense_account.code if expense.expense_account else ""
+    row["expense_account_name"] = expense.expense_account.name if expense.expense_account else ""
+    row["settlement_account_code"] = expense.settlement_account.code if expense.settlement_account else ""
+    return row
+
+
+@router.get("/finance/expenses/{expense_id}/payments", response_model=list[ExpensePaymentRead])
+def list_expense_payments(expense_id: int, db: DbDep, user=Depends(get_finance_user)):
+    expense = crud.get_expense(db, expense_id)
+    if not expense:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"سند المصروفات {expense_id} غير موجود")
+    try:
+        core_services.assert_branch_access(db, user, expense.branch_id, "عرض سدادات سند مصروفات")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+    return crud.list_expense_payments(db, expense_id)
+
+
+# ── العهدة (Custody / سلفة نقدية) — 2026-08-19 ─────────────────────────
+# صرف سلفة لموظف/مقاول لصرف بند معيّن (مقاولة/عمالة يومية...)، وتسويتها
+# لاحقًا بتوزيع فعلي على حسابات مصروفات حقيقية. راجع services.disburse_
+# custody/settle_custody/void_custody.
+
+@router.post("/finance/custodies", response_model=CustodyRead, status_code=status.HTTP_201_CREATED)
+def disburse_custody(
+    data: CustodyCreate, db: DbDep, branch_id: int = Query(...),
+    user=Depends(get_finance_user),
+):
+    try:
+        custody = services.disburse_custody(db, branch_id, data, disbursed_by=user.id)
+    except services.FinancialConfigurationError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {
+            "code": "FINANCIAL_CONFIGURATION_ERROR", "message": str(exc),
+        })
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    return custody
+
+
+@router.get("/finance/custodies", response_model=PaginatedResponse)
+def list_custodies(
+    db: DbDep,
+    _=Depends(get_finance_user),
+    branch_id: int = Query(...),
+    status_filter: Optional[str] = Query(None, alias="status", pattern=r"^(open|settled)$"),
+    page: int = Query(1, ge=1),
+    size: int = Query(30, ge=1, le=200),
+):
+    items, total = crud.list_custodies(db, branch_id, status_filter, page, size)
+    return PaginatedResponse(
+        total=total, page=page, size=size,
+        items=[CustodyRead.model_validate(c) for c in items],
+    )
+
+
+@router.get("/finance/custodies/{custody_id}", response_model=CustodyRead)
+def get_custody(custody_id: int, db: DbDep, user=Depends(get_finance_user)):
+    custody = crud.get_custody(db, custody_id)
+    if not custody:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"العهدة {custody_id} غير موجودة")
+    try:
+        core_services.assert_branch_access(db, user, custody.branch_id, "عرض عهدة نقدية")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+    return custody
+
+
+@router.get(
+    "/finance/custodies/{custody_id}/settlement-lines",
+    response_model=list[CustodySettlementLineRead],
+)
+def list_custody_settlement_lines(custody_id: int, db: DbDep, user=Depends(get_finance_user)):
+    custody = crud.get_custody(db, custody_id)
+    if not custody:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"العهدة {custody_id} غير موجودة")
+    try:
+        core_services.assert_branch_access(db, user, custody.branch_id, "عرض بنود تسوية عهدة")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+    return crud.list_custody_settlement_lines(db, custody_id)
+
+
+@router.post("/finance/custodies/{custody_id}/settle", response_model=CustodyRead)
+def settle_custody(
+    custody_id: int, data: CustodySettleRequest, db: DbDep,
+    user=Depends(get_finance_user),
+):
+    custody = crud.get_custody(db, custody_id)
+    if not custody:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"العهدة {custody_id} غير موجودة")
+    try:
+        core_services.assert_branch_access(db, user, custody.branch_id, "تسوية عهدة نقدية")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+    try:
+        return services.settle_custody(db, custody_id, data, settled_by=user.id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+@router.post(
+    "/finance/custodies/{custody_id}/void", response_model=CustodyRead,
+    dependencies=[Depends(require_permission("finance.void_custody", "execute", min_role_level=60))],
+)
+def void_custody(
+    custody_id: int, data: VoidPaymentRequest, db: DbDep, request: Request,
+    user=Depends(get_finance_user),
+    x_step_up_token: Optional[str] = Header(default=None, alias="X-Step-Up-Token"),
+):
+    """2026-08-19 (طلب Mohamed): إلغاء عهدة نقدية لسه open — نفس خطورة
+    إلغاء دفعة/سند مصروفات، محتاج step-up. راجع
+    app.core.kernel.auth.step_up.custody_void_scope."""
+    from app.core.kernel.auth.step_up import custody_void_scope  # noqa: PLC0415
+    from app.modules.core.api.step_up_utils import consume_step_up_or_raise  # noqa: PLC0415
+
+    custody = crud.get_custody(db, custody_id)
+    if not custody:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"العهدة {custody_id} غير موجودة")
+    try:
+        core_services.assert_branch_access(db, user, custody.branch_id, "إلغاء عهدة نقدية")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+
+    scope_hash = custody_void_scope(custody_id=custody_id, reason=data.reason)
+    consume_step_up_or_raise(
+        db, user, request,
+        purpose="custody_void", scope_hash=scope_hash, x_step_up_token=x_step_up_token,
+    )
+    try:
+        return services.void_custody(db, custody_id, voided_by=user.id, reason=data.reason)
+    except services.FinancialConfigurationError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {
+            "code": "FINANCIAL_CONFIGURATION_ERROR", "message": str(exc),
+        })
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+# ── إذن قبض عام (Generic Cash Receipt Voucher) — 2026-08-19 ────────────
+# تحصيل نقدية من مصدر متنوع مش مرتبط بمسار بيع قائم. راجع
+# services.record_cash_receipt/void_cash_receipt.
+
+@router.post("/finance/cash-receipts", response_model=CashReceiptRead, status_code=status.HTTP_201_CREATED)
+def create_cash_receipt(
+    data: CashReceiptCreate, db: DbDep, branch_id: int = Query(...),
+    user=Depends(get_finance_user),
+):
+    try:
+        receipt = services.record_cash_receipt(db, branch_id, data, recorded_by=user.id)
+    except services.FinancialConfigurationError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {
+            "code": "FINANCIAL_CONFIGURATION_ERROR", "message": str(exc),
+        })
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    row = CashReceiptRead.model_validate(receipt).model_dump()
+    row["destination_account_code"] = receipt.destination_account.code if receipt.destination_account else ""
+    row["destination_account_name"] = receipt.destination_account.name if receipt.destination_account else ""
+    row["source_account_code"] = receipt.source_account.code if receipt.source_account else ""
+    return row
+
+
+@router.get("/finance/cash-receipts", response_model=PaginatedResponse)
+def list_cash_receipts(
+    db: DbDep,
+    _=Depends(get_finance_user),
+    branch_id: int = Query(...),
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+    page: int = Query(1, ge=1),
+    size: int = Query(30, ge=1, le=200),
+):
+    items, total = crud.list_cash_receipts(db, branch_id, date_from, date_to, page, size)
+    rows = []
+    for receipt in items:
+        row = CashReceiptRead.model_validate(receipt).model_dump()
+        row["destination_account_code"] = receipt.destination_account.code if receipt.destination_account else ""
+        row["destination_account_name"] = receipt.destination_account.name if receipt.destination_account else ""
+        row["source_account_code"] = receipt.source_account.code if receipt.source_account else ""
+        rows.append(row)
+    return PaginatedResponse(total=total, page=page, size=size, items=rows)
+
+
+@router.post(
+    "/finance/cash-receipts/{receipt_id}/void", response_model=CashReceiptRead,
+    dependencies=[Depends(require_permission("finance.void_cash_receipt", "execute", min_role_level=60))],
+)
+def void_cash_receipt(
+    receipt_id: int, data: VoidPaymentRequest, db: DbDep, request: Request,
+    user=Depends(get_finance_user),
+    x_step_up_token: Optional[str] = Header(default=None, alias="X-Step-Up-Token"),
+):
+    """2026-08-19 (طلب Mohamed): إلغاء إذن قبض اتسجّل بالفعل — نفس خطورة
+    إلغاء دفعة/سند مصروفات، محتاج step-up. راجع
+    app.core.kernel.auth.step_up.cash_receipt_void_scope."""
+    from app.core.kernel.auth.step_up import cash_receipt_void_scope  # noqa: PLC0415
+    from app.modules.core.api.step_up_utils import consume_step_up_or_raise  # noqa: PLC0415
+
+    receipt = crud.get_cash_receipt(db, receipt_id)
+    if not receipt:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"إذن القبض {receipt_id} غير موجود")
+    try:
+        core_services.assert_branch_access(db, user, receipt.branch_id, "إلغاء إذن قبض")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+
+    scope_hash = cash_receipt_void_scope(receipt_id=receipt_id, reason=data.reason)
+    consume_step_up_or_raise(
+        db, user, request,
+        purpose="cash_receipt_void", scope_hash=scope_hash, x_step_up_token=x_step_up_token,
+    )
+    try:
+        receipt = services.void_cash_receipt(db, receipt_id, voided_by=user.id, reason=data.reason)
+    except services.FinancialConfigurationError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {
+            "code": "FINANCIAL_CONFIGURATION_ERROR", "message": str(exc),
+        })
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    row = CashReceiptRead.model_validate(receipt).model_dump()
+    row["destination_account_code"] = receipt.destination_account.code if receipt.destination_account else ""
+    row["destination_account_name"] = receipt.destination_account.name if receipt.destination_account else ""
+    row["source_account_code"] = receipt.source_account.code if receipt.source_account else ""
+    return row
+
+
 # ── Revenue Audit Log ────────────────────────────────────────────────
 # سجل تدقيق للتغييرات الفعلية في سعر/قيمة (زي إلغاء دفعة) — للعرض فقط،
 # بيتسجّل تلقائيًا من الـ services (services.void_payment مثلًا)، مش عن طريق
@@ -771,7 +1066,10 @@ def list_revenue_audit_logs(
     db: DbDep,
     _=Depends(get_finance_user),
     branch_id: int = Query(...),
-    entity_type: Optional[str] = Query(None, pattern=r"^(booking|folio|invoice|payment)$"),
+    entity_type: Optional[str] = Query(
+        None,
+        pattern=r"^(booking|folio|invoice|payment|expense|supplier_payment|custody|cash_receipt)$",
+    ),
     entity_id: Optional[int] = Query(None),
 ):
     items = crud.list_revenue_audit_logs(db, branch_id, entity_type, entity_id)

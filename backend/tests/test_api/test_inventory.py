@@ -438,6 +438,60 @@ class TestSupplierPayment:
         assert po.amount_paid == Decimal("1800.00")
         assert len(crud.list_supplier_payments(db, po.id)) == 2
 
+    def test_void_supplier_payment_full_reverts_po_to_unpaid(self, db, branch, supplier, product, warehouse):
+        from app.modules.inventory.schemas import SupplierPaymentCreate
+
+        po = self._received_po(db, branch, supplier, product, warehouse)
+        cash = self._cash_account(db, branch)
+        po = services.pay_purchase_order(db, po.id, SupplierPaymentCreate(
+            amount=Decimal("1800"), settlement_account_id=cash.id, paid_at=date.today(),
+        ), recorded_by=1)
+        payment = crud.list_supplier_payments(db, po.id)[0]
+
+        voided = services.void_supplier_payment(db, payment.id, voided_by=2, reason="سداد بالخطأ")
+        assert voided.voided_at is not None
+
+        po = crud.get_purchase_order(db, po.id)
+        assert po.amount_paid == Decimal("0")
+        assert po.payment_status == "unpaid"
+
+    def test_void_supplier_payment_partial_keeps_remaining_as_partial(
+        self, db, branch, supplier, product, warehouse,
+    ):
+        from app.modules.inventory.schemas import SupplierPaymentCreate
+
+        po = self._received_po(db, branch, supplier, product, warehouse)
+        cash = self._cash_account(db, branch)
+        po = services.pay_purchase_order(db, po.id, SupplierPaymentCreate(
+            amount=Decimal("800"), settlement_account_id=cash.id, paid_at=date.today(),
+        ), recorded_by=1)
+        po = services.pay_purchase_order(db, po.id, SupplierPaymentCreate(
+            amount=Decimal("1000"), settlement_account_id=cash.id, paid_at=date.today(),
+        ), recorded_by=1)
+        assert po.payment_status == "paid"
+        payments = sorted(crud.list_supplier_payments(db, po.id), key=lambda p: p.amount)
+        smaller_payment = payments[0]  # 800
+
+        services.void_supplier_payment(db, smaller_payment.id, voided_by=2, reason="عكس دفعة جزئية")
+
+        po = crud.get_purchase_order(db, po.id)
+        assert po.amount_paid == Decimal("1000.00")
+        assert po.payment_status == "partial"
+
+    def test_cannot_void_already_voided_supplier_payment(self, db, branch, supplier, product, warehouse):
+        from app.modules.inventory.schemas import SupplierPaymentCreate
+
+        po = self._received_po(db, branch, supplier, product, warehouse)
+        cash = self._cash_account(db, branch)
+        po = services.pay_purchase_order(db, po.id, SupplierPaymentCreate(
+            amount=Decimal("1800"), settlement_account_id=cash.id, paid_at=date.today(),
+        ), recorded_by=1)
+        payment = crud.list_supplier_payments(db, po.id)[0]
+        services.void_supplier_payment(db, payment.id, voided_by=2, reason="أول مرة")
+
+        with pytest.raises(ValueError, match="ملغى بالفعل"):
+            services.void_supplier_payment(db, payment.id, voided_by=2, reason="محاولة تانية")
+
     def test_overpayment_rejected(self, db, branch, supplier, product, warehouse):
         from app.modules.inventory.schemas import SupplierPaymentCreate
 

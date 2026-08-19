@@ -32,6 +32,39 @@ def _void_payment_headers(client, headers, *, payment_id, reason):
     return {**headers, "X-Step-Up-Token": token}
 
 
+def _void_expense_headers(client, headers, *, expense_id, reason):
+    """2026-08-19 — نفس نمط _void_payment_headers فوق، راجع
+    app.core.kernel.auth.step_up.expense_void_scope."""
+    from tests.conftest import _issue_step_up
+    token = _issue_step_up(
+        client, headers, purpose="expense_void",
+        intent={"expense_id": expense_id, "reason": reason},
+    )
+    return {**headers, "X-Step-Up-Token": token}
+
+
+def _void_custody_headers(client, headers, *, custody_id, reason):
+    """2026-08-19 — نفس نمط _void_payment_headers فوق، راجع
+    app.core.kernel.auth.step_up.custody_void_scope."""
+    from tests.conftest import _issue_step_up
+    token = _issue_step_up(
+        client, headers, purpose="custody_void",
+        intent={"custody_id": custody_id, "reason": reason},
+    )
+    return {**headers, "X-Step-Up-Token": token}
+
+
+def _void_cash_receipt_headers(client, headers, *, receipt_id, reason):
+    """2026-08-19 — نفس نمط _void_payment_headers فوق، راجع
+    app.core.kernel.auth.step_up.cash_receipt_void_scope."""
+    from tests.conftest import _issue_step_up
+    token = _issue_step_up(
+        client, headers, purpose="cash_receipt_void",
+        intent={"receipt_id": receipt_id, "reason": reason},
+    )
+    return {**headers, "X-Step-Up-Token": token}
+
+
 def make_branch_committed(db):
     from app.modules.core.models import Branch
     b = Branch(name="Finance HTTP Branch", name_ar="فرع مالي",
@@ -2356,6 +2389,381 @@ class TestExpenseHTTP:
                 "settlement_account_id": cash.id,
                 "amount": "100.00",
                 "description": "محاولة من غير صلاحية",
+            },
+            headers=waiter_headers,
+        )
+        assert resp.status_code == 403
+
+    def _created_expense(self, client, db, branch, manager_headers, amount="1500.00"):
+        rent, cash = self._accounts(db, branch)
+        resp = client.post(
+            "/api/v1/finance/expenses",
+            params={"branch_id": branch.id},
+            json={
+                "expense_date": str(date.today()),
+                "expense_account_id": rent.id,
+                "settlement_account_id": cash.id,
+                "amount": amount,
+                "description": "سند اختبار",
+            },
+            headers=manager_headers,
+        )
+        assert resp.status_code == 201, resp.text
+        return resp.json()
+
+    def test_void_expense_writes_revenue_audit_log(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        expense = self._created_expense(client, db, branch, manager_headers)
+
+        reason = "سند اتسجّل غلط على حساب خطأ"
+        resp = client.post(
+            f"/api/v1/finance/expenses/{expense['id']}/void",
+            json={"reason": reason},
+            headers=_void_expense_headers(client, manager_headers, expense_id=expense["id"], reason=reason),
+        )
+        assert resp.status_code == 200, resp.text
+        voided = resp.json()
+        assert voided["voided_at"] is not None
+
+        logs_resp = client.get(
+            "/api/v1/finance/revenue-audit-logs",
+            params={"branch_id": branch.id, "entity_type": "expense", "entity_id": expense["id"]},
+            headers=manager_headers,
+        )
+        assert logs_resp.status_code == 200, logs_resp.text
+        logs = logs_resp.json()
+        assert len(logs) == 1
+        assert logs[0]["old_value"] == "1500.00"
+        assert logs[0]["new_value"] == "0.00"
+
+    def test_cannot_void_already_voided_expense(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        expense = self._created_expense(client, db, branch, manager_headers)
+
+        first = client.post(
+            f"/api/v1/finance/expenses/{expense['id']}/void",
+            json={"reason": "إلغاء أول مرة"},
+            headers=_void_expense_headers(client, manager_headers, expense_id=expense["id"], reason="إلغاء أول مرة"),
+        )
+        assert first.status_code == 200, first.text
+
+        second = client.post(
+            f"/api/v1/finance/expenses/{expense['id']}/void",
+            json={"reason": "محاولة إلغاء تانية"},
+            headers=_void_expense_headers(
+                client, manager_headers, expense_id=expense["id"], reason="محاولة إلغاء تانية",
+            ),
+        )
+        assert second.status_code == 400, second.text
+        assert "ملغى بالفعل" in second.json()["detail"]
+
+    def test_void_expense_requires_manager(self, client: TestClient, db, cashier_headers, manager_headers):
+        branch = make_branch_committed(db)
+        expense = self._created_expense(client, db, branch, manager_headers)
+        resp = client.post(
+            f"/api/v1/finance/expenses/{expense['id']}/void",
+            json={"reason": "محاولة كاشير"},
+            headers=cashier_headers,
+        )
+        assert resp.status_code == 403
+
+    def test_void_expense_without_step_up_token_rejected(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        expense = self._created_expense(client, db, branch, manager_headers)
+        resp = client.post(
+            f"/api/v1/finance/expenses/{expense['id']}/void",
+            json={"reason": "من غير step-up"},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 428
+        assert resp.json()["detail"]["error_code"] == "STEP_UP_REQUIRED"
+
+    def test_create_deferred_expense_and_pay_it_off(self, client: TestClient, db, manager_headers):
+        """2026-08-19 (طلب Mohamed — مصروف آجل): إنشاء سند بـdefer_payment=true
+        (من غير settlement_account_id)، ثم سداده لاحقًا عبر /pay."""
+        from app.modules.finance.models import Account
+        branch = make_branch_committed(db)
+        rent, cash = self._accounts(db, branch)
+        accrued = Account(branch_id=branch.id, code="2180", name="مصروفات مستحقة", account_type="liability")
+        db.add(accrued); db.commit()
+
+        create_resp = client.post(
+            "/api/v1/finance/expenses",
+            params={"branch_id": branch.id},
+            json={
+                "expense_date": str(date.today()),
+                "expense_account_id": rent.id,
+                "amount": "3000.00",
+                "description": "فاتورة مقاول — عمالة يومية",
+                "defer_payment": True,
+            },
+            headers=manager_headers,
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        expense = create_resp.json()
+        assert expense["payment_status"] == "unpaid"
+        assert expense["amount_paid"] == "0.00" or expense["amount_paid"] == "0"
+
+        pay_resp = client.post(
+            f"/api/v1/finance/expenses/{expense['id']}/pay",
+            json={"amount": "3000.00", "settlement_account_id": cash.id, "paid_at": str(date.today())},
+            headers=manager_headers,
+        )
+        assert pay_resp.status_code == 200, pay_resp.text
+        paid = pay_resp.json()
+        assert paid["payment_status"] == "paid"
+        assert paid["amount_paid"] == "3000.00"
+
+        payments_resp = client.get(
+            f"/api/v1/finance/expenses/{expense['id']}/payments", headers=manager_headers,
+        )
+        assert payments_resp.status_code == 200
+        assert len(payments_resp.json()) == 1
+
+    def test_void_nonexistent_expense_404(self, client: TestClient, db, manager_headers):
+        reason = "سند غير موجود"
+        resp = client.post(
+            "/api/v1/finance/expenses/999999/void",
+            json={"reason": reason},
+            headers=_void_expense_headers(client, manager_headers, expense_id=999999, reason=reason),
+        )
+        assert resp.status_code == 404
+
+
+class TestCustodyHTTP:
+    """2026-08-19 (طلب Mohamed — العهدة/سلفة نقدية) — دورة حياة كاملة عبر
+    الـAPI الفعلي: صرف → تسوية/إلغاء."""
+
+    def _accounts(self, db, branch):
+        cash = make_account_committed(db, branch, "1100", "Cash", "asset")
+        custody_acc = make_account_committed(db, branch, "1190", "عهد نقدية تحت التسوية", "asset")
+        labor = make_account_committed(db, branch, "5300", "أجور مقاولين", "expense")
+        return cash, custody_acc, labor
+
+    def _disbursed_custody(self, client, db, branch, manager_headers, amount="5000.00"):
+        cash, _custody_acc, _labor = self._accounts(db, branch)
+        resp = client.post(
+            "/api/v1/finance/custodies",
+            params={"branch_id": branch.id},
+            json={
+                "holder_name": "أحمد المقاول", "purpose": "مقاولة رصف بلاط",
+                "amount": amount, "disbursed_date": str(date.today()),
+                "source_account_id": cash.id,
+            },
+            headers=manager_headers,
+        )
+        assert resp.status_code == 201, resp.text
+        return resp.json()
+
+    def test_disburse_and_list_custodies_http(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        custody = self._disbursed_custody(client, db, branch, manager_headers)
+        assert custody["status"] == "open"
+
+        list_resp = client.get(
+            "/api/v1/finance/custodies", params={"branch_id": branch.id}, headers=manager_headers,
+        )
+        assert list_resp.status_code == 200
+        assert list_resp.json()["total"] == 1
+
+        get_resp = client.get(f"/api/v1/finance/custodies/{custody['id']}", headers=manager_headers)
+        assert get_resp.status_code == 200
+        assert get_resp.json()["id"] == custody["id"]
+
+    def test_settle_custody_http(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        cash, _custody_acc, labor = self._accounts(db, branch)
+        custody = self._disbursed_custody(client, db, branch, manager_headers, amount="3000.00")
+
+        settle_resp = client.post(
+            f"/api/v1/finance/custodies/{custody['id']}/settle",
+            json={
+                "settlement_date": str(date.today()),
+                "lines": [{
+                    "expense_account_id": labor.id, "amount": "3000.00",
+                    "description": "أجور عمالة يومية",
+                }],
+                "returned_amount": "0",
+            },
+            headers=manager_headers,
+        )
+        assert settle_resp.status_code == 200, settle_resp.text
+        settled = settle_resp.json()
+        assert settled["status"] == "settled"
+
+        lines_resp = client.get(
+            f"/api/v1/finance/custodies/{custody['id']}/settlement-lines", headers=manager_headers,
+        )
+        assert lines_resp.status_code == 200
+        assert len(lines_resp.json()) == 1
+
+    def test_settle_custody_mismatched_total_rejected(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        _cash, _custody_acc, labor = self._accounts(db, branch)
+        custody = self._disbursed_custody(client, db, branch, manager_headers, amount="3000.00")
+
+        settle_resp = client.post(
+            f"/api/v1/finance/custodies/{custody['id']}/settle",
+            json={
+                "settlement_date": str(date.today()),
+                "lines": [{
+                    "expense_account_id": labor.id, "amount": "1000.00",
+                    "description": "أجور جزئية",
+                }],
+                "returned_amount": "0",
+            },
+            headers=manager_headers,
+        )
+        assert settle_resp.status_code == 400
+
+    def test_void_open_custody_writes_revenue_audit_log(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        custody = self._disbursed_custody(client, db, branch, manager_headers)
+
+        reason = "العهدة اتصرفت غلط لمقاول تاني"
+        void_resp = client.post(
+            f"/api/v1/finance/custodies/{custody['id']}/void",
+            json={"reason": reason},
+            headers=_void_custody_headers(client, manager_headers, custody_id=custody["id"], reason=reason),
+        )
+        assert void_resp.status_code == 200, void_resp.text
+        assert void_resp.json()["voided_at"] is not None
+
+        logs_resp = client.get(
+            "/api/v1/finance/revenue-audit-logs",
+            params={"branch_id": branch.id, "entity_type": "custody", "entity_id": custody["id"]},
+            headers=manager_headers,
+        )
+        assert logs_resp.status_code == 200, logs_resp.text
+        assert len(logs_resp.json()) == 1
+
+    def test_void_custody_requires_manager(self, client: TestClient, db, manager_headers, cashier_headers):
+        branch = make_branch_committed(db)
+        custody = self._disbursed_custody(client, db, branch, manager_headers)
+        resp = client.post(
+            f"/api/v1/finance/custodies/{custody['id']}/void",
+            json={"reason": "محاولة كاشير"},
+            headers=cashier_headers,
+        )
+        assert resp.status_code == 403
+
+    def test_void_custody_without_step_up_token_rejected(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        custody = self._disbursed_custody(client, db, branch, manager_headers)
+        resp = client.post(
+            f"/api/v1/finance/custodies/{custody['id']}/void",
+            json={"reason": "من غير step-up"},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 428
+        assert resp.json()["detail"]["error_code"] == "STEP_UP_REQUIRED"
+
+    def test_create_custody_requires_finance_role(self, client: TestClient, db, waiter_headers):
+        branch = make_branch_committed(db)
+        cash, _custody_acc, _labor = self._accounts(db, branch)
+        resp = client.post(
+            "/api/v1/finance/custodies",
+            params={"branch_id": branch.id},
+            json={
+                "holder_name": "أحمد", "purpose": "اختبار", "amount": "100.00",
+                "disbursed_date": str(date.today()), "source_account_id": cash.id,
+            },
+            headers=waiter_headers,
+        )
+        assert resp.status_code == 403
+
+
+class TestCashReceiptHTTP:
+    """2026-08-19 (طلب Mohamed — إذن قبض عام) — تحصيل نقدية من مصدر متنوع
+    عبر الـAPI الفعلي."""
+
+    def _accounts(self, db, branch):
+        cash = make_account_committed(db, branch, "1100", "Cash", "asset")
+        capital = make_account_committed(db, branch, "3100", "رأس المال", "equity")
+        return cash, capital
+
+    def _created_receipt(self, client, db, branch, manager_headers, amount="10000.00"):
+        cash, capital = self._accounts(db, branch)
+        resp = client.post(
+            "/api/v1/finance/cash-receipts",
+            params={"branch_id": branch.id},
+            json={
+                "receipt_date": str(date.today()),
+                "destination_account_id": cash.id, "source_account_id": capital.id,
+                "amount": amount, "description": "ضخ رأس مال إضافي",
+            },
+            headers=manager_headers,
+        )
+        assert resp.status_code == 201, resp.text
+        return resp.json()
+
+    def test_create_and_list_cash_receipts_http(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        receipt = self._created_receipt(client, db, branch, manager_headers)
+        assert receipt["destination_account_code"] == "1100"
+        assert receipt["source_account_code"] == "3100"
+
+        list_resp = client.get(
+            "/api/v1/finance/cash-receipts",
+            params={"branch_id": branch.id,
+                    "date_from": str(date.today()), "date_to": str(date.today())},
+            headers=manager_headers,
+        )
+        assert list_resp.status_code == 200
+        assert list_resp.json()["total"] == 1
+
+    def test_void_cash_receipt_writes_revenue_audit_log(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        receipt = self._created_receipt(client, db, branch, manager_headers)
+
+        reason = "اتسجّل بالخطأ على حساب غلط"
+        void_resp = client.post(
+            f"/api/v1/finance/cash-receipts/{receipt['id']}/void",
+            json={"reason": reason},
+            headers=_void_cash_receipt_headers(client, manager_headers, receipt_id=receipt["id"], reason=reason),
+        )
+        assert void_resp.status_code == 200, void_resp.text
+        assert void_resp.json()["voided_at"] is not None
+
+        logs_resp = client.get(
+            "/api/v1/finance/revenue-audit-logs",
+            params={"branch_id": branch.id, "entity_type": "cash_receipt", "entity_id": receipt["id"]},
+            headers=manager_headers,
+        )
+        assert logs_resp.status_code == 200, logs_resp.text
+        assert len(logs_resp.json()) == 1
+
+    def test_void_cash_receipt_requires_manager(self, client: TestClient, db, manager_headers, cashier_headers):
+        branch = make_branch_committed(db)
+        receipt = self._created_receipt(client, db, branch, manager_headers)
+        resp = client.post(
+            f"/api/v1/finance/cash-receipts/{receipt['id']}/void",
+            json={"reason": "محاولة كاشير"},
+            headers=cashier_headers,
+        )
+        assert resp.status_code == 403
+
+    def test_void_cash_receipt_without_step_up_token_rejected(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        receipt = self._created_receipt(client, db, branch, manager_headers)
+        resp = client.post(
+            f"/api/v1/finance/cash-receipts/{receipt['id']}/void",
+            json={"reason": "من غير step-up"},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 428
+        assert resp.json()["detail"]["error_code"] == "STEP_UP_REQUIRED"
+
+    def test_create_cash_receipt_requires_finance_role(self, client: TestClient, db, waiter_headers):
+        branch = make_branch_committed(db)
+        cash, capital = self._accounts(db, branch)
+        resp = client.post(
+            "/api/v1/finance/cash-receipts",
+            params={"branch_id": branch.id},
+            json={
+                "receipt_date": str(date.today()),
+                "destination_account_id": cash.id, "source_account_id": capital.id,
+                "amount": "100.00", "description": "محاولة من غير صلاحية",
             },
             headers=waiter_headers,
         )

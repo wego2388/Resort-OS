@@ -274,6 +274,17 @@ def create_supplier_payment(
     return payment
 
 
+def get_supplier_payment(db: Session, payment_id: int) -> Optional[SupplierPayment]:
+    return db.query(SupplierPayment).filter(SupplierPayment.id == payment_id).first()
+
+
+def void_supplier_payment(db: Session, payment: SupplierPayment, voided_by: int) -> SupplierPayment:
+    payment.voided_at = datetime.utcnow()
+    payment.voided_by = voided_by
+    db.flush()
+    return payment
+
+
 def list_supplier_payments(db: Session, purchase_order_id: int) -> list["SupplierPayment"]:
     return (
         db.query(SupplierPayment)

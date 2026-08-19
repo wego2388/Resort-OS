@@ -5617,7 +5617,9 @@
         "exchangeRates": "Exchange Rates",
         "journal": "Journal",
         "paymentChannels": "Payment Channels",
-        "expenses": "Expenses"
+        "expenses": "Expenses",
+        "custodies": "Custody Advances",
+        "cashReceipts": "Cash Receipts"
       },
       "expenses": {
         "loadError": "Failed to load expenses",
@@ -5633,7 +5635,89 @@
           "amountRequired": "Enter a valid amount",
           "descriptionRequired": "Description is required",
           "success": "Expense recorded ✓",
-          "error": "Could not record the expense"
+          "error": "Could not record the expense",
+          "deferPayment": "Deferred (credit) expense — settle later"
+        },
+        "status": {
+          "label": "Status",
+          "paid": "Paid",
+          "unpaid": "Unpaid",
+          "partial": "Partially paid",
+          "voided": "Voided"
+        },
+        "pay": {
+          "btnLabel": "Settle",
+          "title": "Settle deferred expense",
+          "confirm": "Record settlement",
+          "settlementAccountRequired": "Choose a settlement account",
+          "success": "Settlement recorded ✓",
+          "error": "Could not record the settlement"
+        },
+        "void": {
+          "btnLabel": "Void",
+          "stepUpDescription": "Confirm your identity to void this expense voucher.",
+          "success": "Expense voided ✓",
+          "error": "Could not void the expense"
+        }
+      },
+      "custodies": {
+        "loadError": "Failed to load custody advances",
+        "empty": "No custody advances recorded",
+        "holderName": "Holder name",
+        "purpose": "Purpose",
+        "sourceAccount": "Source account",
+        "disbursedDate": "Date",
+        "status": { "open": "Open", "settled": "Settled" },
+        "newCustody": {
+          "btnLabel": "New custody advance",
+          "title": "Disburse a cash custody advance",
+          "confirm": "Disburse",
+          "fieldsRequired": "Holder name and purpose are required",
+          "accountRequired": "Choose a source account",
+          "success": "Custody advance disbursed ✓",
+          "error": "Could not disburse the custody advance"
+        },
+        "settle": {
+          "btnLabel": "Settle",
+          "title": "Settle custody advance",
+          "confirm": "Record settlement",
+          "amountHint": "Custody advance amount: {amount} EGP — lines + returned amount must add up to exactly this.",
+          "settlementDate": "Settlement date",
+          "lineLabel": "Line {n}",
+          "removeLine": "Remove",
+          "addLine": "Add line",
+          "returnedAmount": "Returned amount (if any)",
+          "runningTotal": "Total so far: {total} / {amount}",
+          "linesRequired": "Every line needs an expense account, amount and description",
+          "mismatchError": "Lines + returned amount ({total}) must equal the custody amount ({amount}) exactly",
+          "success": "Custody advance settled ✓",
+          "error": "Could not settle the custody advance"
+        },
+        "void": {
+          "btnLabel": "Void",
+          "stepUpDescription": "Confirm your identity to void this custody advance.",
+          "success": "Custody advance voided ✓",
+          "error": "Could not void the custody advance"
+        }
+      },
+      "cashReceipts": {
+        "loadError": "Failed to load cash receipts",
+        "empty": "No cash receipts recorded in this period",
+        "destinationAccount": "Destination account (cash/bank)",
+        "sourceAccount": "Source account",
+        "newReceipt": {
+          "btnLabel": "New cash receipt",
+          "title": "Record a cash receipt",
+          "confirm": "Record receipt",
+          "accountsRequired": "Choose the destination and source accounts",
+          "success": "Cash receipt recorded ✓",
+          "error": "Could not record the cash receipt"
+        },
+        "void": {
+          "btnLabel": "Void",
+          "stepUpDescription": "Confirm your identity to void this cash receipt.",
+          "success": "Cash receipt voided ✓",
+          "error": "Could not void the cash receipt"
         }
       },
       "paymentChannels": {

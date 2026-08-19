@@ -547,14 +547,21 @@ class JournalEntryRead(BaseModel):
 class ExpenseCreate(BaseModel):
     """سند مصروفات — راجع models.Expense / services.record_expense.
     الفئة هي expense_account_id نفسه (حساب 5xxx من دليل الحسابات)، مفيش
-    taxonomy موازية."""
+    taxonomy موازية.
+
+    defer_payment (2026-08-19، طلب Mohamed — مصروف آجل): لو True، السند
+    يترحّل Dr.المصروف/Cr.2180 (مصروفات مستحقة) بدل تسوية نقدية فورية —
+    settlement_account_id بيتجاهل في الحالة دي (الحساب الفعلي دايمًا 2180)،
+    والسداد الفعلي بعدين عبر services.pay_expense. لو False (الافتراضي)
+    settlement_account_id إجباري زي ما كان بالظبط."""
     expense_date:           date
     expense_account_id:     int
-    settlement_account_id:  int
+    settlement_account_id:  Optional[int] = None
     amount:                 Decimal = Field(..., gt=0)
     description:            str = Field(..., min_length=3, max_length=300)
     reference:              Optional[str] = Field(None, max_length=100)
     cost_center_id:         Optional[int] = None
+    defer_payment:          bool = False
 
 
 class ExpenseRead(BaseModel):
@@ -564,10 +571,115 @@ class ExpenseRead(BaseModel):
     amount: Decimal; description: str; reference: Optional[str]
     cost_center_id: Optional[int]; journal_entry_id: int; recorded_by: int
     created_at: datetime
+    payment_status: str = "paid"
+    amount_paid: Decimal = Decimal("0")
+    voided_at: Optional[datetime] = None
+    voided_by: Optional[int] = None
     # للعرض — راجع services.list_expenses
     expense_account_code: str = ""
     expense_account_name: str = ""
     settlement_account_code: str = ""
+
+
+class ExpensePaymentCreate(BaseModel):
+    """سداد فعلي لسند مصروفات آجل (2026-08-19) — راجع services.pay_expense.
+    نفس شكل SupplierPaymentCreate بالظبط (نظير مصروفات لسداد مورد)."""
+    amount:                 Decimal = Field(..., gt=0)
+    settlement_account_id:  int
+    reference:              Optional[str] = Field(None, max_length=100)
+    notes:                  Optional[str] = Field(None, max_length=500)
+    paid_at:                date
+
+
+class ExpensePaymentRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int; branch_id: int; expense_id: int
+    amount: Decimal; settlement_account_id: int
+    reference: Optional[str]; notes: Optional[str]
+    paid_at: date; journal_entry_id: int; recorded_by: int
+    created_at: datetime
+
+
+class CustodyCreate(BaseModel):
+    """عهدة نقدية (2026-08-19، طلب Mohamed) — سلفة لموظف/مقاول لصرف بند
+    معيّن (مقاولة/عمالة يومية/مشتريات ميدانية...). تترحّل Dr.1190 (عهد
+    نقدية تحت التسوية) / Cr.حساب المصدر وقت الصرف — راجع
+    services.disburse_custody. تتقفل لاحقًا بتوزيع فعلي على حسابات
+    مصروفات حقيقية عبر services.settle_custody."""
+    holder_name:         str = Field(..., min_length=2, max_length=200)
+    holder_employee_id:  Optional[int] = None
+    purpose:             str = Field(..., min_length=3, max_length=300)
+    amount:              Decimal = Field(..., gt=0)
+    disbursed_date:      date
+    source_account_id:   int
+    reference:           Optional[str] = Field(None, max_length=50)
+
+
+class CustodyRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int; branch_id: int; holder_name: str
+    holder_employee_id: Optional[int]; purpose: str
+    amount: Decimal; disbursed_date: date
+    source_account_id: int; custody_account_id: int
+    status: str
+    disbursement_entry_id: int; settlement_entry_id: Optional[int]
+    returned_amount: Decimal
+    disbursed_by: int; settled_by: Optional[int]; settled_at: Optional[datetime]
+    voided_at: Optional[datetime]; voided_by: Optional[int]
+    created_at: datetime
+
+
+class CustodySettlementLineCreate(BaseModel):
+    expense_account_id:  int
+    cost_center_id:      Optional[int] = None
+    amount:               Decimal = Field(..., gt=0)
+    description:          str = Field(..., min_length=3, max_length=300)
+    reference:            Optional[str] = Field(None, max_length=100)
+
+
+class CustodySettlementLineRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int; custody_id: int; expense_account_id: int
+    cost_center_id: Optional[int]; amount: Decimal
+    description: str; reference: Optional[str]
+
+
+class CustodySettleRequest(BaseModel):
+    """تسوية دفعة واحدة (single-shot، طلب Mohamed 2026-08-19) — مجموع
+    lines + returned_amount لازم يساوي مبلغ العهدة بالظبط. تسوية جزئية
+    عبر أكتر من جلسة (حالة نادرة) مؤجَّلة عمدًا."""
+    settlement_date:  date
+    lines:            list[CustodySettlementLineCreate] = Field(default_factory=list)
+    returned_amount:  Decimal = Field(Decimal("0"), ge=0)
+
+
+class CashReceiptCreate(BaseModel):
+    """إذن قبض عام (2026-08-19، طلب Mohamed) — تحصيل نقدية من مصدر متنوع
+    مش مرتبط بمسار بيع قائم (سلفة عائدة، تعويض، إيراد متفرّق...). يرحّل
+    Dr.destination_account (كاش/بنك) / Cr.source_account — مفيش قيد على
+    نوع source_account عمدًا (ممكن يكون إيراد/أصل/التزام حسب طبيعة
+    المصدر)، عكس expense_account في سند المصروفات اللي لازم expense."""
+    receipt_date:            date
+    destination_account_id:  int
+    source_account_id:       int
+    amount:                  Decimal = Field(..., gt=0)
+    description:             str = Field(..., min_length=3, max_length=300)
+    reference:               Optional[str] = Field(None, max_length=100)
+    cost_center_id:          Optional[int] = None
+
+
+class CashReceiptRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int; branch_id: int; receipt_date: date
+    destination_account_id: int; source_account_id: int
+    amount: Decimal; description: str; reference: Optional[str]
+    cost_center_id: Optional[int]; journal_entry_id: int; recorded_by: int
+    voided_at: Optional[datetime] = None
+    voided_by: Optional[int] = None
+    created_at: datetime
+    destination_account_code: str = ""
+    destination_account_name: str = ""
+    source_account_code: str = ""
 
 
 class AccountingPeriodRead(BaseModel):

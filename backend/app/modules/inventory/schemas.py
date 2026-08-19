@@ -164,6 +164,8 @@ class SupplierPaymentRead(BaseModel):
     reference: Optional[str]; notes: Optional[str]
     paid_at: date; journal_entry_id: int; recorded_by: int
     created_at: datetime
+    voided_at: Optional[datetime] = None
+    voided_by: Optional[int] = None
 
 
 # ── Supplier ──────────────────────────────────────────────────────────

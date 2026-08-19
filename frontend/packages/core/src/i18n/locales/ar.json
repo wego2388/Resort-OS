@@ -5617,7 +5617,9 @@
         "exchangeRates": "أسعار الصرف",
         "journal": "دفتر اليومية",
         "paymentChannels": "قنوات التحصيل",
-        "expenses": "المصروفات"
+        "expenses": "المصروفات",
+        "custodies": "العهد النقدية",
+        "cashReceipts": "أذون القبض"
       },
       "expenses": {
         "loadError": "فشل تحميل المصروفات",
@@ -5633,7 +5635,89 @@
           "amountRequired": "أدخل مبلغًا صحيحًا",
           "descriptionRequired": "البيان مطلوب",
           "success": "تم تسجيل المصروف ✓",
-          "error": "تعذّر تسجيل المصروف"
+          "error": "تعذّر تسجيل المصروف",
+          "deferPayment": "مصروف آجل — يُسدَّد لاحقًا"
+        },
+        "status": {
+          "label": "الحالة",
+          "paid": "مسدد",
+          "unpaid": "غير مسدد",
+          "partial": "مسدد جزئيًا",
+          "voided": "ملغى"
+        },
+        "pay": {
+          "btnLabel": "سداد",
+          "title": "سداد سند مصروفات آجل",
+          "confirm": "تسجيل السداد",
+          "settlementAccountRequired": "اختر حساب التسوية",
+          "success": "تم تسجيل السداد ✓",
+          "error": "تعذّر تسجيل السداد"
+        },
+        "void": {
+          "btnLabel": "إلغاء",
+          "stepUpDescription": "أكّد هويتك لإلغاء سند المصروفات هذا.",
+          "success": "تم إلغاء سند المصروفات ✓",
+          "error": "تعذّر إلغاء سند المصروفات"
+        }
+      },
+      "custodies": {
+        "loadError": "فشل تحميل العهد النقدية",
+        "empty": "لا توجد عهد نقدية مسجّلة",
+        "holderName": "اسم المستلم",
+        "purpose": "الغرض",
+        "sourceAccount": "حساب المصدر",
+        "disbursedDate": "التاريخ",
+        "status": { "open": "مفتوحة", "settled": "متسواة" },
+        "newCustody": {
+          "btnLabel": "عهدة جديدة",
+          "title": "صرف عهدة نقدية",
+          "confirm": "صرف العهدة",
+          "fieldsRequired": "اسم المستلم والغرض مطلوبان",
+          "accountRequired": "اختر حساب المصدر",
+          "success": "تم صرف العهدة ✓",
+          "error": "تعذّر صرف العهدة"
+        },
+        "settle": {
+          "btnLabel": "تسوية",
+          "title": "تسوية عهدة نقدية",
+          "confirm": "تسجيل التسوية",
+          "amountHint": "مبلغ العهدة: {amount} جنيه — لازم مجموع البنود + المرتجع يساوي المبلغ ده بالظبط.",
+          "settlementDate": "تاريخ التسوية",
+          "lineLabel": "بند {n}",
+          "removeLine": "حذف",
+          "addLine": "إضافة بند",
+          "returnedAmount": "المبلغ المرتجع (إن وجد)",
+          "runningTotal": "الإجمالي حتى الآن: {total} / {amount}",
+          "linesRequired": "كل بند لازم يكون له حساب مصروف ومبلغ وبيان",
+          "mismatchError": "مجموع البنود + المرتجع ({total}) لازم يساوي مبلغ العهدة ({amount}) بالظبط",
+          "success": "تمت تسوية العهدة ✓",
+          "error": "تعذّرت تسوية العهدة"
+        },
+        "void": {
+          "btnLabel": "إلغاء",
+          "stepUpDescription": "أكّد هويتك لإلغاء هذه العهدة النقدية.",
+          "success": "تم إلغاء العهدة ✓",
+          "error": "تعذّر إلغاء العهدة"
+        }
+      },
+      "cashReceipts": {
+        "loadError": "فشل تحميل أذون القبض",
+        "empty": "لا توجد أذون قبض مسجّلة في هذه الفترة",
+        "destinationAccount": "حساب الوجهة (كاش/بنك)",
+        "sourceAccount": "حساب المصدر",
+        "newReceipt": {
+          "btnLabel": "إذن قبض جديد",
+          "title": "تسجيل إذن قبض",
+          "confirm": "تسجيل الإذن",
+          "accountsRequired": "اختر حساب الوجهة وحساب المصدر",
+          "success": "تم تسجيل إذن القبض ✓",
+          "error": "تعذّر تسجيل إذن القبض"
+        },
+        "void": {
+          "btnLabel": "إلغاء",
+          "stepUpDescription": "أكّد هويتك لإلغاء إذن القبض هذا.",
+          "success": "تم إلغاء إذن القبض ✓",
+          "error": "تعذّر إلغاء إذن القبض"
         }
       },
       "paymentChannels": {

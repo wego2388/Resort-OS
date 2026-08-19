@@ -202,6 +202,45 @@ def dining_refund_scope(*, order_id: int, item_id: int, reason: str) -> str:
     })
 
 
+def expense_void_scope(*, expense_id: int, reason: str) -> str:
+    """2026-08-19 (طلب Mohamed — إلغاء سند مصروفات) — نفس فئة خطورة
+    payment_void_scope فوق بالظبط: بيعكس قيد رحّل فعليًا في الدفاتر
+    (Dr.5xxx/Cr.تسوية) بعد إتمامه، مش قبل الحفظ. مربوط بنفس السند والسبب."""
+    return build_step_up_scope("expense_void", {
+        "expense_id": expense_id,
+        "reason_sha256": sha256_text(reason),
+    })
+
+
+def custody_void_scope(*, custody_id: int, reason: str) -> str:
+    """2026-08-19 (طلب Mohamed — إلغاء عهدة نقدية لسه open) — نفس فئة
+    خطورة expense_void_scope فوق بالظبط: بيعكس Dr.مصدر/Cr.1190 اتسجّل
+    فعليًا. مربوط بنفس العهدة والسبب."""
+    return build_step_up_scope("custody_void", {
+        "custody_id": custody_id,
+        "reason_sha256": sha256_text(reason),
+    })
+
+
+def cash_receipt_void_scope(*, receipt_id: int, reason: str) -> str:
+    """2026-08-19 (طلب Mohamed — إلغاء إذن قبض عام) — نفس فئة خطورة
+    expense_void_scope فوق بالظبط. مربوط بنفس الإذن والسبب."""
+    return build_step_up_scope("cash_receipt_void", {
+        "receipt_id": receipt_id,
+        "reason_sha256": sha256_text(reason),
+    })
+
+
+def supplier_payment_void_scope(*, payment_id: int, reason: str) -> str:
+    """2026-08-19 (طلب Mohamed — إلغاء سند دفع مورد) — نفس فئة خطورة
+    payment_void_scope فوق بالظبط: بيعكس Dr.2200/Cr.تسوية اتسجّل فعليًا،
+    وبيقلّل amount_paid على أمر الشراء. مربوط بنفس السند والسبب."""
+    return build_step_up_scope("supplier_payment_void", {
+        "payment_id": payment_id,
+        "reason_sha256": sha256_text(reason),
+    })
+
+
 def access_token_hash_from_request(request) -> str:
     """Hash of the current request's bearer token — binds a step-up grant
     (at issuance) or its consumption to the exact browser session that

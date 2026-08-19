@@ -294,6 +294,10 @@ class SupplierPayment(Base, TimestampMixin):
     paid_at:                Mapped[date]       = mapped_column(Date)
     journal_entry_id:       Mapped[int]        = mapped_column(ForeignKey("journal_entries.id", ondelete="RESTRICT"))
     recorded_by:            Mapped[int]        = mapped_column(Integer)
+    # 2026-08-19: إلغاء/عكس — نفس فجوة Expense (راجع finance/models.py's
+    # Expense docstring) — دفعة مورد غلط كانت عالقة للأبد بلا تصحيح.
+    voided_at:              Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    voided_by:              Mapped[int | None]      = mapped_column(Integer, nullable=True)
 
     supplier:       Mapped["Supplier"]      = relationship("Supplier")
     purchase_order: Mapped["PurchaseOrder"] = relationship("PurchaseOrder")

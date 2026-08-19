@@ -3,13 +3,14 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from fastapi.responses import Response
 
 from app.core.deps import (
-    DbDep, get_employee_user, get_manager_user, require_permission,
+    DbDep, get_employee_user, get_finance_user, get_manager_user, require_permission,
 )
 from app.modules.core import services as core_services
+from app.modules.finance.schemas import VoidPaymentRequest
 from app.modules.finance.services import FinancialConfigurationError
 from app.modules.inventory import crud, services
 from app.modules.inventory.schemas import (
@@ -281,6 +282,42 @@ def list_supplier_payments(po_id: int, db: DbDep, user=Depends(get_manager_user)
         raise HTTPException(status.HTTP_404_NOT_FOUND, "أمر الشراء غير موجود")
     _assert_inventory_branch(db, user, po.branch_id, "عرض دفعات مورد")
     return crud.list_supplier_payments(db, po_id)
+
+
+@router.post(
+    "/inventory/purchase-orders/{po_id}/payments/{payment_id}/void",
+    response_model=SupplierPaymentRead,
+    dependencies=[Depends(require_permission("inventory.void_supplier_payment", "execute", min_role_level=60))],
+)
+def void_supplier_payment(
+    po_id: int, payment_id: int, data: VoidPaymentRequest, db: DbDep, request: Request,
+    user=Depends(get_finance_user),
+    x_step_up_token: Optional[str] = Header(default=None, alias="X-Step-Up-Token"),
+):
+    """2026-08-19 (طلب Mohamed): إلغاء سند دفع مورد اتسجّل بالفعل — نفس
+    خطورة إلغاء دفعة عميل، محتاج step-up فوق صلاحية مدير+ العادية. راجع
+    app.core.kernel.auth.step_up.supplier_payment_void_scope."""
+    from app.core.kernel.auth.step_up import supplier_payment_void_scope  # noqa: PLC0415
+    from app.modules.core.api.step_up_utils import consume_step_up_or_raise  # noqa: PLC0415
+
+    payment = crud.get_supplier_payment(db, payment_id)
+    if not payment or payment.purchase_order_id != po_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "سند دفع المورد غير موجود")
+    _assert_inventory_branch(db, user, payment.branch_id, "إلغاء سند دفع مورد")
+
+    scope_hash = supplier_payment_void_scope(payment_id=payment_id, reason=data.reason)
+    consume_step_up_or_raise(
+        db, user, request,
+        purpose="supplier_payment_void", scope_hash=scope_hash, x_step_up_token=x_step_up_token,
+    )
+    try:
+        return services.void_supplier_payment(db, payment_id, voided_by=user.id, reason=data.reason)
+    except FinancialConfigurationError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {
+            "code": "FINANCIAL_CONFIGURATION_ERROR", "message": str(exc),
+        })
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
 # ── Purchase Request Workflow ─────────────────────────────────────────

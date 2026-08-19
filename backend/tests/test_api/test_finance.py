@@ -2209,6 +2209,472 @@ class TestExpense:
                 amount=Decimal("100"), description="محاولة خاطئة",
             ), recorded_by=1)
 
+    def test_void_expense_posts_reversing_journal(self, db, branch, expense_accounts):
+        from app.modules.finance.schemas import ExpenseCreate
+        rent, cash = expense_accounts
+
+        expense = services.record_expense(db, branch.id, ExpenseCreate(
+            expense_date=date(2026, 8, 16),
+            expense_account_id=rent.id, settlement_account_id=cash.id,
+            amount=Decimal("5000"), description="إيجار أغسطس 2026",
+        ), recorded_by=1)
+
+        voided = services.void_expense(db, expense.id, voided_by=2, reason="سند مكرر بالخطأ")
+        assert voided.voided_at is not None
+        assert voided.voided_by == 2
+
+        entry = crud.get_journal_entry(db, voided.journal_entry_id)
+        # القيد الأصلي زي ما هو (مفيش تعديل عليه — العكس قيد جديد منفصل)
+        debit_line = next(l for l in entry.lines if l.debit > 0)
+        assert debit_line.account_id == rent.id
+
+    def test_cannot_void_expense_with_recorded_payment(self, db, branch, expense_accounts):
+        """حالة نادرة مؤجَّلة عمدًا (طلب Mohamed 2026-08-19) — سند آجل بعد
+        ما يتسدد جزئيًا/كليًا يحتاج مراجعة يدوية أوسع، مش إلغاء مباشر."""
+        from app.modules.finance.schemas import ExpenseCreate
+        rent, cash = expense_accounts
+
+        expense = services.record_expense(db, branch.id, ExpenseCreate(
+            expense_date=date(2026, 8, 16),
+            expense_account_id=rent.id, settlement_account_id=cash.id,
+            amount=Decimal("5000"), description="إيجار أغسطس 2026",
+        ), recorded_by=1)
+        expense.amount_paid = Decimal("2000")
+        db.commit()
+
+        with pytest.raises(ValueError, match="سداد مسجّل بالفعل"):
+            services.void_expense(db, expense.id, voided_by=2, reason="محاولة إلغاء")
+
+    def test_cannot_void_already_voided_expense(self, db, branch, expense_accounts):
+        from app.modules.finance.schemas import ExpenseCreate
+        rent, cash = expense_accounts
+
+        expense = services.record_expense(db, branch.id, ExpenseCreate(
+            expense_date=date(2026, 8, 16),
+            expense_account_id=rent.id, settlement_account_id=cash.id,
+            amount=Decimal("5000"), description="إيجار أغسطس 2026",
+        ), recorded_by=1)
+        services.void_expense(db, expense.id, voided_by=2, reason="أول مرة")
+
+        with pytest.raises(ValueError, match="ملغى بالفعل"):
+            services.void_expense(db, expense.id, voided_by=2, reason="محاولة تانية")
+
+    def test_deferred_expense_posts_to_accrued_liability(self, db, branch, expense_accounts):
+        """2026-08-19 (طلب Mohamed — مصروف آجل): defer_payment=True يرحّل
+        Dr.المصروف/Cr.2180 بدل تسوية نقدية فورية، ويسيب السند unpaid."""
+        from app.modules.finance.models import Account
+        from app.modules.finance.schemas import ExpenseCreate
+        rent, _cash = expense_accounts
+        accrued = Account(branch_id=branch.id, code="2180", name="مصروفات مستحقة", account_type="liability")
+        db.add(accrued); db.commit()
+
+        expense = services.record_expense(db, branch.id, ExpenseCreate(
+            expense_date=date(2026, 8, 19),
+            expense_account_id=rent.id, settlement_account_id=None,
+            amount=Decimal("3000"), description="فاتورة مقاول — عمالة يومية",
+            defer_payment=True,
+        ), recorded_by=1)
+
+        assert expense.payment_status == "unpaid"
+        assert expense.amount_paid == Decimal("0")
+        assert expense.settlement_account_id == accrued.id
+
+        entry = crud.get_journal_entry(db, expense.journal_entry_id)
+        debit_line = next(l for l in entry.lines if l.debit > 0)
+        credit_line = next(l for l in entry.lines if l.credit > 0)
+        assert debit_line.account_id == rent.id
+        assert credit_line.account_id == accrued.id
+
+    def test_deferred_expense_requires_2180_seeded(self, db, branch, expense_accounts):
+        from app.modules.finance.schemas import ExpenseCreate
+        rent, _cash = expense_accounts
+
+        with pytest.raises(services.FinancialConfigurationError, match="2180"):
+            services.record_expense(db, branch.id, ExpenseCreate(
+                expense_date=date(2026, 8, 19),
+                expense_account_id=rent.id, settlement_account_id=None,
+                amount=Decimal("100"), description="محاولة من غير 2180",
+                defer_payment=True,
+            ), recorded_by=1)
+
+    def test_non_deferred_expense_requires_settlement_account(self, db, branch, expense_accounts):
+        from app.modules.finance.schemas import ExpenseCreate
+        rent, _cash = expense_accounts
+
+        with pytest.raises(ValueError, match="حساب التسوية مطلوب"):
+            services.record_expense(db, branch.id, ExpenseCreate(
+                expense_date=date(2026, 8, 19),
+                expense_account_id=rent.id, settlement_account_id=None,
+                amount=Decimal("100"), description="محاولة من غير حساب تسوية",
+                defer_payment=False,
+            ), recorded_by=1)
+
+    def test_pay_expense_full_then_partial_flow(self, db, branch, expense_accounts):
+        from app.modules.finance.models import Account
+        from app.modules.finance.schemas import ExpenseCreate, ExpensePaymentCreate
+        rent, cash = expense_accounts
+        accrued = Account(branch_id=branch.id, code="2180", name="مصروفات مستحقة", account_type="liability")
+        db.add(accrued); db.commit()
+
+        expense = services.record_expense(db, branch.id, ExpenseCreate(
+            expense_date=date(2026, 8, 19),
+            expense_account_id=rent.id, settlement_account_id=None,
+            amount=Decimal("3000"), description="فاتورة مقاول",
+            defer_payment=True,
+        ), recorded_by=1)
+
+        expense = services.pay_expense(db, expense.id, ExpensePaymentCreate(
+            amount=Decimal("1000"), settlement_account_id=cash.id, paid_at=date(2026, 8, 19),
+        ), recorded_by=2)
+        assert expense.payment_status == "partial"
+        assert expense.amount_paid == Decimal("1000.00")
+
+        expense = services.pay_expense(db, expense.id, ExpensePaymentCreate(
+            amount=Decimal("2000"), settlement_account_id=cash.id, paid_at=date(2026, 8, 19),
+        ), recorded_by=2)
+        assert expense.payment_status == "paid"
+        assert expense.amount_paid == Decimal("3000.00")
+
+        payments = crud.list_expense_payments(db, expense.id)
+        assert len(payments) == 2
+
+        entry = crud.get_journal_entry(db, payments[0].journal_entry_id)
+        debit_line = next(l for l in entry.lines if l.debit > 0)
+        credit_line = next(l for l in entry.lines if l.credit > 0)
+        assert debit_line.account_id == accrued.id
+        assert credit_line.account_id == cash.id
+
+    def test_pay_expense_overpayment_rejected(self, db, branch, expense_accounts):
+        from app.modules.finance.models import Account
+        from app.modules.finance.schemas import ExpenseCreate, ExpensePaymentCreate
+        rent, cash = expense_accounts
+        accrued = Account(branch_id=branch.id, code="2180", name="مصروفات مستحقة", account_type="liability")
+        db.add(accrued); db.commit()
+
+        expense = services.record_expense(db, branch.id, ExpenseCreate(
+            expense_date=date(2026, 8, 19),
+            expense_account_id=rent.id, settlement_account_id=None,
+            amount=Decimal("500"), description="فاتورة صغيرة", defer_payment=True,
+        ), recorded_by=1)
+
+        with pytest.raises(ValueError, match="أكبر من المتبقي"):
+            services.pay_expense(db, expense.id, ExpensePaymentCreate(
+                amount=Decimal("600"), settlement_account_id=cash.id, paid_at=date(2026, 8, 19),
+            ), recorded_by=2)
+
+    def test_cannot_pay_already_fully_paid_expense(self, db, branch, expense_accounts):
+        """سند عادي (paid) من الأساس — pay_expense مرفوض عليه، مش بس على
+        سند آجل اتسدد بالكامل."""
+        from app.modules.finance.schemas import ExpenseCreate, ExpensePaymentCreate
+        rent, cash = expense_accounts
+
+        expense = services.record_expense(db, branch.id, ExpenseCreate(
+            expense_date=date(2026, 8, 19),
+            expense_account_id=rent.id, settlement_account_id=cash.id,
+            amount=Decimal("500"), description="سند فوري", defer_payment=False,
+        ), recorded_by=1)
+
+        with pytest.raises(ValueError, match="مسدد بالكامل بالفعل"):
+            services.pay_expense(db, expense.id, ExpensePaymentCreate(
+                amount=Decimal("100"), settlement_account_id=cash.id, paid_at=date(2026, 8, 19),
+            ), recorded_by=2)
+
+    def test_void_unpaid_deferred_expense_reverses_accrued_liability(self, db, branch, expense_accounts):
+        """سند آجل لسه من غير أي سداد (amount_paid=0) لازم يقدر يتلغي عادي
+        — الحالة النادرة المؤجَّلة هي سند عليه سداد فعلي مسجّل، مش أي سند آجل."""
+        from app.modules.finance.models import Account
+        from app.modules.finance.schemas import ExpenseCreate
+        rent, _cash = expense_accounts
+        accrued = Account(branch_id=branch.id, code="2180", name="مصروفات مستحقة", account_type="liability")
+        db.add(accrued); db.commit()
+
+        expense = services.record_expense(db, branch.id, ExpenseCreate(
+            expense_date=date(2026, 8, 19),
+            expense_account_id=rent.id, settlement_account_id=None,
+            amount=Decimal("3000"), description="فاتورة مقاول", defer_payment=True,
+        ), recorded_by=1)
+
+        voided = services.void_expense(db, expense.id, voided_by=2, reason="اتلغى الاتفاق")
+        assert voided.voided_at is not None
+
+        # voided.journal_entry_id لسه بيشاور على القيد الأصلي (نفس نمط
+        # void_payment بالظبط — العكس قيد جديد منفصل مش تعديل على الأصلي).
+        from app.modules.finance.models import JournalEntry
+        reversal = (
+            db.query(JournalEntry)
+            .filter(JournalEntry.source == "expense_void", JournalEntry.source_id == expense.id)
+            .one()
+        )
+        debit_line = next(l for l in reversal.lines if l.debit > 0)
+        credit_line = next(l for l in reversal.lines if l.credit > 0)
+        assert debit_line.account_id == accrued.id
+        assert credit_line.account_id == rent.id
+
+    class TestCustody:
+        """2026-08-19 (طلب Mohamed — العهدة/سلفة نقدية): صرف عهدة، تسويتها
+        بتوزيع فعلي على حسابات مصروفات، وإلغاؤها قبل التسوية."""
+
+        @pytest.fixture
+        def custody_accounts(self, db, branch):
+            from app.modules.finance.models import Account
+            cash = Account(branch_id=branch.id, code="1100", name="Cash", account_type="asset")
+            custody_acc = Account(branch_id=branch.id, code="1190", name="عهد نقدية تحت التسوية", account_type="asset")
+            labor = Account(branch_id=branch.id, code="5300", name="أجور مقاولين", account_type="expense")
+            materials = Account(branch_id=branch.id, code="5310", name="مواد بناء", account_type="expense")
+            db.add_all([cash, custody_acc, labor, materials]); db.commit()
+            return cash, custody_acc, labor, materials
+
+        def test_disburse_custody_posts_to_1190(self, db, branch, custody_accounts):
+            from app.modules.finance.schemas import CustodyCreate
+            cash, custody_acc, _labor, _materials = custody_accounts
+
+            custody = services.disburse_custody(db, branch.id, CustodyCreate(
+                holder_name="أحمد المقاول", purpose="مقاولة رصف بلاط",
+                amount=Decimal("5000"), disbursed_date=date(2026, 8, 19),
+                source_account_id=cash.id,
+            ), disbursed_by=1)
+
+            assert custody.status == "open"
+            assert custody.custody_account_id == custody_acc.id
+            entry = crud.get_journal_entry(db, custody.disbursement_entry_id)
+            debit_line = next(l for l in entry.lines if l.debit > 0)
+            credit_line = next(l for l in entry.lines if l.credit > 0)
+            assert debit_line.account_id == custody_acc.id
+            assert credit_line.account_id == cash.id
+
+        def test_disburse_custody_requires_1190_seeded(self, db, branch):
+            from app.modules.finance.models import Account
+            from app.modules.finance.schemas import CustodyCreate
+            cash = Account(branch_id=branch.id, code="1100", name="Cash", account_type="asset")
+            db.add(cash); db.commit()
+
+            with pytest.raises(services.FinancialConfigurationError, match="1190"):
+                services.disburse_custody(db, branch.id, CustodyCreate(
+                    holder_name="أحمد", purpose="اختبار", amount=Decimal("100"),
+                    disbursed_date=date(2026, 8, 19), source_account_id=cash.id,
+                ), disbursed_by=1)
+
+        def test_settle_custody_full_distribution_no_return(self, db, branch, custody_accounts):
+            from app.modules.finance.schemas import CustodyCreate, CustodySettleRequest, CustodySettlementLineCreate
+            cash, custody_acc, labor, materials = custody_accounts
+
+            custody = services.disburse_custody(db, branch.id, CustodyCreate(
+                holder_name="أحمد المقاول", purpose="مقاولة رصف بلاط",
+                amount=Decimal("5000"), disbursed_date=date(2026, 8, 19),
+                source_account_id=cash.id,
+            ), disbursed_by=1)
+
+            settled = services.settle_custody(db, custody.id, CustodySettleRequest(
+                settlement_date=date(2026, 8, 19),
+                lines=[
+                    CustodySettlementLineCreate(
+                        expense_account_id=labor.id, amount=Decimal("3000"),
+                        description="أجور عمالة يومية",
+                    ),
+                    CustodySettlementLineCreate(
+                        expense_account_id=materials.id, amount=Decimal("2000"),
+                        description="رملة وطوب",
+                    ),
+                ],
+                returned_amount=Decimal("0"),
+            ), settled_by=2)
+
+            assert settled.status == "settled"
+            assert settled.settled_by == 2
+            assert settled.settled_at is not None
+
+            entry = crud.get_journal_entry(db, settled.settlement_entry_id)
+            total_debit = sum(l.debit for l in entry.lines)
+            total_credit = sum(l.credit for l in entry.lines)
+            assert total_debit == total_credit == Decimal("5000.00")
+            credit_line = next(l for l in entry.lines if l.credit > 0)
+            assert credit_line.account_id == custody_acc.id
+
+            lines = crud.list_custody_settlement_lines(db, custody.id)
+            assert len(lines) == 2
+
+        def test_settle_custody_with_partial_return(self, db, branch, custody_accounts):
+            from app.modules.finance.schemas import CustodyCreate, CustodySettleRequest, CustodySettlementLineCreate
+            cash, custody_acc, labor, _materials = custody_accounts
+
+            custody = services.disburse_custody(db, branch.id, CustodyCreate(
+                holder_name="أحمد المقاول", purpose="عمالة يومية",
+                amount=Decimal("2000"), disbursed_date=date(2026, 8, 19),
+                source_account_id=cash.id,
+            ), disbursed_by=1)
+
+            settled = services.settle_custody(db, custody.id, CustodySettleRequest(
+                settlement_date=date(2026, 8, 19),
+                lines=[CustodySettlementLineCreate(
+                    expense_account_id=labor.id, amount=Decimal("1500"), description="أجور",
+                )],
+                returned_amount=Decimal("500"),
+            ), settled_by=2)
+
+            assert settled.returned_amount == Decimal("500.00")
+            entry = crud.get_journal_entry(db, settled.settlement_entry_id)
+            debit_lines = [l for l in entry.lines if l.debit > 0]
+            assert any(l.account_id == cash.id and l.debit == Decimal("500.00") for l in debit_lines)
+
+        def test_settle_custody_rejects_mismatched_total(self, db, branch, custody_accounts):
+            from app.modules.finance.schemas import CustodyCreate, CustodySettleRequest, CustodySettlementLineCreate
+            cash, _custody_acc, labor, _materials = custody_accounts
+
+            custody = services.disburse_custody(db, branch.id, CustodyCreate(
+                holder_name="أحمد", purpose="اختبار", amount=Decimal("1000"),
+                disbursed_date=date(2026, 8, 19), source_account_id=cash.id,
+            ), disbursed_by=1)
+
+            with pytest.raises(ValueError, match="لازم يساوي مبلغ العهدة"):
+                services.settle_custody(db, custody.id, CustodySettleRequest(
+                    settlement_date=date(2026, 8, 19),
+                    lines=[CustodySettlementLineCreate(
+                        expense_account_id=labor.id, amount=Decimal("700"), description="أجور",
+                    )],
+                    returned_amount=Decimal("0"),
+                ), settled_by=2)
+
+        def test_settle_custody_rejects_non_expense_account(self, db, branch, custody_accounts):
+            from app.modules.finance.schemas import CustodyCreate, CustodySettleRequest, CustodySettlementLineCreate
+            cash, _custody_acc, _labor, _materials = custody_accounts
+
+            custody = services.disburse_custody(db, branch.id, CustodyCreate(
+                holder_name="أحمد", purpose="اختبار", amount=Decimal("1000"),
+                disbursed_date=date(2026, 8, 19), source_account_id=cash.id,
+            ), disbursed_by=1)
+
+            with pytest.raises(ValueError, match="ليس حساب مصروفات"):
+                services.settle_custody(db, custody.id, CustodySettleRequest(
+                    settlement_date=date(2026, 8, 19),
+                    lines=[CustodySettlementLineCreate(
+                        expense_account_id=cash.id, amount=Decimal("1000"), description="محاولة خاطئة",
+                    )],
+                    returned_amount=Decimal("0"),
+                ), settled_by=2)
+
+        def test_void_open_custody_reverses_1190(self, db, branch, custody_accounts):
+            from app.modules.finance.models import JournalEntry
+            from app.modules.finance.schemas import CustodyCreate
+            cash, custody_acc, _labor, _materials = custody_accounts
+
+            custody = services.disburse_custody(db, branch.id, CustodyCreate(
+                holder_name="أحمد", purpose="اتلغى", amount=Decimal("1000"),
+                disbursed_date=date(2026, 8, 19), source_account_id=cash.id,
+            ), disbursed_by=1)
+
+            voided = services.void_custody(db, custody.id, voided_by=2, reason="اتلغى الاتفاق")
+            assert voided.voided_at is not None
+
+            reversal = (
+                db.query(JournalEntry)
+                .filter(JournalEntry.source == "custody_void", JournalEntry.source_id == custody.id)
+                .one()
+            )
+            debit_line = next(l for l in reversal.lines if l.debit > 0)
+            credit_line = next(l for l in reversal.lines if l.credit > 0)
+            assert debit_line.account_id == cash.id
+            assert credit_line.account_id == custody_acc.id
+
+        def test_cannot_void_settled_custody(self, db, branch, custody_accounts):
+            from app.modules.finance.schemas import CustodyCreate, CustodySettleRequest, CustodySettlementLineCreate
+            cash, _custody_acc, labor, _materials = custody_accounts
+
+            custody = services.disburse_custody(db, branch.id, CustodyCreate(
+                holder_name="أحمد", purpose="اختبار", amount=Decimal("1000"),
+                disbursed_date=date(2026, 8, 19), source_account_id=cash.id,
+            ), disbursed_by=1)
+            services.settle_custody(db, custody.id, CustodySettleRequest(
+                settlement_date=date(2026, 8, 19),
+                lines=[CustodySettlementLineCreate(
+                    expense_account_id=labor.id, amount=Decimal("1000"), description="أجور",
+                )],
+                returned_amount=Decimal("0"),
+            ), settled_by=2)
+
+            with pytest.raises(ValueError, match="متسواة بالفعل"):
+                services.void_custody(db, custody.id, voided_by=2, reason="محاولة إلغاء")
+
+    class TestCashReceipt:
+        """2026-08-19 (طلب Mohamed — إذن قبض عام): تحصيل نقدية من مصدر
+        متنوع مش مرتبط بمسار بيع قائم."""
+
+        @pytest.fixture
+        def receipt_accounts(self, db, branch):
+            from app.modules.finance.models import Account
+            cash = Account(branch_id=branch.id, code="1100", name="Cash", account_type="asset")
+            capital = Account(branch_id=branch.id, code="3100", name="رأس المال", account_type="equity")
+            db.add_all([cash, capital]); db.commit()
+            return cash, capital
+
+        def test_record_cash_receipt_posts_balanced_journal(self, db, branch, receipt_accounts):
+            from app.modules.finance.schemas import CashReceiptCreate
+            cash, capital = receipt_accounts
+
+            receipt = services.record_cash_receipt(db, branch.id, CashReceiptCreate(
+                receipt_date=date(2026, 8, 19),
+                destination_account_id=cash.id, source_account_id=capital.id,
+                amount=Decimal("10000"), description="ضخ رأس مال إضافي",
+            ), recorded_by=1)
+
+            assert receipt.amount == Decimal("10000")
+            entry = crud.get_journal_entry(db, receipt.journal_entry_id)
+            debit_line = next(l for l in entry.lines if l.debit > 0)
+            credit_line = next(l for l in entry.lines if l.credit > 0)
+            assert debit_line.account_id == cash.id
+            assert credit_line.account_id == capital.id
+
+        def test_cash_receipt_destination_must_be_asset(self, db, branch, receipt_accounts):
+            from app.modules.finance.models import Account
+            from app.modules.finance.schemas import CashReceiptCreate
+            _cash, capital = receipt_accounts
+            revenue = Account(branch_id=branch.id, code="4900", name="إيراد متفرق", account_type="revenue")
+            db.add(revenue); db.commit()
+
+            with pytest.raises(ValueError, match="حساب أصول"):
+                services.record_cash_receipt(db, branch.id, CashReceiptCreate(
+                    receipt_date=date(2026, 8, 19),
+                    destination_account_id=revenue.id, source_account_id=capital.id,
+                    amount=Decimal("100"), description="محاولة خاطئة",
+                ), recorded_by=1)
+
+        def test_void_cash_receipt_reverses_journal(self, db, branch, receipt_accounts):
+            from app.modules.finance.models import JournalEntry
+            from app.modules.finance.schemas import CashReceiptCreate
+            cash, capital = receipt_accounts
+
+            receipt = services.record_cash_receipt(db, branch.id, CashReceiptCreate(
+                receipt_date=date(2026, 8, 19),
+                destination_account_id=cash.id, source_account_id=capital.id,
+                amount=Decimal("10000"), description="ضخ رأس مال إضافي",
+            ), recorded_by=1)
+
+            voided = services.void_cash_receipt(db, receipt.id, voided_by=2, reason="اتسجّل بالخطأ")
+            assert voided.voided_at is not None
+
+            reversal = (
+                db.query(JournalEntry)
+                .filter(JournalEntry.source == "cash_receipt_void", JournalEntry.source_id == receipt.id)
+                .one()
+            )
+            debit_line = next(l for l in reversal.lines if l.debit > 0)
+            credit_line = next(l for l in reversal.lines if l.credit > 0)
+            assert debit_line.account_id == capital.id
+            assert credit_line.account_id == cash.id
+
+        def test_cannot_void_already_voided_cash_receipt(self, db, branch, receipt_accounts):
+            from app.modules.finance.schemas import CashReceiptCreate
+            cash, capital = receipt_accounts
+
+            receipt = services.record_cash_receipt(db, branch.id, CashReceiptCreate(
+                receipt_date=date(2026, 8, 19),
+                destination_account_id=cash.id, source_account_id=capital.id,
+                amount=Decimal("500"), description="اختبار",
+            ), recorded_by=1)
+            services.void_cash_receipt(db, receipt.id, voided_by=2, reason="أول مرة")
+
+            with pytest.raises(ValueError, match="ملغى بالفعل"):
+                services.void_cash_receipt(db, receipt.id, voided_by=2, reason="محاولة تانية")
+
     def test_list_expenses_filters_by_date_and_enriches_account_labels(self, db, branch, expense_accounts):
         from app.modules.finance.schemas import ExpenseCreate
         rent, cash = expense_accounts

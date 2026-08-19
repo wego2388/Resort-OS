@@ -12,14 +12,19 @@ from app.resort_os.timezone_utils import local_today
 
 from app.modules.finance.models import (
     Account, AccountingPeriod, AssetDepreciationEntry, BankAccount, BankStatementLine,
-    CashierShift, CashierShiftCashCount, CashMovement, ConditionalDiscount,
-    CostCenter, ETAInvoice, ExchangeRate, Expense, Folio, FolioCharge, JournalEntry, JournalLine, Payment,
+    CashierShift, CashierShiftCashCount, CashMovement, CashReceipt, ConditionalDiscount,
+    CostCenter, Custody, CustodySettlementLine, ETAInvoice, ExchangeRate, Expense,
+    ExpensePayment, Folio, FolioCharge,
+    JournalEntry, JournalLine, Payment,
     PaymentChannel, Check, CheckMovement, RevenueAuditLog,
 )
 from app.modules.finance.schemas import (
     AccountCreate, BankAccountCreate, BankAccountUpdate, BankStatementLineCreate,
+    CashReceiptCreate,
     ConditionalDiscountCreate, ConditionalDiscountUpdate,
-    CostCenterCreate, ExchangeRateCreate, ExpenseCreate, FolioCreate, FolioChargeCreate,
+    CostCenterCreate, CustodyCreate, CustodySettlementLineCreate,
+    ExchangeRateCreate, ExpenseCreate, ExpensePaymentCreate,
+    FolioCreate, FolioChargeCreate,
     JournalEntryCreate, PaymentChannelCreate, PaymentChannelUpdate, PaymentCreate,
 )
 
@@ -627,20 +632,61 @@ def get_account_by_code(db: Session, branch_id: int, code: str) -> Optional[Acco
 
 def create_expense(
     db: Session, branch_id: int, data: ExpenseCreate, journal_entry_id: int, recorded_by: int,
+    settlement_account_id: int, payment_status: str,
 ) -> Expense:
+    """settlement_account_id/payment_status بيتحددوا هنا كباراميترز صريحة
+    (مش من data.settlement_account_id مباشرة) — لمصروف آجل (defer_payment)
+    الحساب الفعلي بيبقى 2180 (مستحقة) مش اللي العميل بعته، راجع
+    services.record_expense."""
     expense = Expense(
         branch_id=branch_id,
         expense_date=data.expense_date,
         expense_account_id=data.expense_account_id,
-        settlement_account_id=data.settlement_account_id,
+        settlement_account_id=settlement_account_id,
         amount=data.amount,
         description=data.description,
         reference=data.reference,
         cost_center_id=data.cost_center_id,
         journal_entry_id=journal_entry_id,
         recorded_by=recorded_by,
+        payment_status=payment_status,
     )
     db.add(expense)
+    db.flush()
+    return expense
+
+
+def create_expense_payment(
+    db: Session, branch_id: int, expense_id: int, data: ExpensePaymentCreate,
+    journal_entry_id: int, recorded_by: int,
+) -> ExpensePayment:
+    payment = ExpensePayment(
+        branch_id=branch_id, expense_id=expense_id, amount=data.amount,
+        settlement_account_id=data.settlement_account_id,
+        reference=data.reference, notes=data.notes, paid_at=data.paid_at,
+        journal_entry_id=journal_entry_id, recorded_by=recorded_by,
+    )
+    db.add(payment)
+    db.flush()
+    return payment
+
+
+def list_expense_payments(db: Session, expense_id: int) -> list[ExpensePayment]:
+    return (
+        db.query(ExpensePayment)
+        .filter(ExpensePayment.expense_id == expense_id)
+        .order_by(ExpensePayment.paid_at.desc(), ExpensePayment.id.desc())
+        .all()
+    )
+
+
+def get_expense(db: Session, expense_id: int) -> Optional[Expense]:
+    return db.query(Expense).filter(Expense.id == expense_id).first()
+
+
+def void_expense(db: Session, expense: Expense, voided_by: int) -> Expense:
+    expense.voided_at = datetime.utcnow()
+    expense.voided_by = voided_by
     db.flush()
     return expense
 
@@ -661,6 +707,122 @@ def list_expenses(
         .offset((page - 1) * size).limit(size).all()
     )
     return items, total
+
+
+def create_custody(
+    db: Session, branch_id: int, data: CustodyCreate,
+    custody_account_id: int, disbursement_entry_id: int, disbursed_by: int,
+) -> Custody:
+    custody = Custody(
+        branch_id=branch_id, holder_name=data.holder_name,
+        holder_employee_id=data.holder_employee_id, purpose=data.purpose,
+        amount=data.amount, disbursed_date=data.disbursed_date,
+        source_account_id=data.source_account_id, custody_account_id=custody_account_id,
+        disbursement_entry_id=disbursement_entry_id, disbursed_by=disbursed_by,
+    )
+    db.add(custody)
+    db.flush()
+    return custody
+
+
+def get_custody(db: Session, custody_id: int) -> Optional[Custody]:
+    return db.query(Custody).filter(Custody.id == custody_id).first()
+
+
+def list_custodies(
+    db: Session, branch_id: int, status: Optional[str] = None,
+    page: int = 1, size: int = 30,
+) -> tuple[list[Custody], int]:
+    q = db.query(Custody).filter(Custody.branch_id == branch_id)
+    if status:
+        q = q.filter(Custody.status == status)
+    total = q.count()
+    items = (
+        q.order_by(Custody.disbursed_date.desc(), Custody.id.desc())
+        .offset((page - 1) * size).limit(size).all()
+    )
+    return items, total
+
+
+def create_custody_settlement_lines(
+    db: Session, custody_id: int, lines: list[CustodySettlementLineCreate],
+) -> list[CustodySettlementLine]:
+    created = []
+    for line in lines:
+        row = CustodySettlementLine(
+            custody_id=custody_id, expense_account_id=line.expense_account_id,
+            cost_center_id=line.cost_center_id, amount=line.amount,
+            description=line.description, reference=line.reference,
+        )
+        db.add(row)
+        created.append(row)
+    db.flush()
+    return created
+
+
+def list_custody_settlement_lines(db: Session, custody_id: int) -> list[CustodySettlementLine]:
+    return (
+        db.query(CustodySettlementLine)
+        .filter(CustodySettlementLine.custody_id == custody_id)
+        .order_by(CustodySettlementLine.id)
+        .all()
+    )
+
+
+def void_custody(db: Session, custody: Custody, voided_by: int) -> Custody:
+    custody.voided_at = datetime.utcnow()
+    custody.voided_by = voided_by
+    db.flush()
+    return custody
+
+
+def create_cash_receipt(
+    db: Session, branch_id: int, data: CashReceiptCreate, journal_entry_id: int, recorded_by: int,
+) -> CashReceipt:
+    receipt = CashReceipt(
+        branch_id=branch_id,
+        receipt_date=data.receipt_date,
+        destination_account_id=data.destination_account_id,
+        source_account_id=data.source_account_id,
+        amount=data.amount,
+        description=data.description,
+        reference=data.reference,
+        cost_center_id=data.cost_center_id,
+        journal_entry_id=journal_entry_id,
+        recorded_by=recorded_by,
+    )
+    db.add(receipt)
+    db.flush()
+    return receipt
+
+
+def get_cash_receipt(db: Session, receipt_id: int) -> Optional[CashReceipt]:
+    return db.query(CashReceipt).filter(CashReceipt.id == receipt_id).first()
+
+
+def list_cash_receipts(
+    db: Session, branch_id: int,
+    date_from: Optional[object] = None, date_to: Optional[object] = None,
+    page: int = 1, size: int = 30,
+) -> tuple[list[CashReceipt], int]:
+    q = db.query(CashReceipt).filter(CashReceipt.branch_id == branch_id)
+    if date_from:
+        q = q.filter(CashReceipt.receipt_date >= date_from)
+    if date_to:
+        q = q.filter(CashReceipt.receipt_date <= date_to)
+    total = q.count()
+    items = (
+        q.order_by(CashReceipt.receipt_date.desc(), CashReceipt.id.desc())
+        .offset((page - 1) * size).limit(size).all()
+    )
+    return items, total
+
+
+def void_cash_receipt(db: Session, receipt: CashReceipt, voided_by: int) -> CashReceipt:
+    receipt.voided_at = datetime.utcnow()
+    receipt.voided_by = voided_by
+    db.flush()
+    return receipt
 
 
 def list_accounts(

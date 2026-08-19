@@ -557,6 +557,9 @@ def _seed_chart_of_accounts(db: Session) -> None:
         # فعليًا غير متوازن (مدين ≠ دائن) في أي كشف فيه سلفة. راجع
         # hr.services._post_payroll_journal.
         {"code": "1180", "name": "سلف موظفين مستحقة",             "account_type": "asset"},
+        # 2026-08-19 (طلب Mohamed صراحةً — عهدة نقدية لمقاولات/مشاريع):
+        # راجع finance.models.Custody + services.disburse_custody/settle_custody.
+        {"code": "1190", "name": "عهد نقدية تحت التسوية",          "account_type": "asset"},
         {"code": "1210", "name": "مصروفات مدفوعة مقدمًا",        "account_type": "asset"},
         {"code": "1500", "name": "أرض",                          "account_type": "asset"},
         {"code": "1510", "name": "مباني",                         "account_type": "asset"},

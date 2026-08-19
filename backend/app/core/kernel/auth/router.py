@@ -206,6 +206,10 @@ _STEP_UP_PURPOSES = frozenset({
     # الدفع (لسه محمي بـPIN موافقة مدير بس، مقصود) — عكس دفعة مسجّلة فعليًا
     # أو مرتجع بعد الدفع، الاتنين آثار مالية حقيقية على دفاتر مقفولة جزئيًا.
     "payment_void",
+    "expense_void",
+    "supplier_payment_void",
+    "custody_void",
+    "cash_receipt_void",
     "dining_refund",
     # 2026-08-03 — admin control-plane account-recovery actions (فك قفل
     # حساب بعد محاولات دخول فاشلة، إعادة ضبط 2FA ضائع). راجع docstring
@@ -420,6 +424,66 @@ class _PaymentVoidIntent(BaseModel):
         return normalized
 
 
+class _ExpenseVoidIntent(BaseModel):
+    """2026-08-19: إلغاء سند مصروفات اتسجّل بالفعل (finance.void_expense)."""
+    model_config = ConfigDict(extra="forbid")
+    expense_id: int = Field(gt=0, strict=True)
+    reason: str = Field(min_length=3, max_length=500)
+
+    @field_validator("reason")
+    @classmethod
+    def _normalize_reason(cls, value: str) -> str:
+        normalized = value.strip()
+        if len(normalized) < 3:
+            raise ValueError("Reason must contain at least 3 non-whitespace characters")
+        return normalized
+
+
+class _SupplierPaymentVoidIntent(BaseModel):
+    """2026-08-19: إلغاء سند دفع مورد اتسجّل بالفعل (inventory.void_supplier_payment)."""
+    model_config = ConfigDict(extra="forbid")
+    payment_id: int = Field(gt=0, strict=True)
+    reason: str = Field(min_length=3, max_length=500)
+
+    @field_validator("reason")
+    @classmethod
+    def _normalize_reason(cls, value: str) -> str:
+        normalized = value.strip()
+        if len(normalized) < 3:
+            raise ValueError("Reason must contain at least 3 non-whitespace characters")
+        return normalized
+
+
+class _CustodyVoidIntent(BaseModel):
+    """2026-08-19: إلغاء عهدة نقدية لسه open (finance.void_custody)."""
+    model_config = ConfigDict(extra="forbid")
+    custody_id: int = Field(gt=0, strict=True)
+    reason: str = Field(min_length=3, max_length=500)
+
+    @field_validator("reason")
+    @classmethod
+    def _normalize_reason(cls, value: str) -> str:
+        normalized = value.strip()
+        if len(normalized) < 3:
+            raise ValueError("Reason must contain at least 3 non-whitespace characters")
+        return normalized
+
+
+class _CashReceiptVoidIntent(BaseModel):
+    """2026-08-19: إلغاء إذن قبض عام (finance.void_cash_receipt)."""
+    model_config = ConfigDict(extra="forbid")
+    receipt_id: int = Field(gt=0, strict=True)
+    reason: str = Field(min_length=3, max_length=500)
+
+    @field_validator("reason")
+    @classmethod
+    def _normalize_reason(cls, value: str) -> str:
+        normalized = value.strip()
+        if len(normalized) < 3:
+            raise ValueError("Reason must contain at least 3 non-whitespace characters")
+        return normalized
+
+
 class _DiningRefundIntent(BaseModel):
     """Gate 4 (جولة مراجعة Codex الأولى — M5a): مرتجع صنف بعد الدفع."""
     model_config = ConfigDict(extra="forbid")
@@ -482,6 +546,10 @@ _STEP_UP_INTENT_MODELS: dict[str, type[BaseModel]] = {
     "session_revoke": _SessionRevokeIntent,
     "other_sessions_revoke": _OtherSessionsRevokeIntent,
     "payment_void": _PaymentVoidIntent,
+    "expense_void": _ExpenseVoidIntent,
+    "supplier_payment_void": _SupplierPaymentVoidIntent,
+    "custody_void": _CustodyVoidIntent,
+    "cash_receipt_void": _CashReceiptVoidIntent,
     "dining_refund": _DiningRefundIntent,
     "user_unlock": _UserUnlockIntent,
     "user_force_2fa_reset": _UserForce2FAResetIntent,
@@ -880,6 +948,22 @@ def build_auth_router(
         elif payload.purpose == "payment_void":
             scope_hash = step_up_scopes.payment_void_scope(
                 payment_id=intent.payment_id, reason=intent.reason,
+            )
+        elif payload.purpose == "expense_void":
+            scope_hash = step_up_scopes.expense_void_scope(
+                expense_id=intent.expense_id, reason=intent.reason,
+            )
+        elif payload.purpose == "supplier_payment_void":
+            scope_hash = step_up_scopes.supplier_payment_void_scope(
+                payment_id=intent.payment_id, reason=intent.reason,
+            )
+        elif payload.purpose == "custody_void":
+            scope_hash = step_up_scopes.custody_void_scope(
+                custody_id=intent.custody_id, reason=intent.reason,
+            )
+        elif payload.purpose == "cash_receipt_void":
+            scope_hash = step_up_scopes.cash_receipt_void_scope(
+                receipt_id=intent.receipt_id, reason=intent.reason,
             )
         elif payload.purpose == "dining_refund":
             scope_hash = step_up_scopes.dining_refund_scope(

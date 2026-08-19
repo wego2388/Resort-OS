@@ -345,6 +345,42 @@ PERMISSION_CATALOG: list[PermissionCatalogEntry] = [
         "min_role_level": 60,
         "endpoint": "POST /finance/payments/{payment_id}/void",
     },
+    {
+        "resource": "finance.void_expense",
+        "action": "execute",
+        "label_ar": "إلغاء سند مصروفات",
+        "label_en": "Void an expense voucher",
+        "module": "finance",
+        "min_role_level": 60,
+        "endpoint": "POST /finance/expenses/{expense_id}/void",
+    },
+    {
+        "resource": "inventory.void_supplier_payment",
+        "action": "execute",
+        "label_ar": "إلغاء سند دفع مورد",
+        "label_en": "Void a supplier payment",
+        "module": "inventory",
+        "min_role_level": 60,
+        "endpoint": "POST /inventory/purchase-orders/{po_id}/payments/{payment_id}/void",
+    },
+    {
+        "resource": "finance.void_custody",
+        "action": "execute",
+        "label_ar": "إلغاء عهدة نقدية",
+        "label_en": "Void a cash custody advance",
+        "module": "finance",
+        "min_role_level": 60,
+        "endpoint": "POST /finance/custodies/{custody_id}/void",
+    },
+    {
+        "resource": "finance.void_cash_receipt",
+        "action": "execute",
+        "label_ar": "إلغاء إذن قبض",
+        "label_en": "Void a cash receipt voucher",
+        "module": "finance",
+        "min_role_level": 60,
+        "endpoint": "POST /finance/cash-receipts/{receipt_id}/void",
+    },
     # ── Fractional Ownership ────────────────────────────────────────────────────────────
     # الصلاحيات دي بتسمح بمنح timeshare_agent (level=25) وصول محدود للملكية جزئية
     # بشكل صريح، بدون أي وصول لباقي الموديولات.

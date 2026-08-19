@@ -42,7 +42,7 @@ import { AppModal, AppInput } from '@resort-os/ui'
 import { useI18n } from 'vue-i18n'
 
 const props = withDefaults(defineProps<{
-  purpose: 'user_provision' | 'user_role_update' | 'permission_override_upsert' | 'permission_override_revoke' | 'setting_upsert' | 'session_revoke' | 'other_sessions_revoke' | 'payment_void' | 'dining_refund' | 'user_unlock' | 'user_force_2fa_reset' | 'staff_credentials_reset' | 'admin_session_revoke'
+  purpose: 'user_provision' | 'user_role_update' | 'permission_override_upsert' | 'permission_override_revoke' | 'setting_upsert' | 'session_revoke' | 'other_sessions_revoke' | 'payment_void' | 'expense_void' | 'supplier_payment_void' | 'custody_void' | 'cash_receipt_void' | 'dining_refund' | 'user_unlock' | 'user_force_2fa_reset' | 'staff_credentials_reset' | 'admin_session_revoke'
   intent: Record<string, unknown>
   description?: string
   loading?: boolean
