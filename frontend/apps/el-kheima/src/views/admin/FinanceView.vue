@@ -2197,7 +2197,7 @@ async function saveExchangeRate() {
             :loading="closingMonthKey === m.month"
             @click="closeMonth(m.month)"
           >{{ t('backoffice.finance.periods.closeMonth') }}</AppButton>
-          <p v-else class="text-xs text-gray-400 dark:text-gray-500">{{ fmtDateFn(m.closedAt ?? '') }}</p>
+          <p v-else class="text-xs text-gray-400 dark:text-gray-400">{{ fmtDateFn(m.closedAt ?? '') }}</p>
         </AppCard>
       </div>
     </div>
