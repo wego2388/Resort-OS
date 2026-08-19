@@ -267,6 +267,49 @@ class TestTrialBalanceHTTP:
         )
         assert resp.status_code == 422
 
+    def test_trial_balance_pdf_and_excel_export(self, client: TestClient, db, manager_headers):
+        """2026-08-19 (طلب Mohamed — تصدير التقارير المالية)."""
+        branch = make_branch_committed(db)
+        cash = make_account_committed(db, branch, "1100-TBX", "Cash", "asset")
+        revenue = make_account_committed(db, branch, "4100-TBX", "Revenue", "revenue")
+        client.post(
+            "/api/v1/finance/journal-entries",
+            json={
+                "branch_id": branch.id, "entry_date": str(date.today()),
+                "reference": "JE-TBX", "description": "export test",
+                "lines": [
+                    {"account_id": cash.id, "debit": "500.00", "credit": "0"},
+                    {"account_id": revenue.id, "debit": "0", "credit": "500.00"},
+                ],
+            },
+            headers=manager_headers,
+        )
+        pdf_resp = client.get(
+            "/api/v1/finance/reports/trial-balance/pdf",
+            params={"branch_id": branch.id, "as_of": str(date.today())},
+            headers=manager_headers,
+        )
+        assert pdf_resp.status_code == 200, pdf_resp.text
+        assert pdf_resp.headers["content-type"] == "application/pdf"
+        assert pdf_resp.content[:4] == b"%PDF"
+
+        xlsx_resp = client.get(
+            "/api/v1/finance/reports/trial-balance/excel",
+            params={"branch_id": branch.id, "as_of": str(date.today())},
+            headers=manager_headers,
+        )
+        assert xlsx_resp.status_code == 200, xlsx_resp.text
+        assert xlsx_resp.content[:2] == b"PK"
+
+    def test_trial_balance_pdf_requires_manager(self, client: TestClient, db, cashier_headers):
+        branch = make_branch_committed(db)
+        resp = client.get(
+            "/api/v1/finance/reports/trial-balance/pdf",
+            params={"branch_id": branch.id, "as_of": str(date.today())},
+            headers=cashier_headers,
+        )
+        assert resp.status_code == 403
+
 
 class TestIncomeStatementHTTP:
     def test_income_statement_computes_net_income(self, client: TestClient, db, manager_headers):
@@ -321,6 +364,69 @@ class TestIncomeStatementHTTP:
             "/api/v1/finance/reports/income-statement",
             params={"branch_id": branch.id, "date_from": str(date.today()), "date_to": str(date.today())},
             headers=cashier_headers,
+        )
+        assert resp.status_code == 403
+
+    def test_income_statement_pdf_and_excel_export(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        cash = make_account_committed(db, branch, "1100-ISX", "Cash", "asset")
+        revenue = make_account_committed(db, branch, "4100-ISX", "Revenue", "revenue")
+        client.post(
+            "/api/v1/finance/journal-entries",
+            json={
+                "branch_id": branch.id, "entry_date": str(date.today()),
+                "reference": "JE-ISX", "description": "export test",
+                "lines": [
+                    {"account_id": cash.id, "debit": "500.00", "credit": "0"},
+                    {"account_id": revenue.id, "debit": "0", "credit": "500.00"},
+                ],
+            },
+            headers=manager_headers,
+        )
+        pdf_resp = client.get(
+            "/api/v1/finance/reports/income-statement/pdf",
+            params={"branch_id": branch.id, "date_from": str(date.today()), "date_to": str(date.today())},
+            headers=manager_headers,
+        )
+        assert pdf_resp.status_code == 200, pdf_resp.text
+        assert pdf_resp.content[:4] == b"%PDF"
+
+        xlsx_resp = client.get(
+            "/api/v1/finance/reports/income-statement/excel",
+            params={"branch_id": branch.id, "date_from": str(date.today()), "date_to": str(date.today())},
+            headers=manager_headers,
+        )
+        assert xlsx_resp.status_code == 200, xlsx_resp.text
+        assert xlsx_resp.content[:2] == b"PK"
+
+
+class TestAgingReportHTTP:
+    def test_aging_report_http(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        rent = make_account_committed(db, branch, "5100-AGE", "إيجار", "expense")
+        make_account_committed(db, branch, "2180", "مصروفات مستحقة", "liability")
+        client.post(
+            "/api/v1/finance/expenses",
+            params={"branch_id": branch.id},
+            json={
+                "expense_date": str(date.today()), "expense_account_id": rent.id,
+                "amount": "400.00", "description": "مصروف آجل", "defer_payment": True,
+            },
+            headers=manager_headers,
+        )
+        resp = client.get(
+            "/api/v1/finance/reports/aging", params={"branch_id": branch.id}, headers=manager_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert len(body["payables"]) == 1
+        assert body["payables"][0]["remaining"] == "400.00"
+        assert body["payables"][0]["bucket"] == "0-30"
+
+    def test_aging_report_requires_manager(self, client: TestClient, db, cashier_headers):
+        branch = make_branch_committed(db)
+        resp = client.get(
+            "/api/v1/finance/reports/aging", params={"branch_id": branch.id}, headers=cashier_headers,
         )
         assert resp.status_code == 403
 
@@ -410,6 +516,38 @@ class TestBalanceSheetHTTP:
             headers=cashier_headers,
         )
         assert resp.status_code == 403
+
+    def test_balance_sheet_pdf_and_excel_export(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        cash = make_account_committed(db, branch, "1100-BSX", "Cash", "asset")
+        capital = make_account_committed(db, branch, "3100-BSX", "رأس المال", "equity")
+        client.post(
+            "/api/v1/finance/journal-entries",
+            json={
+                "branch_id": branch.id, "entry_date": str(date.today()),
+                "reference": "JE-BSX", "description": "export test",
+                "lines": [
+                    {"account_id": cash.id, "debit": "500.00", "credit": "0"},
+                    {"account_id": capital.id, "debit": "0", "credit": "500.00"},
+                ],
+            },
+            headers=manager_headers,
+        )
+        pdf_resp = client.get(
+            "/api/v1/finance/reports/balance-sheet/pdf",
+            params={"branch_id": branch.id, "as_of": str(date.today())},
+            headers=manager_headers,
+        )
+        assert pdf_resp.status_code == 200, pdf_resp.text
+        assert pdf_resp.content[:4] == b"%PDF"
+
+        xlsx_resp = client.get(
+            "/api/v1/finance/reports/balance-sheet/excel",
+            params={"branch_id": branch.id, "as_of": str(date.today())},
+            headers=manager_headers,
+        )
+        assert xlsx_resp.status_code == 200, xlsx_resp.text
+        assert xlsx_resp.content[:2] == b"PK"
 
 
 class TestFolioHTTPFlow:
@@ -1821,6 +1959,45 @@ class TestAccountHTTPFlow:
         assert list_resp.status_code == 200
         assert any(a["code"] == "9999" for a in list_resp.json()["items"])
 
+    def test_account_ledger_http(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        cash = make_account_committed(db, branch, "1100-LEDGER", "Cash", "asset")
+        revenue = make_account_committed(db, branch, "4100-LEDGER", "Revenue", "revenue")
+        client.post(
+            "/api/v1/finance/journal-entries",
+            json={
+                "branch_id": branch.id, "entry_date": str(date.today()),
+                "reference": "JE-LEDGER-TEST", "description": "ledger http test",
+                "lines": [
+                    {"account_id": cash.id, "debit": "250.00", "credit": "0"},
+                    {"account_id": revenue.id, "debit": "0", "credit": "250.00"},
+                ],
+            },
+            headers=manager_headers,
+        )
+        resp = client.get(
+            f"/api/v1/finance/accounts/{cash.id}/ledger",
+            params={
+                "branch_id": branch.id,
+                "date_from": str(date.today()), "date_to": str(date.today()),
+            },
+            headers=manager_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["closing_balance"] == "250.00"
+        assert len(body["lines"]) == 1
+
+    def test_account_ledger_requires_finance_role(self, client: TestClient, db, waiter_headers, manager_headers):
+        branch = make_branch_committed(db)
+        cash = make_account_committed(db, branch, "1100-LEDGER2", "Cash", "asset")
+        resp = client.get(
+            f"/api/v1/finance/accounts/{cash.id}/ledger",
+            params={"branch_id": branch.id, "date_from": str(date.today()), "date_to": str(date.today())},
+            headers=waiter_headers,
+        )
+        assert resp.status_code == 403
+
     def test_create_duplicate_account_code_400(self, client: TestClient, db, manager_headers):
         """نفس (branch_id, code) مرتين لازم يترفض — uq_accounts_branch_code."""
         branch = make_branch_committed(db)
@@ -1962,6 +2139,63 @@ class TestAccountingPeriodHTTPFlow:
         )
         assert resp.status_code == 400
         assert "مقفولة" in resp.json()["detail"]
+
+    def test_close_year_http(self, client: TestClient, db, super_admin_headers):
+        """2026-08-19 (طلب Mohamed — إقفال سنة محاسبية) — min_role_level=80،
+        manager (60) مايكفيش، محتاج admin+ (raج التستات التالية)."""
+        branch = make_branch_committed(db)
+        cash = make_account_committed(db, branch, "1100-YC", "Cash", "asset")
+        revenue = make_account_committed(db, branch, "4100-YC", "Revenue", "revenue")
+        # الحساب لازم يكون بالكود "3200" بالظبط (services.close_accounting_
+        # year بتدوّر عليه بـget_account_by_code).
+        make_account_committed(db, branch, "3200", "أرباح مرحّلة", "equity")
+
+        client.post(
+            "/api/v1/finance/journal-entries",
+            json={
+                "branch_id": branch.id, "entry_date": str(date(2025, 6, 1)),
+                "reference": "JE-YC", "description": "إيراد اختبار إقفال السنة",
+                "lines": [
+                    {"account_id": cash.id, "debit": "1000.00", "credit": "0"},
+                    {"account_id": revenue.id, "debit": "0", "credit": "1000.00"},
+                ],
+            },
+            headers=super_admin_headers,
+        )
+        for month in range(1, 13):
+            close_resp = client.post(
+                f"/api/v1/finance/periods/2025/{month}/close",
+                json={"branch_id": branch.id},
+                headers=super_admin_headers,
+            )
+            assert close_resp.status_code == 200, close_resp.text
+
+        year_resp = client.post(
+            "/api/v1/finance/periods/2025/close-year",
+            params={"branch_id": branch.id},
+            headers=super_admin_headers,
+        )
+        assert year_resp.status_code == 200, year_resp.text
+        body = year_resp.json()
+        assert body["net_income"] == "1000.00"
+
+        # قفلها تاني لازم يترفض
+        second = client.post(
+            "/api/v1/finance/periods/2025/close-year",
+            params={"branch_id": branch.id},
+            headers=super_admin_headers,
+        )
+        assert second.status_code == 400
+        assert "مقفولة بالفعل" in second.json()["detail"]
+
+    def test_close_year_requires_admin_not_just_manager(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        resp = client.post(
+            "/api/v1/finance/periods/2025/close-year",
+            params={"branch_id": branch.id},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 403
 
 
 class TestCheckHTTPFlow:
@@ -2376,6 +2610,26 @@ class TestExpenseHTTP:
         )
         assert list_resp.status_code == 200
         assert list_resp.json()["total"] == 1
+
+    def test_create_expense_above_threshold_requires_approval_http(
+        self, client: TestClient, db, accountant_headers,
+    ):
+        """2026-08-19 (طلب Mohamed — حد موافقة المصروفات): محاسب لوحده
+        (بدون approver_user_id/approver_pin) لمبلغ فوق الحد يترفض 400."""
+        branch = make_branch_committed(db)
+        rent, cash = self._accounts(db, branch)
+        resp = client.post(
+            "/api/v1/finance/expenses",
+            params={"branch_id": branch.id},
+            json={
+                "expense_date": str(date.today()),
+                "expense_account_id": rent.id, "settlement_account_id": cash.id,
+                "amount": "6000.00", "description": "فوق الحد بدون موافقة",
+            },
+            headers=accountant_headers,
+        )
+        assert resp.status_code == 400, resp.text
+        assert "موافقة مدير" in resp.json()["detail"]
 
     def test_create_expense_requires_finance_role(self, client: TestClient, db, waiter_headers):
         branch = make_branch_committed(db)

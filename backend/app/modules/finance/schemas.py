@@ -562,6 +562,11 @@ class ExpenseCreate(BaseModel):
     reference:              Optional[str] = Field(None, max_length=100)
     cost_center_id:         Optional[int] = None
     defer_payment:          bool = False
+    # 2026-08-19 (طلب Mohamed — حد موافقة المصروفات): إجباري بس لو المبلغ
+    # >= settings.EXPENSE_APPROVAL_THRESHOLD والمنفّذ نفسه مستواه أقل من
+    # مدير — راجع services.record_expense.
+    approver_user_id:       Optional[int] = None
+    approver_pin:           Optional[str] = None
 
 
 class ExpenseRead(BaseModel):
@@ -680,6 +685,86 @@ class CashReceiptRead(BaseModel):
     destination_account_code: str = ""
     destination_account_name: str = ""
     source_account_code: str = ""
+
+
+class AccountLedgerLine(BaseModel):
+    entry_id:    int
+    entry_date:  date
+    reference:   str
+    description: str
+    debit:       Decimal
+    credit:      Decimal
+    running_balance: Decimal
+
+
+class AccountLedgerReport(BaseModel):
+    """كشف حساب (2026-08-19، طلب Mohamed) — كل حركات حساب واحد خلال مدى
+    تاريخي، برصيد متحرّك (running balance) حسب طبيعة الحساب (مدين يزوّد
+    رصيد الأصول/المصروفات، دائن يزوّد رصيد الخصوم/حقوق الملكية/الإيرادات)."""
+    account_id:      int
+    account_code:    str
+    account_name:    str
+    account_type:    str
+    date_from:       date
+    date_to:         date
+    opening_balance: Decimal
+    closing_balance: Decimal
+    total_debit:     Decimal
+    total_credit:    Decimal
+    lines:           list[AccountLedgerLine]
+
+
+class AgingBucket(BaseModel):
+    label:  str
+    count:  int
+    amount: Decimal
+
+
+class ReceivableAgingLine(BaseModel):
+    """فوليو مفتوح برصيد مستحق — عمره من check_in (2026-08-19، طلب Mohamed)."""
+    folio_id:         int
+    guest_name:       str
+    check_in:         date
+    days_outstanding: int
+    balance_due:      Decimal
+    bucket:           str
+
+
+class PayableAgingLine(BaseModel):
+    """التزام لسه من غير سداد كامل — أمر شراء أو مصروف آجل (2026-08-19،
+    طلب Mohamed). source_type يفرّق الاتنين لأن مفيش كيان واحد يجمعهم."""
+    source_type:       str  # "purchase_order" | "expense"
+    source_id:         int
+    reference:         str
+    counterparty:      str
+    due_date:          date
+    days_outstanding:  int
+    remaining:         Decimal
+    bucket:            str
+
+
+class AgingReport(BaseModel):
+    branch_id:          int
+    as_of:              date
+    receivables:        list[ReceivableAgingLine]
+    receivables_total:  Decimal
+    receivables_buckets: list[AgingBucket]
+    payables:           list[PayableAgingLine]
+    payables_total:     Decimal
+    payables_buckets:   list[AgingBucket]
+
+
+class AccountingYearCloseRead(BaseModel):
+    """إقفال سنة محاسبية (2026-08-19، طلب Mohamed) — راجع
+    services.close_accounting_year."""
+    model_config = ConfigDict(from_attributes=True)
+    id:               int
+    branch_id:        int
+    year:              int
+    journal_entry_id: int
+    net_income:        Decimal
+    closed_by:         int
+    closed_at:         datetime
 
 
 class AccountingPeriodRead(BaseModel):

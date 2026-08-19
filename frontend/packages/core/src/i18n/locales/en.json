@@ -40,7 +40,7 @@
     "accountLocked": "This account is temporarily locked after failed attempts. Try again in {minutes} minutes or ask a super-admin to unlock it",
     "accountInactive": "This account is inactive. Contact a super-admin",
     "registerError": "Registration failed",
-      "logout": "Logout",
+    "logout": "Logout",
     "register_2": "Register",
     "join_us_today": "Join us today",
     "full_name": "Full Name",
@@ -4843,10 +4843,25 @@
       "unlimited": "Unlimited",
       "empty": "No personal credit accounts",
       "noTransactions": "No account movements",
-      "holder": { "customer": "Customer", "employee": "Employee" },
-      "status": { "active": "Active", "suspended": "Suspended", "closed": "Closed" },
-      "payment": { "cash": "Cash", "bank": "Bank" },
-      "txn": { "charge": "Charge", "payment": "Collection", "refund": "Sale refund", "reversal": "Reversal" },
+      "holder": {
+        "customer": "Customer",
+        "employee": "Employee"
+      },
+      "status": {
+        "active": "Active",
+        "suspended": "Suspended",
+        "closed": "Closed"
+      },
+      "payment": {
+        "cash": "Cash",
+        "bank": "Bank"
+      },
+      "txn": {
+        "charge": "Charge",
+        "payment": "Collection",
+        "refund": "Sale refund",
+        "reversal": "Reversal"
+      },
       "messages": {
         "opened": "Credit account opened",
         "paymentRecorded": "Collection and journal entry recorded",
@@ -5619,7 +5634,11 @@
         "paymentChannels": "Payment Channels",
         "expenses": "Expenses",
         "custodies": "Custody Advances",
-        "cashReceipts": "Cash Receipts"
+        "cashReceipts": "Cash Receipts",
+        "trialBalance": "Trial Balance",
+        "incomeStatement": "Income Statement",
+        "aging": "Aging Report",
+        "periods": "Accounting Periods"
       },
       "expenses": {
         "loadError": "Failed to load expenses",
@@ -5636,7 +5655,9 @@
           "descriptionRequired": "Description is required",
           "success": "Expense recorded ✓",
           "error": "Could not record the expense",
-          "deferPayment": "Deferred (credit) expense — settle later"
+          "deferPayment": "Deferred (credit) expense — settle later",
+          "approvalTitle": "Manager Approval Required",
+          "approvalMessage": "This expense amount exceeds the auto-approval threshold — a manager or above must approve with their PIN."
         },
         "status": {
           "label": "Status",
@@ -5667,7 +5688,10 @@
         "purpose": "Purpose",
         "sourceAccount": "Source account",
         "disbursedDate": "Date",
-        "status": { "open": "Open", "settled": "Settled" },
+        "status": {
+          "open": "Open",
+          "settled": "Settled"
+        },
         "newCustody": {
           "btnLabel": "New custody advance",
           "title": "Disburse a cash custody advance",
@@ -5939,7 +5963,59 @@
       "confirmBounceNo": "Back",
       "bouncedNoteDefault": "Insufficient funds — recorded from the accounts screen",
       "checkMarkedBounced": "Check marked as bounced",
-      "depreciationPostedToast": "Posted depreciation for {count} asset(s), totaling {amount} EGP"
+      "depreciationPostedToast": "Posted depreciation for {count} asset(s), totaling {amount} EGP",
+      "groups": {
+        "daily": "Daily Operations",
+        "ledger": "Accounts & Ledger",
+        "reports": "Financial Reports",
+        "advanced": "Advanced Settings"
+      },
+      "ledger": {
+        "title": "Account Ledger",
+        "opening": "Opening Balance",
+        "closing": "Closing Balance",
+        "totalDebit": "Total Debit",
+        "totalCredit": "Total Credit",
+        "reference": "Reference",
+        "runningBalance": "Running Balance",
+        "debit": "Debit",
+        "credit": "Credit",
+        "loadError": "Failed to load account ledger"
+      },
+      "trialBalance": {
+        "groupByParent": "Group under parent accounts",
+        "loadError": "Failed to load trial balance"
+      },
+      "aging": {
+        "receivables": "Receivables (open folios)",
+        "payables": "Payables (suppliers / deferred expenses)",
+        "guest": "Guest",
+        "counterparty": "Counterparty",
+        "days": "Days",
+        "balance": "Balance Due",
+        "remaining": "Remaining",
+        "bucket": "Age Bucket",
+        "noReceivables": "No open receivables",
+        "noPayables": "No outstanding payables",
+        "loadError": "Failed to load aging report"
+      },
+      "periods": {
+        "open": "Open",
+        "closed": "Closed",
+        "closeMonth": "Close Month",
+        "closeMonthSuccess": "Month closed successfully",
+        "closeMonthError": "Failed to close month",
+        "confirmCloseMonth": "Are you sure you want to close {month} {year}? This cannot be undone.",
+        "closeYear": "Close Fiscal Year",
+        "closeYearConfirm": "Yes, close the year",
+        "closeYearSuccess": "Fiscal year closed and net income posted to retained earnings",
+        "closeYearError": "Failed to close the fiscal year",
+        "closeYearHint": "All 12 months must be closed before you can close the year",
+        "confirmCloseYear": "Are you sure you want to close fiscal year {year}? This is final and irreversible — it will post net income/loss to retained earnings and close all temporary accounts.",
+        "yearClosedNetIncome": "Net income posted",
+        "loadError": "Failed to load accounting periods"
+      },
+      "reportDownloadError": "Failed to download report"
     },
     "diningMenu": {
       "title": "Unified Dining Management",

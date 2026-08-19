@@ -4843,10 +4843,25 @@
       "unlimited": "بلا حد",
       "empty": "لا توجد حسابات آجلة",
       "noTransactions": "لا توجد حركات على الحساب",
-      "holder": { "customer": "عميل", "employee": "موظف" },
-      "status": { "active": "نشط", "suspended": "معلق", "closed": "مغلق" },
-      "payment": { "cash": "نقدي", "bank": "بنك" },
-      "txn": { "charge": "ترحيل", "payment": "تحصيل", "refund": "مرتجع بيع", "reversal": "عكس" },
+      "holder": {
+        "customer": "عميل",
+        "employee": "موظف"
+      },
+      "status": {
+        "active": "نشط",
+        "suspended": "معلق",
+        "closed": "مغلق"
+      },
+      "payment": {
+        "cash": "نقدي",
+        "bank": "بنك"
+      },
+      "txn": {
+        "charge": "ترحيل",
+        "payment": "تحصيل",
+        "refund": "مرتجع بيع",
+        "reversal": "عكس"
+      },
       "messages": {
         "opened": "تم فتح الحساب الآجل",
         "paymentRecorded": "تم تسجيل التحصيل والقيد المحاسبي",
@@ -5619,7 +5634,11 @@
         "paymentChannels": "قنوات التحصيل",
         "expenses": "المصروفات",
         "custodies": "العهد النقدية",
-        "cashReceipts": "أذون القبض"
+        "cashReceipts": "أذون القبض",
+        "trialBalance": "ميزان المراجعة",
+        "incomeStatement": "قائمة الدخل",
+        "aging": "أعمار الديون",
+        "periods": "الفترات المحاسبية"
       },
       "expenses": {
         "loadError": "فشل تحميل المصروفات",
@@ -5636,7 +5655,9 @@
           "descriptionRequired": "البيان مطلوب",
           "success": "تم تسجيل المصروف ✓",
           "error": "تعذّر تسجيل المصروف",
-          "deferPayment": "مصروف آجل — يُسدَّد لاحقًا"
+          "deferPayment": "مصروف آجل — يُسدَّد لاحقًا",
+          "approvalTitle": "يتطلب موافقة مدير",
+          "approvalMessage": "مبلغ السند تجاوز حد الموافقة التلقائية — لازم مدير أو أعلى يوافق بالـ PIN."
         },
         "status": {
           "label": "الحالة",
@@ -5667,7 +5688,10 @@
         "purpose": "الغرض",
         "sourceAccount": "حساب المصدر",
         "disbursedDate": "التاريخ",
-        "status": { "open": "مفتوحة", "settled": "متسواة" },
+        "status": {
+          "open": "مفتوحة",
+          "settled": "متسواة"
+        },
         "newCustody": {
           "btnLabel": "عهدة جديدة",
           "title": "صرف عهدة نقدية",
@@ -5939,7 +5963,59 @@
       "confirmBounceNo": "تراجع",
       "bouncedNoteDefault": "رصيد غير كافٍ — سُجّل من شاشة الحسابات",
       "checkMarkedBounced": "تم تسجيل الشيك كمرتجع",
-      "depreciationPostedToast": "تم ترحيل إهلاك {count} أصل بإجمالي {amount} ج"
+      "depreciationPostedToast": "تم ترحيل إهلاك {count} أصل بإجمالي {amount} ج",
+      "groups": {
+        "daily": "العمليات اليومية",
+        "ledger": "الحسابات والدفتر",
+        "reports": "التقارير المالية",
+        "advanced": "إعدادات متقدمة"
+      },
+      "ledger": {
+        "title": "كشف حساب",
+        "opening": "الرصيد الافتتاحي",
+        "closing": "الرصيد الختامي",
+        "totalDebit": "إجمالي المدين",
+        "totalCredit": "إجمالي الدائن",
+        "reference": "المرجع",
+        "runningBalance": "الرصيد المتحرك",
+        "debit": "مدين",
+        "credit": "دائن",
+        "loadError": "تعذر تحميل كشف الحساب"
+      },
+      "trialBalance": {
+        "groupByParent": "تجميع تحت رؤوس الحسابات",
+        "loadError": "تعذر تحميل ميزان المراجعة"
+      },
+      "aging": {
+        "receivables": "مستحقات لنا (فوليوهات مفتوحة)",
+        "payables": "مستحقات علينا (موردين / مصروفات آجلة)",
+        "guest": "الضيف",
+        "counterparty": "الجهة",
+        "days": "عدد الأيام",
+        "balance": "الرصيد المستحق",
+        "remaining": "المتبقي",
+        "bucket": "الفئة العمرية",
+        "noReceivables": "لا توجد مستحقات مفتوحة",
+        "noPayables": "لا توجد التزامات غير مسددة",
+        "loadError": "تعذر تحميل تقرير أعمار الديون"
+      },
+      "periods": {
+        "open": "مفتوحة",
+        "closed": "مقفلة",
+        "closeMonth": "إقفال الشهر",
+        "closeMonthSuccess": "تم إقفال الشهر بنجاح",
+        "closeMonthError": "تعذر إقفال الشهر",
+        "confirmCloseMonth": "هل أنت متأكد من إقفال شهر {month} {year}؟ لا يمكن التراجع عن هذا الإجراء.",
+        "closeYear": "إقفال السنة المالية",
+        "closeYearConfirm": "نعم، أقفل السنة",
+        "closeYearSuccess": "تم إقفال السنة المالية وترحيل صافي الربح لحساب الأرباح المرحّلة",
+        "closeYearError": "تعذر إقفال السنة المالية",
+        "closeYearHint": "لازم تقفل الـ 12 شهر الأول قبل ما تقدر تقفل السنة كلها",
+        "confirmCloseYear": "هل أنت متأكد من إقفال السنة المالية {year}؟ ده إجراء نهائي مفيهوش رجوع — هيترحّل صافي الربح/الخسارة لحساب الأرباح المرحّلة ويقفل كل الحسابات المؤقتة.",
+        "yearClosedNetIncome": "صافي الربح المرحّل",
+        "loadError": "تعذر تحميل الفترات المحاسبية"
+      },
+      "reportDownloadError": "تعذر تحميل التقرير"
     },
     "diningMenu": {
       "title": "إدارة الدايننج الموحّدة",

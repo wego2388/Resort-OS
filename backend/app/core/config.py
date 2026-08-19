@@ -2,6 +2,7 @@
 app/core/config.py
 Settings للمشروع — يرث WegoSettings ويضيف حقول Resort OS
 """
+from decimal import Decimal
 from functools import lru_cache
 from typing import Optional
 
@@ -67,6 +68,13 @@ class Settings(CoreSettings):
     FRAUD_DRAWER_OPEN_COUNT_THRESHOLD: int = 20   # فتح الدرج بدون بيع
     FRAUD_DRAWER_OPEN_WINDOW_MINUTES: int = 1440  # 24 ساعة ("في اليوم")
     FRAUD_ALERT_DEDUP_HOURS: int = 24             # ما نبعتش نفس التنبيه (نفس كاشير+قاعدة) أكتر من مرة كل كام ساعة
+
+    # ── Expense Approval Threshold (2026-08-19، طلب Mohamed) ──────────
+    # سند مصروفات بمبلغ >= الرقم ده محتاج موافقة PIN مدير حاضر فعليًا
+    # (نفس core.policy_engine.require_approval اللي بيستخدمها إلغاء صنف/
+    # تطبيق خصم دايننج) — أقل من الرقم ده أي محاسب+ يسجّله لوحده زي ما
+    # كان بالظبط. قيمة مبدئية معقولة، قابلة للتعديل من غير كود جديد.
+    EXPENSE_APPROVAL_THRESHOLD: Decimal = Decimal("5000")
 
     # ── API ───────────────────────────────────────────────────────────
     API_PREFIX: str = "/api/v1"

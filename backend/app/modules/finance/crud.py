@@ -11,7 +11,7 @@ from app.core.config import settings
 from app.resort_os.timezone_utils import local_today
 
 from app.modules.finance.models import (
-    Account, AccountingPeriod, AssetDepreciationEntry, BankAccount, BankStatementLine,
+    Account, AccountingPeriod, AccountingYearClose, AssetDepreciationEntry, BankAccount, BankStatementLine,
     CashierShift, CashierShiftCashCount, CashMovement, CashReceipt, ConditionalDiscount,
     CostCenter, Custody, CustodySettlementLine, ETAInvoice, ExchangeRate, Expense,
     ExpensePayment, Folio, FolioCharge,
@@ -133,6 +133,32 @@ def increment_discount_uses(db: Session, discount_id: int) -> None:
 
 def get_folio(db: Session, folio_id: int) -> Optional[Folio]:
     return db.query(Folio).filter(Folio.id == folio_id).first()
+
+
+def list_open_folios_for_aging(db: Session, branch_id: int) -> list[Folio]:
+    """فوليوهات مفتوحة (لسه من غير تسوية) لتقرير أعمار الديون (2026-08-19،
+    طلب Mohamed) — راجع services.get_aging_report."""
+    return (
+        db.query(Folio)
+        .filter(Folio.branch_id == branch_id, Folio.status == "open")
+        .order_by(Folio.check_in)
+        .all()
+    )
+
+
+def list_unpaid_expenses_for_aging(db: Session, branch_id: int) -> list[Expense]:
+    """مصروفات آجلة لسه من غير سداد كامل، مش ملغاة — لتقرير أعمار الديون
+    (2026-08-19، طلب Mohamed)."""
+    return (
+        db.query(Expense)
+        .filter(
+            Expense.branch_id == branch_id,
+            Expense.payment_status.in_(("unpaid", "partial")),
+            Expense.voided_at.is_(None),
+        )
+        .order_by(Expense.expense_date)
+        .all()
+    )
 
 
 def list_folios(
@@ -908,6 +934,42 @@ def list_journal_entries(
 
 # ── AccountingPeriod ──────────────────────────────────────────────────
 
+def count_closed_months(db: Session, branch_id: int, year: int) -> int:
+    """عدد الشهور المقفولة/المؤمَّنة (closed/locked) لسنة معيّنة — لإقفال
+    السنة (2026-08-19، طلب Mohamed): لازم كل الاتناشر شهر مقفولين الأول.
+    راجع services.close_accounting_year."""
+    return (
+        db.query(AccountingPeriod)
+        .filter(
+            AccountingPeriod.branch_id == branch_id,
+            AccountingPeriod.year == year,
+            AccountingPeriod.status.in_(("closed", "locked")),
+        )
+        .count()
+    )
+
+
+def get_year_close(db: Session, branch_id: int, year: int) -> Optional[AccountingYearClose]:
+    return (
+        db.query(AccountingYearClose)
+        .filter(AccountingYearClose.branch_id == branch_id, AccountingYearClose.year == year)
+        .first()
+    )
+
+
+def create_year_close(
+    db: Session, branch_id: int, year: int, journal_entry_id: int,
+    net_income: Decimal, closed_by: int,
+) -> AccountingYearClose:
+    row = AccountingYearClose(
+        branch_id=branch_id, year=year, journal_entry_id=journal_entry_id,
+        net_income=net_income, closed_by=closed_by, closed_at=datetime.utcnow(),
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
 def get_period_status(
     db: Session,
     branch_id: int,
@@ -1102,6 +1164,43 @@ def sum_journal_lines_by_account(
         row[0]: (row[1] or Decimal("0"), row[2] or Decimal("0"))
         for row in q.all()
     }
+
+
+def sum_account_before_date(db: Session, account_id: int, before_date: date) -> tuple[Decimal, Decimal]:
+    """إجمالي مدين/دائن على حساب واحد لكل القيود *قبل* تاريخ معيّن بالظبط
+    (مش <=) — لحساب الرصيد الافتتاحي لكشف حساب (2026-08-19)."""
+    from sqlalchemy import func  # noqa: PLC0415
+
+    row = (
+        db.query(
+            func.coalesce(func.sum(JournalLine.debit), 0),
+            func.coalesce(func.sum(JournalLine.credit), 0),
+        )
+        .join(JournalEntry, JournalEntry.id == JournalLine.entry_id)
+        .filter(JournalLine.account_id == account_id, JournalEntry.entry_date < before_date)
+        .one()
+    )
+    return row[0] or Decimal("0"), row[1] or Decimal("0")
+
+
+def list_account_ledger_lines(
+    db: Session, account_id: int, date_from: date, date_to: date,
+) -> list[tuple[JournalLine, JournalEntry]]:
+    """كل سطور دفتر اليومية على حساب واحد خلال مدى تاريخ — لكشف الحساب
+    (2026-08-19). بدون pagination عمدًا (راجع services.get_account_ledger)
+    عشان الرصيد المتحرّك (running balance) لازم يتحسب على التسلسل الكامل
+    مش صفحة بصفحة."""
+    return (
+        db.query(JournalLine, JournalEntry)
+        .join(JournalEntry, JournalEntry.id == JournalLine.entry_id)
+        .filter(
+            JournalLine.account_id == account_id,
+            JournalEntry.entry_date >= date_from,
+            JournalEntry.entry_date <= date_to,
+        )
+        .order_by(JournalEntry.entry_date, JournalEntry.id, JournalLine.id)
+        .all()
+    )
 
 
 # ── Exchange Rates (Multi-Currency) ───────────────────────────────────

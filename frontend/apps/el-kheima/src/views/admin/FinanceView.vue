@@ -7,6 +7,7 @@ import { useStaffFormat } from '@resort-os/core/i18n/staff'
 type ApiErr = { response?: { data?: { detail?: string; message?: string }; status?: number } }
 import { AppCard, AppBadge, AppButton, AppModal, AppSpinner, EmptyState, useToast, useConfirm } from '@resort-os/ui'
 import StepUpConfirmModal from '../../components/StepUpConfirmModal.vue'
+import PinGuardModal from '../../components/PinGuardModal.vue'
 
 const toast = useToast()
 const { confirm } = useConfirm()
@@ -17,7 +18,8 @@ const auth = useAuthStore()
 // activeBranchId is null when requires_branch_selection=true — in that case
 // API calls carry no branch_id and the server returns 409 BRANCH_CONTEXT_REQUIRED.
 const branchId = computed(() => auth.activeBranchId)
-const tab = ref<'overview' | 'checks' | 'accounts' | 'cost-centers' | 'balance-sheet' | 'depreciation' | 'bank-reconciliation' | 'shifts' | 'exchange-rates' | 'journal' | 'payment-channels' | 'expenses' | 'custodies' | 'cash-receipts'>('overview')
+const tab = ref<'overview' | 'checks' | 'accounts' | 'cost-centers' | 'balance-sheet' | 'depreciation' | 'bank-reconciliation' | 'shifts' | 'exchange-rates' | 'journal' | 'payment-channels' | 'expenses' | 'custodies' | 'cash-receipts' | 'trial-balance' | 'income-statement' | 'aging' | 'periods'>('overview')
+const activeGroupIdx = ref(0)
 
 interface Check { id: number; check_number: string; amount: number; drawer_name: string; due_date: string; status: string; bank_name: string }
 interface Account { id: number; code: string; name: string; account_type: string; balance: number }
@@ -509,12 +511,292 @@ async function loadBalanceSheet() {
   }
 }
 
+// نفس نمط HRView.vue's downloadBlobFile بالظبط (blob response + object URL
+// + تنزيل تلقائي + revoke بعد 5 ثواني) — مفيش util مشترك للنمط ده جوه
+// @resort-os/core/ui حاليًا، فكل شاشة بتكرره محليًا (نفس القرار الموثّق هناك).
+function downloadBlobFile(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  setTimeout(() => URL.revokeObjectURL(url), 5000)
+}
+
+// ── ميزان المراجعة (Trial Balance) — 2026-08-19 ───────────────────────
+interface TrialBalanceLineRow { account_code: string; account_name: string; account_type: string; debit: number; credit: number }
+interface TrialBalanceData {
+  as_of: string; lines: TrialBalanceLineRow[]
+  total_debit: number; total_credit: number; is_balanced: boolean; grouped_by_parent: boolean
+}
+const tbAsOf = ref(today)
+const tbGroupByParent = ref(false)
+const tbData = ref<TrialBalanceData | null>(null)
+const tbDownloading = ref<'pdf' | 'excel' | null>(null)
+
+async function loadTrialBalance() {
+  loading.value = true
+  try {
+    const { data } = await api.get(ENDPOINTS.finance.reportsTrialBalance, {
+      params: { branch_id: branchId.value, as_of: tbAsOf.value, group_by_parent: tbGroupByParent.value },
+    })
+    tbData.value = {
+      as_of: data.as_of,
+      lines: (data.lines ?? []).map((l: Record<string, unknown>) => ({ ...l, debit: Number(l.debit), credit: Number(l.credit) } as TrialBalanceLineRow)),
+      total_debit: Number(data.total_debit),
+      total_credit: Number(data.total_credit),
+      is_balanced: Boolean(data.is_balanced),
+      grouped_by_parent: Boolean(data.grouped_by_parent),
+    }
+  } catch (e: unknown) {
+    toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.finance.trialBalance.loadError'))
+  } finally {
+    loading.value = false
+  }
+}
+async function downloadTrialBalance(fmt: 'pdf' | 'excel') {
+  tbDownloading.value = fmt
+  try {
+    const url = fmt === 'pdf' ? ENDPOINTS.finance.reportsTrialBalancePdf : ENDPOINTS.finance.reportsTrialBalanceExcel
+    const res = await api.get(url, {
+      params: { branch_id: branchId.value, as_of: tbAsOf.value, group_by_parent: tbGroupByParent.value },
+      responseType: 'blob',
+    })
+    downloadBlobFile(res.data, `trial-balance-${tbAsOf.value}.${fmt === 'pdf' ? 'pdf' : 'xlsx'}`)
+  } catch {
+    toast.error(t('backoffice.finance.reportDownloadError'))
+  } finally {
+    tbDownloading.value = null
+  }
+}
+
+// ── قائمة الدخل التفصيلية (Income Statement) — 2026-08-19 ─────────────
+interface IncomeStatementLineRow { account_code: string; account_name: string; amount: number }
+interface IncomeStatementData {
+  date_from: string; date_to: string
+  revenue_lines: IncomeStatementLineRow[]; expense_lines: IncomeStatementLineRow[]
+  total_revenue: number; total_expense: number; net_income: number
+}
+const isDateFrom = ref(firstOfMonth)
+const isDateTo = ref(today)
+const isData = ref<IncomeStatementData | null>(null)
+const isDownloading = ref<'pdf' | 'excel' | null>(null)
+
+async function loadIncomeStatementReport() {
+  loading.value = true
+  try {
+    const { data } = await api.get(ENDPOINTS.finance.reportsIncomeStatement, {
+      params: { branch_id: branchId.value, date_from: isDateFrom.value, date_to: isDateTo.value },
+    })
+    isData.value = {
+      date_from: data.date_from,
+      date_to: data.date_to,
+      revenue_lines: (data.revenue_lines ?? []).map((l: Record<string, unknown>) => ({ ...l, amount: Number(l.amount) } as IncomeStatementLineRow)),
+      expense_lines: (data.expense_lines ?? []).map((l: Record<string, unknown>) => ({ ...l, amount: Number(l.amount) } as IncomeStatementLineRow)),
+      total_revenue: Number(data.total_revenue),
+      total_expense: Number(data.total_expense),
+      net_income: Number(data.net_income),
+    }
+  } catch (e: unknown) {
+    toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.finance.loadIncomeStatementError'))
+  } finally {
+    loading.value = false
+  }
+}
+async function downloadIncomeStatement(fmt: 'pdf' | 'excel') {
+  isDownloading.value = fmt
+  try {
+    const url = fmt === 'pdf' ? ENDPOINTS.finance.reportsIncomeStatementPdf : ENDPOINTS.finance.reportsIncomeStatementExcel
+    const res = await api.get(url, {
+      params: { branch_id: branchId.value, date_from: isDateFrom.value, date_to: isDateTo.value },
+      responseType: 'blob',
+    })
+    downloadBlobFile(res.data, `income-statement-${isDateFrom.value}_${isDateTo.value}.${fmt === 'pdf' ? 'pdf' : 'xlsx'}`)
+  } catch {
+    toast.error(t('backoffice.finance.reportDownloadError'))
+  } finally {
+    isDownloading.value = null
+  }
+}
+
+// ── الميزانية العمومية — تصدير PDF/Excel (الشاشة موجودة، التصدير جديد) ─
+const bsDownloading = ref<'pdf' | 'excel' | null>(null)
+async function downloadBalanceSheet(fmt: 'pdf' | 'excel') {
+  bsDownloading.value = fmt
+  try {
+    const url = fmt === 'pdf' ? ENDPOINTS.finance.reportsBalanceSheetPdf : ENDPOINTS.finance.reportsBalanceSheetExcel
+    const res = await api.get(url, { params: { branch_id: branchId.value, as_of: bsAsOf.value }, responseType: 'blob' })
+    downloadBlobFile(res.data, `balance-sheet-${bsAsOf.value}.${fmt === 'pdf' ? 'pdf' : 'xlsx'}`)
+  } catch {
+    toast.error(t('backoffice.finance.reportDownloadError'))
+  } finally {
+    bsDownloading.value = null
+  }
+}
+
+// ── تقرير أعمار الديون (Aging) — 2026-08-19 ────────────────────────────
+interface AgingBucketRow { label: string; count: number; amount: number }
+interface ReceivableAgingRow { folio_id: number; guest_name: string; check_in: string; days_outstanding: number; balance_due: number; bucket: string }
+interface PayableAgingRow { source_type: string; source_id: number; reference: string; counterparty: string; due_date: string; days_outstanding: number; remaining: number; bucket: string }
+interface AgingData {
+  as_of: string
+  receivables: ReceivableAgingRow[]; receivables_total: number; receivables_buckets: AgingBucketRow[]
+  payables: PayableAgingRow[]; payables_total: number; payables_buckets: AgingBucketRow[]
+}
+const agingAsOf = ref(today)
+const agingData = ref<AgingData | null>(null)
+
+async function loadAging() {
+  loading.value = true
+  try {
+    const { data } = await api.get(ENDPOINTS.finance.reportsAging, { params: { branch_id: branchId.value, as_of: agingAsOf.value } })
+    agingData.value = {
+      as_of: data.as_of,
+      receivables: (data.receivables ?? []).map((l: Record<string, unknown>) => ({ ...l, balance_due: Number(l.balance_due) } as ReceivableAgingRow)),
+      receivables_total: Number(data.receivables_total),
+      receivables_buckets: (data.receivables_buckets ?? []).map((b: Record<string, unknown>) => ({ ...b, amount: Number(b.amount) } as AgingBucketRow)),
+      payables: (data.payables ?? []).map((l: Record<string, unknown>) => ({ ...l, remaining: Number(l.remaining) } as PayableAgingRow)),
+      payables_total: Number(data.payables_total),
+      payables_buckets: (data.payables_buckets ?? []).map((b: Record<string, unknown>) => ({ ...b, amount: Number(b.amount) } as AgingBucketRow)),
+    }
+  } catch (e: unknown) {
+    toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.finance.aging.loadError'))
+  } finally {
+    loading.value = false
+  }
+}
+// تدرّج لوني حسب عمر الدين — بادج أخضر (0-30) → كهرماني (31-60) → برتقالي
+// (61-90) → أحمر (90+، متأخر بشكل جدّي يستاهل متابعة فورية).
+function agingBucketVariant(bucket: string): 'success' | 'warning' | 'danger' | 'neutral' {
+  if (bucket === '0-30') return 'success'
+  if (bucket === '31-60') return 'warning'
+  if (bucket === '61-90') return 'danger'
+  return 'danger'
+}
+
+// ── الفترات المحاسبية + الإقفال السنوي (Periods) — 2026-08-19 ─────────
+interface PeriodRow { id: number; year: number; month: number; status: string; closed_at: string | null }
+const periodsYear = ref(new Date().getFullYear())
+const periodsRaw = ref<PeriodRow[]>([])
+const periodsLoading = ref(false)
+const closingMonthKey = ref<number | null>(null)
+const closingYear = ref(false)
+const yearCloseResult = ref<{ journal_entry_id: number; net_income: number; closed_at: string } | null>(null)
+
+const periodsGrid = computed(() => {
+  return Array.from({ length: 12 }, (_, i) => {
+    const month = i + 1
+    const row = periodsRaw.value.find(p => p.month === month)
+    return { month, status: row?.status ?? 'open', closedAt: row?.closed_at ?? null }
+  })
+})
+const allMonthsClosed = computed(() => periodsGrid.value.every(m => m.status === 'closed' || m.status === 'locked'))
+const monthNames = computed(() => Array.from({ length: 12 }, (_, i) =>
+  fmtDateFn(new Date(2000, i, 1), { month: 'long' } as Intl.DateTimeFormatOptions)))
+
+async function loadPeriods() {
+  periodsLoading.value = true
+  try {
+    const { data } = await api.get(ENDPOINTS.finance.periods, { params: { branch_id: branchId.value, page: 1, size: 200 } })
+    periodsRaw.value = ((data.items ?? []) as PeriodRow[]).filter(p => p.year === periodsYear.value)
+  } catch (e: unknown) {
+    toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.finance.periods.loadError'))
+  } finally {
+    periodsLoading.value = false
+  }
+}
+async function closeMonth(month: number) {
+  const ok = await confirm({
+    message: t('backoffice.finance.periods.confirmCloseMonth', { month: monthNames.value[month - 1], year: periodsYear.value }),
+    danger: true,
+  })
+  if (!ok) return
+  closingMonthKey.value = month
+  try {
+    await api.post(ENDPOINTS.finance.periodClose(periodsYear.value, month), { branch_id: branchId.value })
+    toast.success(t('backoffice.finance.periods.closeMonthSuccess'))
+    await loadPeriods()
+  } catch (e: unknown) {
+    toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.finance.periods.closeMonthError'))
+  } finally {
+    closingMonthKey.value = null
+  }
+}
+async function closeYear() {
+  const ok = await confirm({
+    message: t('backoffice.finance.periods.confirmCloseYear', { year: periodsYear.value }),
+    danger: true, confirmText: t('backoffice.finance.periods.closeYearConfirm'), cancelText: t('backoffice.finance.cancel'),
+  })
+  if (!ok) return
+  closingYear.value = true
+  try {
+    const { data } = await api.post(ENDPOINTS.finance.closeYear(periodsYear.value), null, { params: { branch_id: branchId.value } })
+    yearCloseResult.value = { journal_entry_id: data.journal_entry_id, net_income: Number(data.net_income), closed_at: data.closed_at }
+    toast.success(t('backoffice.finance.periods.closeYearSuccess'))
+  } catch (e: unknown) {
+    toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.finance.periods.closeYearError'))
+  } finally {
+    closingYear.value = false
+  }
+}
+
 const checkStatusConfig = computed<Record<string, { label: string; variant: 'success' | 'warning' | 'danger' | 'info' | 'neutral' }>>(() => ({
   received:  { label: t('backoffice.finance.checkReceived'),   variant: 'neutral' },
   deposited: { label: t('backoffice.finance.checkDeposited'),    variant: 'info' },
   cleared:   { label: t('backoffice.finance.checkCleared'),    variant: 'success' },
   bounced:   { label: t('backoffice.finance.checkBounced'),   variant: 'danger' },
 }))
+
+// ── كشف حساب — drill-down لكل حساب (2026-08-19، طلب Mohamed) ──────────
+interface AccountLedgerLineRow {
+  entry_id: number; entry_date: string; reference: string; description: string
+  debit: number; credit: number; running_balance: number
+}
+interface AccountLedgerData {
+  account_id: number; account_code: string; account_name: string; account_type: string
+  date_from: string; date_to: string
+  opening_balance: number; closing_balance: number; total_debit: number; total_credit: number
+  lines: AccountLedgerLineRow[]
+}
+const ledgerModal = reactive({ open: false, loading: false, error: '', account: null as Account | null, dateFrom: firstOfMonth, dateTo: today })
+const ledgerData = ref<AccountLedgerData | null>(null)
+
+async function loadAccountLedger() {
+  if (!ledgerModal.account) return
+  ledgerModal.loading = true
+  ledgerModal.error = ''
+  try {
+    const { data } = await api.get(ENDPOINTS.finance.accountLedger(ledgerModal.account.id), {
+      params: { branch_id: branchId.value, date_from: ledgerModal.dateFrom, date_to: ledgerModal.dateTo },
+    })
+    ledgerData.value = {
+      ...data,
+      opening_balance: Number(data.opening_balance),
+      closing_balance: Number(data.closing_balance),
+      total_debit: Number(data.total_debit),
+      total_credit: Number(data.total_credit),
+      lines: (data.lines ?? []).map((l: Record<string, unknown>) => ({
+        ...l, debit: Number(l.debit), credit: Number(l.credit), running_balance: Number(l.running_balance),
+      })),
+    } as AccountLedgerData
+  } catch (e: unknown) {
+    ledgerModal.error = (e as ApiErr)?.response?.data?.detail ?? t('backoffice.finance.ledger.loadError')
+  } finally {
+    ledgerModal.loading = false
+  }
+}
+function openAccountLedger(acc: Account) {
+  ledgerModal.account = acc
+  ledgerModal.open = true
+  ledgerModal.dateFrom = firstOfMonth
+  ledgerModal.dateTo = today
+  ledgerData.value = null
+  loadAccountLedger()
+}
+function closeAccountLedger() {
+  ledgerModal.open = false
+  ledgerData.value = null
+}
 
 async function loadTab(tabId: typeof tab.value) {
   tab.value = tabId
@@ -549,6 +831,10 @@ async function loadTab(tabId: typeof tab.value) {
     ])
     return
   }
+  if (tabId === 'trial-balance') { await loadTrialBalance(); return }
+  if (tabId === 'income-statement') { await loadIncomeStatementReport(); return }
+  if (tabId === 'aging') { await loadAging(); return }
+  if (tabId === 'periods') { yearCloseResult.value = null; await loadPeriods(); return }
 
   loading.value = true
   try {
@@ -805,6 +1091,33 @@ function openNewExpenseModal() {
     amount: '', description: '', reference: '', deferPayment: false,
   })
 }
+// موافقة PIN فوق حد المصروفات (2026-08-19، طلب Mohamed — راجع
+// services.record_expense/policy_engine SensitiveAction("record_expense",
+// min_approver_level=80)). الفرونت إند ماعندوش قيمة EXPENSE_APPROVAL_
+// THRESHOLD خالص (Decimal إعداد سيرفر بس) — فبدل ما يكرر القيمة دي أو
+// يخمّنها، بيبعت السند عادي، ولو السيرفر رفضه برسالة "محتاج موافقة مدير
+// بالـ PIN" تحديدًا (مش أي 400 تاني) بيفتح PinGuardModal (min-level=80،
+// نفس min_approver_level بالظبط) ويعيد المحاولة بـ approver_user_id/pin.
+const EXPENSE_APPROVAL_MESSAGE_MARKER = 'موافقة مدير بالـ PIN'
+const expensePinGuard = reactive({ open: false, busy: false, error: '' })
+
+async function submitNewExpense(approver?: { approverUserId: number | null; approverPin: string | null }) {
+  await api.post(ENDPOINTS.finance.expenses, {
+    expense_date: newExpenseModal.expenseDate,
+    expense_account_id: newExpenseModal.expenseAccountId,
+    settlement_account_id: newExpenseModal.deferPayment ? undefined : newExpenseModal.settlementAccountId,
+    amount: Number(newExpenseModal.amount),
+    description: newExpenseModal.description.trim(),
+    reference: newExpenseModal.reference.trim() || undefined,
+    defer_payment: newExpenseModal.deferPayment,
+    ...(approver?.approverUserId ? { approver_user_id: approver.approverUserId, approver_pin: approver.approverPin } : {}),
+  }, { params: { branch_id: branchId.value } })
+  toast.success(t('backoffice.finance.expenses.newExpense.success'))
+  newExpenseModal.open = false
+  expensesPage.value = 1
+  await loadExpenses()
+}
+
 async function confirmNewExpense() {
   if (!newExpenseModal.expenseAccountId || (!newExpenseModal.deferPayment && !newExpenseModal.settlementAccountId)) {
     newExpenseModal.error = t('backoffice.finance.expenses.newExpense.accountsRequired')
@@ -821,23 +1134,30 @@ async function confirmNewExpense() {
   newExpenseModal.saving = true
   newExpenseModal.error = ''
   try {
-    await api.post(ENDPOINTS.finance.expenses, {
-      expense_date: newExpenseModal.expenseDate,
-      expense_account_id: newExpenseModal.expenseAccountId,
-      settlement_account_id: newExpenseModal.deferPayment ? undefined : newExpenseModal.settlementAccountId,
-      amount: Number(newExpenseModal.amount),
-      description: newExpenseModal.description.trim(),
-      reference: newExpenseModal.reference.trim() || undefined,
-      defer_payment: newExpenseModal.deferPayment,
-    }, { params: { branch_id: branchId.value } })
-    toast.success(t('backoffice.finance.expenses.newExpense.success'))
-    newExpenseModal.open = false
-    expensesPage.value = 1
-    await loadExpenses()
+    await submitNewExpense()
   } catch (e: unknown) {
-    newExpenseModal.error = (e as ApiErr)?.response?.data?.detail ?? t('backoffice.finance.expenses.newExpense.error')
+    const detail = (e as ApiErr)?.response?.data?.detail
+    if (typeof detail === 'string' && detail.includes(EXPENSE_APPROVAL_MESSAGE_MARKER)) {
+      expensePinGuard.error = ''
+      expensePinGuard.open = true
+    } else {
+      newExpenseModal.error = detail ?? t('backoffice.finance.expenses.newExpense.error')
+    }
   } finally {
     newExpenseModal.saving = false
+  }
+}
+
+async function onExpensePinApproved(payload: { approverUserId: number | null; approverPin: string | null }) {
+  expensePinGuard.busy = true
+  expensePinGuard.error = ''
+  try {
+    await submitNewExpense(payload)
+    expensePinGuard.open = false
+  } catch (e: unknown) {
+    expensePinGuard.error = (e as ApiErr)?.response?.data?.detail ?? t('backoffice.finance.expenses.newExpense.error')
+  } finally {
+    expensePinGuard.busy = false
   }
 }
 
@@ -1193,21 +1513,50 @@ async function onVoidCashReceiptStepUpConfirmed(payload: { stepUpToken: string; 
 
 onMounted(() => loadTab('overview'))
 
-const tabsList = computed<{ val: typeof tab.value; label: string }[]>(() => [
-  { val: 'overview',             label: t('backoffice.finance.tabs.overview') },
-  { val: 'checks',               label: t('backoffice.finance.tabs.checks') },
-  { val: 'accounts',             label: t('backoffice.finance.tabs.accounts') },
-  { val: 'cost-centers',         label: t('backoffice.finance.tabs.costCenters') },
-  { val: 'balance-sheet',        label: t('backoffice.finance.tabs.balanceSheet') },
-  { val: 'depreciation',         label: t('backoffice.finance.tabs.depreciation') },
-  { val: 'bank-reconciliation',  label: t('backoffice.finance.tabs.bankReconciliation') },
-  { val: 'shifts',               label: t('backoffice.finance.tabs.shifts') },
-  { val: 'exchange-rates',       label: t('backoffice.finance.tabs.exchangeRates') },
-  { val: 'journal',              label: t('backoffice.finance.tabs.journal') },
-  { val: 'payment-channels',     label: t('backoffice.finance.tabs.paymentChannels') },
-  { val: 'expenses',             label: t('backoffice.finance.tabs.expenses') },
-  { val: 'custodies',            label: t('backoffice.finance.tabs.custodies') },
-  { val: 'cash-receipts',        label: t('backoffice.finance.tabs.cashReceipts') },
+// تنظيم شاشة المالية (2026-08-19، طلب Mohamed — "متنظمة ومتهيأة للمحاسب
+// يقدر يشتغل ببرنامج محاسبي حقيقي") — قايمة مسطّحة من 17 تبويب بقت 4
+// مجموعات منطقية زي أي برنامج محاسبة حقيقي: التشغيل اليومي (فيها الورديات
+// اللي المحاسب بيراقب بيها الكاشير)، الحسابات والقيود، التقارير المالية،
+// الإعدادات المتقدمة.
+const tabGroups = computed<{ label: string; tabs: { val: typeof tab.value; label: string }[] }[]>(() => [
+  {
+    label: t('backoffice.finance.groups.daily'),
+    tabs: [
+      { val: 'overview',         label: t('backoffice.finance.tabs.overview') },
+      { val: 'shifts',           label: t('backoffice.finance.tabs.shifts') },
+      { val: 'expenses',         label: t('backoffice.finance.tabs.expenses') },
+      { val: 'custodies',        label: t('backoffice.finance.tabs.custodies') },
+      { val: 'cash-receipts',    label: t('backoffice.finance.tabs.cashReceipts') },
+      { val: 'payment-channels', label: t('backoffice.finance.tabs.paymentChannels') },
+    ],
+  },
+  {
+    label: t('backoffice.finance.groups.ledger'),
+    tabs: [
+      { val: 'accounts',      label: t('backoffice.finance.tabs.accounts') },
+      { val: 'journal',       label: t('backoffice.finance.tabs.journal') },
+      { val: 'cost-centers',  label: t('backoffice.finance.tabs.costCenters') },
+      { val: 'checks',        label: t('backoffice.finance.tabs.checks') },
+    ],
+  },
+  {
+    label: t('backoffice.finance.groups.reports'),
+    tabs: [
+      { val: 'trial-balance',    label: t('backoffice.finance.tabs.trialBalance') },
+      { val: 'income-statement', label: t('backoffice.finance.tabs.incomeStatement') },
+      { val: 'balance-sheet',    label: t('backoffice.finance.tabs.balanceSheet') },
+      { val: 'aging',            label: t('backoffice.finance.tabs.aging') },
+    ],
+  },
+  {
+    label: t('backoffice.finance.groups.advanced'),
+    tabs: [
+      { val: 'periods',             label: t('backoffice.finance.tabs.periods') },
+      { val: 'exchange-rates',      label: t('backoffice.finance.tabs.exchangeRates') },
+      { val: 'depreciation',        label: t('backoffice.finance.tabs.depreciation') },
+      { val: 'bank-reconciliation', label: t('backoffice.finance.tabs.bankReconciliation') },
+    ],
+  },
 ])
 
 const shiftStatusList = computed<{ v: 'all' | 'open' | 'closed'; l: string }[]>(() => [
@@ -1281,8 +1630,18 @@ async function saveExchangeRate() {
   <div>
     <h2 class="text-2xl font-black text-gray-900 dark:text-gray-100 mb-6">{{ t('backoffice.finance.title') }}</h2>
 
+    <!-- مجموعات رئيسية (2026-08-19) — بديل صف الـ17 تبويب القديم المتناثر،
+         نفس أسلوب أي برنامج محاسبة حقيقي (تشغيل يومي / حسابات / تقارير /
+         إعدادات متقدمة). -->
+    <div class="flex gap-1 bg-stone-50 dark:bg-gray-800/40 p-1 rounded-xl mb-2 w-fit flex-wrap border border-stone-200 dark:border-border/50">
+      <button v-for="(group, idx) in tabGroups" :key="group.label"
+        @click="activeGroupIdx = idx"
+        :class="['px-3 py-1.5 rounded-lg text-xs font-bold transition-all', activeGroupIdx === idx ? 'bg-primary-700 text-white shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:text-gray-300']"
+      >{{ group.label }}</button>
+    </div>
+
     <div class="flex gap-1 bg-stone-100 dark:bg-gray-700 p-1 rounded-xl mb-6 w-fit flex-wrap">
-      <button v-for="tabDef in tabsList"
+      <button v-for="tabDef in tabGroups[activeGroupIdx].tabs"
         :key="tabDef.val" @click="loadTab(tabDef.val)"
         :class="['px-4 py-2 rounded-lg text-sm font-semibold transition-all', tab === tabDef.val ? 'bg-white dark:bg-surface shadow-sm text-gray-900 dark:text-gray-100' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:text-gray-300']"
       >{{ tabDef.label }}</button>
@@ -1379,9 +1738,9 @@ async function saveExchangeRate() {
               </tr>
             </thead>
             <tbody>
-              <tr v-for="acc in accounts" :key="acc.id" class="border-t border-stone-100 dark:border-border/50 hover:bg-stone-50 dark:bg-gray-800/60">
+              <tr v-for="acc in accounts" :key="acc.id" class="cursor-pointer border-t border-stone-100 dark:border-border/50 hover:bg-stone-50 dark:hover:bg-gray-800/60" @click="openAccountLedger(acc)">
                 <td class="px-4 py-3 font-mono text-sm text-gray-600 dark:text-gray-400">{{ acc.code }}</td>
-                <td class="px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-100">{{ acc.name }}</td>
+                <td class="px-4 py-3 text-sm font-medium text-primary-700 dark:text-primary-300 underline decoration-dotted">{{ acc.name }}</td>
                 <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">{{ acc.account_type }}</td>
                 <td class="px-4 py-3 text-sm font-bold" :class="acc.balance >= 0 ? 'text-green-600 dark:text-green-300' : 'text-red-500 dark:text-red-300'">
                   {{ formatNumber(acc.balance) }} {{ t('backoffice.finance.egp') }}
@@ -1468,6 +1827,10 @@ async function saveExchangeRate() {
         <AppBadge v-if="bsData" size="sm" :variant="bsData.is_balanced ? 'success' : 'danger'">
           {{ bsData.is_balanced ? `✅ ${t('backoffice.finance.balanced')}` : `⚠️ ${t('backoffice.finance.notBalanced')}` }}
         </AppBadge>
+        <div class="flex gap-2 ms-auto">
+          <AppButton size="sm" variant="outline" :loading="bsDownloading === 'pdf'" @click="downloadBalanceSheet('pdf')">📄 PDF</AppButton>
+          <AppButton size="sm" variant="outline" :loading="bsDownloading === 'excel'" @click="downloadBalanceSheet('excel')">📊 Excel</AppButton>
+        </div>
       </div>
 
       <div v-if="loading" class="flex justify-center py-12"><AppSpinner size="lg" /></div>
@@ -1555,6 +1918,288 @@ async function saveExchangeRate() {
       <AppCard v-else padding="lg">
         <EmptyState icon="⚖️" :title="t('backoffice.finance.noBalanceSheetData')" />
       </AppCard>
+    </div>
+
+    <!-- Trial Balance -->
+    <div v-if="tab === 'trial-balance'">
+      <div class="flex flex-wrap items-end gap-3 mb-4">
+        <div>
+          <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.finance.asOfDate') }}</label>
+          <input v-model="tbAsOf" type="date" class="border border-stone-200 dark:border-border rounded-lg px-3 py-1.5 text-sm" />
+        </div>
+        <label class="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300 pb-1.5">
+          <input v-model="tbGroupByParent" type="checkbox" class="rounded" />
+          {{ t('backoffice.finance.trialBalance.groupByParent') }}
+        </label>
+        <AppButton size="sm" @click="loadTrialBalance">{{ t('backoffice.finance.apply') }}</AppButton>
+        <AppBadge v-if="tbData" size="sm" :variant="tbData.is_balanced ? 'success' : 'danger'">
+          {{ tbData.is_balanced ? `✅ ${t('backoffice.finance.balanced')}` : `⚠️ ${t('backoffice.finance.notBalanced')}` }}
+        </AppBadge>
+        <div class="flex gap-2 ms-auto">
+          <AppButton size="sm" variant="outline" :loading="tbDownloading === 'pdf'" @click="downloadTrialBalance('pdf')">📄 PDF</AppButton>
+          <AppButton size="sm" variant="outline" :loading="tbDownloading === 'excel'" @click="downloadTrialBalance('excel')">📊 Excel</AppButton>
+        </div>
+      </div>
+
+      <div v-if="loading" class="flex justify-center py-12"><AppSpinner size="lg" /></div>
+      <AppCard v-else-if="tbData" padding="none">
+        <div class="overflow-x-auto">
+          <table class="w-full min-w-[600px]">
+            <thead class="bg-stone-50 dark:bg-gray-800/60">
+              <tr>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.finance.code') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.finance.accountName') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.finance.type') }}</th>
+                <th class="px-4 py-3 text-end text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.finance.ledger.debit') }}</th>
+                <th class="px-4 py-3 text-end text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.finance.ledger.credit') }}</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="l in tbData.lines" :key="l.account_code" class="border-t border-stone-100 dark:border-border/50">
+                <td class="px-4 py-3 font-mono text-sm text-gray-600 dark:text-gray-400">{{ l.account_code }}</td>
+                <td class="px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-100">{{ l.account_name }}</td>
+                <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">{{ l.account_type }}</td>
+                <td class="px-4 py-3 text-sm text-end font-semibold text-green-600 dark:text-green-300">{{ l.debit ? formatNumber(l.debit) : '—' }}</td>
+                <td class="px-4 py-3 text-sm text-end font-semibold text-red-600 dark:text-red-300">{{ l.credit ? formatNumber(l.credit) : '—' }}</td>
+              </tr>
+              <tr v-if="tbData.lines.length === 0">
+                <td colspan="5" class="px-4 py-8"><EmptyState icon="📒" :title="t('backoffice.finance.noAccounts')" /></td>
+              </tr>
+            </tbody>
+            <tfoot v-if="tbData.lines.length">
+              <tr class="border-t-2 border-stone-200 dark:border-border bg-stone-50 dark:bg-gray-800/60">
+                <td colspan="3" class="px-4 py-3 text-sm font-black text-gray-900 dark:text-gray-100">{{ t('backoffice.finance.total') }}</td>
+                <td class="px-4 py-3 text-sm text-end font-black text-green-700 dark:text-green-300">{{ formatNumber(tbData.total_debit) }}</td>
+                <td class="px-4 py-3 text-sm text-end font-black text-red-700 dark:text-red-300">{{ formatNumber(tbData.total_credit) }}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </AppCard>
+      <AppCard v-else padding="lg">
+        <EmptyState icon="⚖️" :title="t('backoffice.finance.noBalanceSheetData')" />
+      </AppCard>
+    </div>
+
+    <!-- Income Statement -->
+    <div v-if="tab === 'income-statement'">
+      <div class="flex flex-wrap items-end gap-3 mb-4">
+        <div>
+          <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.finance.fromDate') }}</label>
+          <input v-model="isDateFrom" type="date" class="border border-stone-200 dark:border-border rounded-lg px-3 py-1.5 text-sm" />
+        </div>
+        <div>
+          <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.finance.toDate') }}</label>
+          <input v-model="isDateTo" type="date" class="border border-stone-200 dark:border-border rounded-lg px-3 py-1.5 text-sm" />
+        </div>
+        <AppButton size="sm" @click="loadIncomeStatementReport">{{ t('backoffice.finance.apply') }}</AppButton>
+        <div class="flex gap-2 ms-auto">
+          <AppButton size="sm" variant="outline" :loading="isDownloading === 'pdf'" @click="downloadIncomeStatement('pdf')">📄 PDF</AppButton>
+          <AppButton size="sm" variant="outline" :loading="isDownloading === 'excel'" @click="downloadIncomeStatement('excel')">📊 Excel</AppButton>
+        </div>
+      </div>
+
+      <div v-if="loading" class="flex justify-center py-12"><AppSpinner size="lg" /></div>
+      <template v-else-if="isData">
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+          <AppCard padding="none">
+            <div class="px-4 py-3 border-b border-stone-100 dark:border-border/50 font-bold text-gray-900 dark:text-gray-100">{{ t('backoffice.finance.revenue') }}</div>
+            <div class="overflow-x-auto">
+              <table class="w-full min-w-[320px]">
+                <tbody>
+                  <tr v-for="l in isData.revenue_lines" :key="l.account_code" class="border-t border-stone-100 dark:border-border/50">
+                    <td class="px-4 py-2 text-xs font-mono text-gray-500 dark:text-gray-400">{{ l.account_code }}</td>
+                    <td class="px-4 py-2 text-sm text-gray-900 dark:text-gray-100">{{ l.account_name }}</td>
+                    <td class="px-4 py-2 text-sm font-bold text-green-700 dark:text-green-300">{{ formatNumber(l.amount) }} {{ t('backoffice.finance.egp') }}</td>
+                  </tr>
+                  <tr v-if="isData.revenue_lines.length === 0">
+                    <td colspan="3" class="px-4 py-6"><EmptyState icon="💰" :title="t('backoffice.finance.noDataThisPeriod')" /></td>
+                  </tr>
+                </tbody>
+                <tfoot v-if="isData.revenue_lines.length">
+                  <tr class="border-t-2 border-stone-200 dark:border-border bg-stone-50 dark:bg-gray-800/60">
+                    <td colspan="2" class="px-4 py-3 text-sm font-black text-gray-900 dark:text-gray-100">{{ t('backoffice.finance.totalRevenue') }}</td>
+                    <td class="px-4 py-3 text-sm font-black text-green-700 dark:text-green-300">{{ formatNumber(isData.total_revenue) }} {{ t('backoffice.finance.egp') }}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </AppCard>
+
+          <AppCard padding="none">
+            <div class="px-4 py-3 border-b border-stone-100 dark:border-border/50 font-bold text-gray-900 dark:text-gray-100">{{ t('backoffice.finance.expense') }}</div>
+            <div class="overflow-x-auto">
+              <table class="w-full min-w-[320px]">
+                <tbody>
+                  <tr v-for="l in isData.expense_lines" :key="l.account_code" class="border-t border-stone-100 dark:border-border/50">
+                    <td class="px-4 py-2 text-xs font-mono text-gray-500 dark:text-gray-400">{{ l.account_code }}</td>
+                    <td class="px-4 py-2 text-sm text-gray-900 dark:text-gray-100">{{ l.account_name }}</td>
+                    <td class="px-4 py-2 text-sm font-bold text-red-700 dark:text-red-300">{{ formatNumber(l.amount) }} {{ t('backoffice.finance.egp') }}</td>
+                  </tr>
+                  <tr v-if="isData.expense_lines.length === 0">
+                    <td colspan="3" class="px-4 py-6"><EmptyState icon="🧾" :title="t('backoffice.finance.noDataThisPeriod')" /></td>
+                  </tr>
+                </tbody>
+                <tfoot v-if="isData.expense_lines.length">
+                  <tr class="border-t-2 border-stone-200 dark:border-border bg-stone-50 dark:bg-gray-800/60">
+                    <td colspan="2" class="px-4 py-3 text-sm font-black text-gray-900 dark:text-gray-100">{{ t('backoffice.finance.totalExpense') }}</td>
+                    <td class="px-4 py-3 text-sm font-black text-red-700 dark:text-red-300">{{ formatNumber(isData.total_expense) }} {{ t('backoffice.finance.egp') }}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </AppCard>
+        </div>
+        <AppCard padding="md">
+          <div class="flex items-center justify-between">
+            <span class="font-bold text-gray-900 dark:text-gray-100">{{ t('backoffice.finance.netIncome') }}</span>
+            <span class="text-lg font-black" :class="isData.net_income >= 0 ? 'text-green-700 dark:text-green-300' : 'text-red-600 dark:text-red-300'">
+              {{ formatNumber(isData.net_income) }} {{ t('backoffice.finance.egp') }}
+            </span>
+          </div>
+        </AppCard>
+      </template>
+      <AppCard v-else padding="lg">
+        <EmptyState icon="📉" :title="t('backoffice.finance.noDataThisPeriod')" />
+      </AppCard>
+    </div>
+
+    <!-- Aging Report -->
+    <div v-if="tab === 'aging'">
+      <div class="flex flex-wrap items-end gap-3 mb-4">
+        <div>
+          <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.finance.asOfDate') }}</label>
+          <input v-model="agingAsOf" type="date" class="border border-stone-200 dark:border-border rounded-lg px-3 py-1.5 text-sm" />
+        </div>
+        <AppButton size="sm" @click="loadAging">{{ t('backoffice.finance.apply') }}</AppButton>
+      </div>
+
+      <div v-if="loading" class="flex justify-center py-12"><AppSpinner size="lg" /></div>
+      <template v-else-if="agingData">
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <AppCard padding="none">
+            <div class="px-4 py-3 border-b border-stone-100 dark:border-border/50 flex items-center justify-between">
+              <span class="font-bold text-gray-900 dark:text-gray-100">{{ t('backoffice.finance.aging.receivables') }}</span>
+              <span class="text-sm font-bold text-green-700 dark:text-green-300">{{ formatNumber(agingData.receivables_total) }} {{ t('backoffice.finance.egp') }}</span>
+            </div>
+            <div class="flex flex-wrap gap-2 px-4 py-2 border-b border-stone-100 dark:border-border/50">
+              <AppBadge v-for="b in agingData.receivables_buckets" :key="b.label" size="sm" :variant="agingBucketVariant(b.label)">
+                {{ b.label }} — {{ b.count }} ({{ formatNumber(b.amount) }})
+              </AppBadge>
+            </div>
+            <div class="overflow-x-auto">
+              <table class="w-full min-w-[420px]">
+                <thead class="bg-stone-50 dark:bg-gray-800/60">
+                  <tr>
+                    <th class="px-3 py-2 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.finance.aging.guest') }}</th>
+                    <th class="px-3 py-2 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.finance.aging.days') }}</th>
+                    <th class="px-3 py-2 text-end text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.finance.aging.balance') }}</th>
+                    <th class="px-3 py-2 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.finance.aging.bucket') }}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="l in agingData.receivables" :key="l.folio_id" class="border-t border-stone-100 dark:border-border/50">
+                    <td class="px-3 py-2 text-sm text-gray-900 dark:text-gray-100">{{ l.guest_name }}</td>
+                    <td class="px-3 py-2 text-sm text-gray-600 dark:text-gray-400">{{ l.days_outstanding }}</td>
+                    <td class="px-3 py-2 text-sm text-end font-bold text-gray-900 dark:text-gray-100">{{ formatNumber(l.balance_due) }}</td>
+                    <td class="px-3 py-2"><AppBadge size="sm" :variant="agingBucketVariant(l.bucket)">{{ l.bucket }}</AppBadge></td>
+                  </tr>
+                  <tr v-if="agingData.receivables.length === 0">
+                    <td colspan="4" class="px-4 py-6"><EmptyState icon="🧾" :title="t('backoffice.finance.aging.noReceivables')" /></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </AppCard>
+
+          <AppCard padding="none">
+            <div class="px-4 py-3 border-b border-stone-100 dark:border-border/50 flex items-center justify-between">
+              <span class="font-bold text-gray-900 dark:text-gray-100">{{ t('backoffice.finance.aging.payables') }}</span>
+              <span class="text-sm font-bold text-red-700 dark:text-red-300">{{ formatNumber(agingData.payables_total) }} {{ t('backoffice.finance.egp') }}</span>
+            </div>
+            <div class="flex flex-wrap gap-2 px-4 py-2 border-b border-stone-100 dark:border-border/50">
+              <AppBadge v-for="b in agingData.payables_buckets" :key="b.label" size="sm" :variant="agingBucketVariant(b.label)">
+                {{ b.label }} — {{ b.count }} ({{ formatNumber(b.amount) }})
+              </AppBadge>
+            </div>
+            <div class="overflow-x-auto">
+              <table class="w-full min-w-[420px]">
+                <thead class="bg-stone-50 dark:bg-gray-800/60">
+                  <tr>
+                    <th class="px-3 py-2 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.finance.aging.counterparty') }}</th>
+                    <th class="px-3 py-2 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.finance.aging.days') }}</th>
+                    <th class="px-3 py-2 text-end text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.finance.aging.remaining') }}</th>
+                    <th class="px-3 py-2 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.finance.aging.bucket') }}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="l in agingData.payables" :key="`${l.source_type}-${l.source_id}`" class="border-t border-stone-100 dark:border-border/50">
+                    <td class="px-3 py-2 text-sm text-gray-900 dark:text-gray-100">{{ l.counterparty }}</td>
+                    <td class="px-3 py-2 text-sm text-gray-600 dark:text-gray-400">{{ l.days_outstanding }}</td>
+                    <td class="px-3 py-2 text-sm text-end font-bold text-gray-900 dark:text-gray-100">{{ formatNumber(l.remaining) }}</td>
+                    <td class="px-3 py-2"><AppBadge size="sm" :variant="agingBucketVariant(l.bucket)">{{ l.bucket }}</AppBadge></td>
+                  </tr>
+                  <tr v-if="agingData.payables.length === 0">
+                    <td colspan="4" class="px-4 py-6"><EmptyState icon="📦" :title="t('backoffice.finance.aging.noPayables')" /></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </AppCard>
+        </div>
+      </template>
+      <AppCard v-else padding="lg">
+        <EmptyState icon="⏳" :title="t('backoffice.finance.noDataThisPeriod')" />
+      </AppCard>
+    </div>
+
+    <!-- Periods (إقفال شهري + سنوي) -->
+    <div v-if="tab === 'periods'">
+      <div class="flex flex-wrap items-end gap-3 mb-4">
+        <div>
+          <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.finance.year') }}</label>
+          <input v-model.number="periodsYear" type="number" min="2020" max="2100"
+            class="border border-stone-200 dark:border-border rounded-lg px-3 py-1.5 text-sm w-28" />
+        </div>
+        <AppButton size="sm" @click="loadPeriods">{{ t('backoffice.finance.apply') }}</AppButton>
+        <AppButton
+          v-if="auth.hasRole('admin')"
+          size="sm" variant="danger" class="ms-auto"
+          :disabled="!allMonthsClosed" :loading="closingYear"
+          @click="closeYear"
+        >🔒 {{ t('backoffice.finance.periods.closeYear') }}</AppButton>
+      </div>
+
+      <p v-if="auth.hasRole('admin') && !allMonthsClosed" class="text-xs text-amber-600 dark:text-amber-400 mb-3">
+        {{ t('backoffice.finance.periods.closeYearHint') }}
+      </p>
+
+      <AppCard v-if="yearCloseResult" padding="md" class="mb-4 border-2 border-green-500/40">
+        <div class="flex items-center gap-2 text-green-700 dark:text-green-300 font-bold mb-1">✅ {{ t('backoffice.finance.periods.closeYearSuccess') }}</div>
+        <div class="text-sm text-gray-600 dark:text-gray-300">
+          {{ t('backoffice.finance.periods.yearClosedNetIncome') }}: <strong>{{ formatNumber(yearCloseResult.net_income) }} {{ t('backoffice.finance.egp') }}</strong>
+          — {{ t('backoffice.finance.ledger.reference') }} #{{ yearCloseResult.journal_entry_id }}
+        </div>
+      </AppCard>
+
+      <div v-if="periodsLoading" class="flex justify-center py-12"><AppSpinner size="lg" /></div>
+      <div v-else class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+        <AppCard v-for="m in periodsGrid" :key="m.month" padding="md">
+          <div class="flex items-center justify-between mb-2">
+            <span class="font-bold text-gray-900 dark:text-gray-100">{{ monthNames[m.month - 1] }}</span>
+            <AppBadge size="sm" :variant="m.status === 'open' ? 'warning' : 'success'">
+              {{ m.status === 'open' ? t('backoffice.finance.periods.open') : t('backoffice.finance.periods.closed') }}
+            </AppBadge>
+          </div>
+          <AppButton
+            v-if="m.status === 'open'"
+            size="sm" variant="outline" class="w-full"
+            :loading="closingMonthKey === m.month"
+            @click="closeMonth(m.month)"
+          >{{ t('backoffice.finance.periods.closeMonth') }}</AppButton>
+          <p v-else class="text-xs text-gray-400 dark:text-gray-500">{{ fmtDateFn(m.closedAt ?? '') }}</p>
+        </AppCard>
+      </div>
     </div>
 
     <!-- Depreciation -->
@@ -2408,6 +3053,17 @@ async function saveExchangeRate() {
       </template>
     </AppModal>
 
+    <PinGuardModal
+      v-if="expensePinGuard.open"
+      :min-level="80"
+      :title="t('backoffice.finance.expenses.newExpense.approvalTitle')"
+      :message="t('backoffice.finance.expenses.newExpense.approvalMessage')"
+      :loading="expensePinGuard.busy"
+      :error-message="expensePinGuard.error"
+      @approved="onExpensePinApproved"
+      @cancel="expensePinGuard.open = false"
+    />
+
     <!-- ══ PAY EXPENSE MODAL ══ -->
     <AppModal :open="payExpenseModal.open" :title="`💳 ${t('backoffice.finance.expenses.pay.title')}`"
       size="sm" @close="payExpenseModal.open = false">
@@ -2762,6 +3418,76 @@ async function saveExchangeRate() {
       @confirmed="onVoidCashReceiptStepUpConfirmed"
       @cancel="cancelVoidCashReceiptPrompt"
     />
+
+    <!-- كشف حساب — drill-down (2026-08-19) -->
+    <AppModal :open="ledgerModal.open" :title="ledgerModal.account ? `📒 ${ledgerModal.account.code} — ${ledgerModal.account.name}` : t('backoffice.finance.ledger.title')" size="lg" @close="closeAccountLedger">
+      <div class="min-w-[280px]">
+        <div class="flex flex-wrap items-end gap-3 mb-4">
+          <div>
+            <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.finance.fromDate') }}</label>
+            <input v-model="ledgerModal.dateFrom" type="date" class="border border-stone-200 dark:border-border rounded-lg px-3 py-1.5 text-sm" />
+          </div>
+          <div>
+            <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.finance.toDate') }}</label>
+            <input v-model="ledgerModal.dateTo" type="date" class="border border-stone-200 dark:border-border rounded-lg px-3 py-1.5 text-sm" />
+          </div>
+          <AppButton size="sm" :loading="ledgerModal.loading" @click="loadAccountLedger">{{ t('backoffice.finance.apply') }}</AppButton>
+        </div>
+
+        <div v-if="ledgerModal.loading" class="flex justify-center py-10"><AppSpinner size="lg" /></div>
+        <p v-else-if="ledgerModal.error" class="text-sm text-red-600 dark:text-red-400">{{ ledgerModal.error }}</p>
+        <template v-else-if="ledgerData">
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+            <div class="bg-stone-50 dark:bg-gray-800/60 rounded-xl p-3">
+              <div class="text-xs text-gray-400 mb-1">{{ t('backoffice.finance.ledger.opening') }}</div>
+              <div class="text-sm font-bold text-gray-900 dark:text-gray-100">{{ formatNumber(ledgerData.opening_balance) }}</div>
+            </div>
+            <div class="bg-stone-50 dark:bg-gray-800/60 rounded-xl p-3">
+              <div class="text-xs text-gray-400 mb-1">{{ t('backoffice.finance.ledger.totalDebit') }}</div>
+              <div class="text-sm font-bold text-green-600 dark:text-green-300">{{ formatNumber(ledgerData.total_debit) }}</div>
+            </div>
+            <div class="bg-stone-50 dark:bg-gray-800/60 rounded-xl p-3">
+              <div class="text-xs text-gray-400 mb-1">{{ t('backoffice.finance.ledger.totalCredit') }}</div>
+              <div class="text-sm font-bold text-red-600 dark:text-red-300">{{ formatNumber(ledgerData.total_credit) }}</div>
+            </div>
+            <div class="bg-stone-50 dark:bg-gray-800/60 rounded-xl p-3">
+              <div class="text-xs text-gray-400 mb-1">{{ t('backoffice.finance.ledger.closing') }}</div>
+              <div class="text-sm font-bold text-primary-700 dark:text-primary-300">{{ formatNumber(ledgerData.closing_balance) }}</div>
+            </div>
+          </div>
+          <div class="overflow-x-auto max-h-[50vh] overflow-y-auto border border-stone-200 dark:border-border rounded-xl">
+            <table class="w-full min-w-[600px]">
+              <thead class="bg-stone-50 dark:bg-gray-800/60 sticky top-0">
+                <tr>
+                  <th class="px-3 py-2 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.finance.date') }}</th>
+                  <th class="px-3 py-2 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.finance.ledger.reference') }}</th>
+                  <th class="px-3 py-2 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.finance.description') }}</th>
+                  <th class="px-3 py-2 text-end text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.finance.ledger.debit') }}</th>
+                  <th class="px-3 py-2 text-end text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.finance.ledger.credit') }}</th>
+                  <th class="px-3 py-2 text-end text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.finance.ledger.runningBalance') }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="l in ledgerData.lines" :key="l.entry_id" class="border-t border-stone-100 dark:border-border/50">
+                  <td class="px-3 py-2 text-xs text-gray-600 dark:text-gray-400">{{ fmtDateFn(l.entry_date) }}</td>
+                  <td class="px-3 py-2 text-xs font-mono text-gray-600 dark:text-gray-400">{{ l.reference }}</td>
+                  <td class="px-3 py-2 text-xs text-gray-700 dark:text-gray-300">{{ l.description }}</td>
+                  <td class="px-3 py-2 text-xs text-end font-semibold text-green-600 dark:text-green-300">{{ l.debit ? formatNumber(l.debit) : '—' }}</td>
+                  <td class="px-3 py-2 text-xs text-end font-semibold text-red-600 dark:text-red-300">{{ l.credit ? formatNumber(l.credit) : '—' }}</td>
+                  <td class="px-3 py-2 text-xs text-end font-bold text-gray-900 dark:text-gray-100">{{ formatNumber(l.running_balance) }}</td>
+                </tr>
+                <tr v-if="ledgerData.lines.length === 0">
+                  <td colspan="6" class="px-4 py-8"><EmptyState icon="📒" :title="t('backoffice.finance.noDataThisPeriod')" /></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </template>
+      </div>
+      <template #footer>
+        <AppButton variant="ghost" class="w-full" @click="closeAccountLedger">{{ t('backoffice.finance.close') }}</AppButton>
+      </template>
+    </AppModal>
 
   </div>
 </template>

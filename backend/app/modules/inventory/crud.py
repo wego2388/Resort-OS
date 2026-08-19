@@ -294,6 +294,20 @@ def list_supplier_payments(db: Session, purchase_order_id: int) -> list["Supplie
     )
 
 
+def list_unpaid_purchase_orders_for_aging(db: Session, branch_id: int) -> list[PurchaseOrder]:
+    """أوامر شراء لسه من غير سداد كامل — لتقرير أعمار الديون (2026-08-19،
+    طلب Mohamed) — راجع finance.services.get_aging_report."""
+    return (
+        db.query(PurchaseOrder)
+        .filter(
+            PurchaseOrder.branch_id == branch_id,
+            PurchaseOrder.payment_status.in_(("unpaid", "partial")),
+        )
+        .order_by(PurchaseOrder.ordered_at)
+        .all()
+    )
+
+
 def list_purchase_orders(
     db: Session,
     branch_id: int,

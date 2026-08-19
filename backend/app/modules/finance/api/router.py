@@ -35,6 +35,8 @@ from app.modules.finance.schemas import (
     CostCenterCreate, CostCenterRead, CostCenterReport,
     DepreciationRunRequest, DepreciationRunResult,
     DiscountCalculateRequest, ETAInvoiceRead, ETAInvoiceSubmitRequest,
+    AccountingYearCloseRead,
+    AccountLedgerReport, AgingReport,
     CashReceiptCreate, CashReceiptRead,
     CustodyCreate, CustodyRead, CustodySettleRequest, CustodySettlementLineRead,
     ExchangeRateCreate, ExchangeRateRead, ExpenseCreate, ExpensePaymentCreate, ExpensePaymentRead,
@@ -684,6 +686,23 @@ def create_account(data: AccountCreate, db: DbDep, _=Depends(get_finance_user)):
         )
 
 
+@router.get("/finance/accounts/{account_id}/ledger", response_model=AccountLedgerReport)
+def get_account_ledger(
+    account_id: int, db: DbDep, branch_id: int = Query(...),
+    date_from: date = Query(...), date_to: date = Query(...),
+    user=Depends(get_finance_user),
+):
+    """كشف حساب (2026-08-19، طلب Mohamed) — راجع services.get_account_ledger."""
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "عرض كشف حساب")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+    try:
+        return services.get_account_ledger(db, branch_id, account_id, date_from, date_to)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
 # ── Journal Entries ───────────────────────────────────────────────────
 
 @router.post("/finance/journal-entries", response_model=JournalEntryRead,
@@ -736,7 +755,9 @@ def create_expense(
     user=Depends(get_finance_user),
 ):
     try:
-        expense = services.record_expense(db, branch_id, data, recorded_by=user.id)
+        expense = services.record_expense(
+            db, branch_id, data, recorded_by=user.id, acting_user_level=user_level(user),
+        )
     except services.FinancialConfigurationError as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {
             "code": "FINANCIAL_CONFIGURATION_ERROR", "message": str(exc),
@@ -1109,6 +1130,27 @@ def close_period(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
+@router.post(
+    "/finance/periods/{year}/close-year", response_model=AccountingYearCloseRead,
+    dependencies=[Depends(require_permission("finance.close_year", "execute", min_role_level=80))],
+)
+def close_accounting_year(
+    year: int, db: DbDep, branch_id: int = Query(...),
+    user=Depends(get_current_active_user),
+):
+    """إقفال سنة محاسبية (2026-08-19، طلب Mohamed) — راجع
+    services.close_accounting_year. min_role_level=80 (admin) عمدًا —
+    أعلى من إقفال الشهر العادي (60) لأنها عملية لمرة واحدة بلا رجعة."""
+    try:
+        return services.close_accounting_year(db, branch_id, year, closed_by=user.id)
+    except services.FinancialConfigurationError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {
+            "code": "FINANCIAL_CONFIGURATION_ERROR", "message": str(exc),
+        })
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
 # ── Checks ────────────────────────────────────────────────────────────
 # شيكات بنكية (أدوات مالية حقيقية مستلمة من عملاء/موردين) — كانت الثلاثة
 # endpoints دي على get_current_active_user (أي موظف مسجّل دخول، حتى مستوى
@@ -1238,6 +1280,87 @@ def balance_sheet_report(
     """الميزانية العمومية — الأصول = الخصوم + حقوق الملكية + الأرباح
     المحتجزة حتى تاريخ as_of (is_balanced)."""
     return services.get_balance_sheet(db, branch_id, as_of)
+
+
+@router.get("/finance/reports/aging", response_model=AgingReport)
+def aging_report(
+    db: DbDep, _=Depends(get_finance_user),
+    branch_id: int = Query(...),
+    as_of: Optional[date] = Query(None),
+):
+    """تقرير أعمار الديون (2026-08-19، طلب Mohamed) — مين مديون لنا (فوليوهات
+    مفتوحة) ومين إحنا مديونين له (أوامر شراء + مصروفات آجلة)."""
+    return services.get_aging_report(db, branch_id, as_of)
+
+
+# ── تصدير التقارير المالية الرئيسية PDF/Excel (2026-08-19) ────────────
+
+@router.get("/finance/reports/trial-balance/pdf", response_model=None)
+def trial_balance_pdf(
+    db: DbDep, _=Depends(get_finance_user),
+    branch_id: int = Query(...), as_of: date = Query(...),
+    group_by_parent: bool = Query(False),
+):
+    pdf = services.generate_trial_balance_pdf(db, branch_id, as_of, group_by_parent)
+    return Response(content=pdf, media_type="application/pdf",
+                     headers={"Content-Disposition": f"inline; filename=trial-balance-{as_of}.pdf"})
+
+
+@router.get("/finance/reports/trial-balance/excel", response_model=None)
+def trial_balance_excel(
+    db: DbDep, _=Depends(get_finance_user),
+    branch_id: int = Query(...), as_of: date = Query(...),
+    group_by_parent: bool = Query(False),
+):
+    xlsx = services.generate_trial_balance_excel(db, branch_id, as_of, group_by_parent)
+    return Response(
+        content=xlsx, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=trial-balance-{as_of}.xlsx"},
+    )
+
+
+@router.get("/finance/reports/income-statement/pdf", response_model=None)
+def income_statement_pdf(
+    db: DbDep, _=Depends(get_finance_user),
+    branch_id: int = Query(...), date_from: date = Query(...), date_to: date = Query(...),
+):
+    pdf = services.generate_income_statement_pdf(db, branch_id, date_from, date_to)
+    return Response(content=pdf, media_type="application/pdf",
+                     headers={"Content-Disposition": f"inline; filename=income-statement-{date_from}-{date_to}.pdf"})
+
+
+@router.get("/finance/reports/income-statement/excel", response_model=None)
+def income_statement_excel(
+    db: DbDep, _=Depends(get_finance_user),
+    branch_id: int = Query(...), date_from: date = Query(...), date_to: date = Query(...),
+):
+    xlsx = services.generate_income_statement_excel(db, branch_id, date_from, date_to)
+    return Response(
+        content=xlsx, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=income-statement-{date_from}-{date_to}.xlsx"},
+    )
+
+
+@router.get("/finance/reports/balance-sheet/pdf", response_model=None)
+def balance_sheet_pdf(
+    db: DbDep, _=Depends(get_finance_user),
+    branch_id: int = Query(...), as_of: date = Query(...),
+):
+    pdf = services.generate_balance_sheet_pdf(db, branch_id, as_of)
+    return Response(content=pdf, media_type="application/pdf",
+                     headers={"Content-Disposition": f"inline; filename=balance-sheet-{as_of}.pdf"})
+
+
+@router.get("/finance/reports/balance-sheet/excel", response_model=None)
+def balance_sheet_excel(
+    db: DbDep, _=Depends(get_finance_user),
+    branch_id: int = Query(...), as_of: date = Query(...),
+):
+    xlsx = services.generate_balance_sheet_excel(db, branch_id, as_of)
+    return Response(
+        content=xlsx, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=balance-sheet-{as_of}.xlsx"},
+    )
 
 
 # ── ETA E-Invoice ────────────────────────────────────────────────────

@@ -326,6 +326,83 @@ def account2(db: Session, branch):
     return acc
 
 
+class TestAccountLedger:
+    """2026-08-19 (طلب Mohamed — كشف حساب): كل حركات حساب واحد خلال مدى
+    تاريخي، برصيد متحرّك حسب طبيعة الحساب."""
+
+    def test_ledger_debit_normal_account_running_balance(self, db: Session, branch, account, account2):
+        services.post_simple_revenue_journal(
+            db, branch.id, date(2026, 8, 1),
+            debit_account_code=account.code, credit_account_code=account2.code,
+            amount=Decimal("1000"), reference="LEDGER-1", description="أول حركة",
+            source="test_ledger", source_id=1,
+        )
+        services.post_simple_revenue_journal(
+            db, branch.id, date(2026, 8, 5),
+            debit_account_code=account2.code, credit_account_code=account.code,
+            amount=Decimal("300"), reference="LEDGER-2", description="حركة تانية",
+            source="test_ledger", source_id=2,
+        )
+
+        report = services.get_account_ledger(
+            db, branch.id, account.id, date(2026, 8, 1), date(2026, 8, 31),
+        )
+        assert report.account_code == "1001"
+        assert report.opening_balance == Decimal("0")
+        assert len(report.lines) == 2
+        assert report.lines[0].running_balance == Decimal("1000.00")
+        assert report.lines[1].running_balance == Decimal("700.00")
+        assert report.closing_balance == Decimal("700.00")
+        assert report.total_debit == Decimal("1000.00")
+        assert report.total_credit == Decimal("300.00")
+
+    def test_ledger_credit_normal_account_running_balance(self, db: Session, branch, account, account2):
+        services.post_simple_revenue_journal(
+            db, branch.id, date(2026, 8, 1),
+            debit_account_code=account.code, credit_account_code=account2.code,
+            amount=Decimal("500"), reference="LEDGER-3", description="إيراد",
+            source="test_ledger", source_id=3,
+        )
+        report = services.get_account_ledger(
+            db, branch.id, account2.id, date(2026, 8, 1), date(2026, 8, 31),
+        )
+        # account2 (4001 Revenue) دائن-طبيعي — الدائن بيزوّد الرصيد.
+        assert report.lines[0].running_balance == Decimal("500.00")
+        assert report.closing_balance == Decimal("500.00")
+
+    def test_ledger_opening_balance_excludes_lines_before_range(self, db: Session, branch, account, account2):
+        services.post_simple_revenue_journal(
+            db, branch.id, date(2026, 7, 1),
+            debit_account_code=account.code, credit_account_code=account2.code,
+            amount=Decimal("200"), reference="LEDGER-OLD", description="قبل المدى",
+            source="test_ledger", source_id=4,
+        )
+        services.post_simple_revenue_journal(
+            db, branch.id, date(2026, 8, 10),
+            debit_account_code=account.code, credit_account_code=account2.code,
+            amount=Decimal("100"), reference="LEDGER-NEW", description="جوه المدى",
+            source="test_ledger", source_id=5,
+        )
+        report = services.get_account_ledger(
+            db, branch.id, account.id, date(2026, 8, 1), date(2026, 8, 31),
+        )
+        assert report.opening_balance == Decimal("200.00")
+        assert len(report.lines) == 1
+        assert report.closing_balance == Decimal("300.00")
+
+    def test_ledger_rejects_account_from_other_branch(self, db: Session, branch, account):
+        from app.modules.core.models import Branch
+        other = Branch(name="Other", name_ar="فرع تاني", code="OTHER-LEDGER")
+        db.add(other); db.commit()
+
+        with pytest.raises(ValueError, match="غير موجود في هذا الفرع"):
+            services.get_account_ledger(db, other.id, account.id, date(2026, 8, 1), date(2026, 8, 31))
+
+    def test_ledger_rejects_inverted_date_range(self, db: Session, branch, account):
+        with pytest.raises(ValueError, match="تاريخ البداية"):
+            services.get_account_ledger(db, branch.id, account.id, date(2026, 8, 31), date(2026, 8, 1))
+
+
 class TestAccounting:
 
     def test_create_account(self, db: Session, branch):
@@ -761,6 +838,105 @@ class TestAccountingPeriodAndShiftHandover:
             data=CashierShiftClose(counted_cash=Decimal("0"), handover_note="ملاحظة جديدة"))
 
         assert services.get_latest_handover_note(db, branch.id) == "ملاحظة جديدة"
+
+
+class TestAccountingYearClose:
+    """2026-08-19 (طلب Mohamed — إقفال سنة محاسبية): يترحّل قيد إقفال حقيقي
+    يصفّر الإيرادات/المصروفات في 3200 (أرباح مرحّلة)."""
+
+    def _close_all_months(self, db, branch, year, closed_by=1):
+        for month in range(1, 13):
+            services.close_accounting_period(db, branch.id, year, month, closed_by=closed_by)
+
+    def test_close_year_requires_all_12_months_closed(self, db, branch):
+        year = 2025
+        for month in range(1, 6):
+            services.close_accounting_period(db, branch.id, year, month, closed_by=1)
+
+        with pytest.raises(ValueError, match=r"5/12"):
+            services.close_accounting_year(db, branch.id, year, closed_by=1)
+
+    def test_close_year_requires_retained_earnings_account(self, db, branch):
+        year = 2025
+        self._close_all_months(db, branch, year)
+
+        with pytest.raises(services.FinancialConfigurationError, match="3200"):
+            services.close_accounting_year(db, branch.id, year, closed_by=1)
+
+    def test_close_year_posts_closing_entry_and_zeroes_pnl(self, db, branch):
+        from app.modules.finance.models import Account, JournalEntry
+        year = 2025
+        cash = Account(branch_id=branch.id, code="1100", name="Cash", account_type="asset")
+        revenue = Account(branch_id=branch.id, code="4100", name="Revenue", account_type="revenue")
+        expense = Account(branch_id=branch.id, code="5100", name="Expense", account_type="expense")
+        retained = Account(branch_id=branch.id, code="3200", name="أرباح مرحّلة", account_type="equity")
+        db.add_all([cash, revenue, expense, retained]); db.commit()
+
+        services.post_simple_revenue_journal(
+            db, branch.id, date(year, 3, 15),
+            debit_account_code="1100", credit_account_code="4100",
+            amount=Decimal("10000"), reference="REV-2025", description="إيراد السنة",
+            source="test_year_close", source_id=1,
+        )
+        services.post_simple_revenue_journal(
+            db, branch.id, date(year, 6, 1),
+            debit_account_code="5100", credit_account_code="1100",
+            amount=Decimal("4000"), reference="EXP-2025", description="مصروف السنة",
+            source="test_year_close", source_id=2,
+        )
+
+        self._close_all_months(db, branch, year)
+        year_close = services.close_accounting_year(db, branch.id, year, closed_by=1)
+
+        assert year_close.net_income == Decimal("6000.00")
+        assert year_close.branch_id == branch.id
+
+        entry = db.query(JournalEntry).filter(JournalEntry.id == year_close.journal_entry_id).one()
+        assert entry.source == "year_close"
+        total_debit = sum(l.debit for l in entry.lines)
+        total_credit = sum(l.credit for l in entry.lines)
+        assert total_debit == total_credit
+
+        by_account = {l.account_id: l for l in entry.lines}
+        assert by_account[revenue.id].debit == Decimal("10000.00")  # يصفّر الإيراد
+        assert by_account[expense.id].credit == Decimal("4000.00")  # يصفّر المصروف
+        assert by_account[retained.id].credit == Decimal("6000.00")  # صافي الربح
+
+        # الرصيد الفعلي لحساب الإيرادات/المصروفات بعد الإقفال = صفر
+        post_close_sums = crud.sum_journal_lines_by_account(db, branch.id, None, date(year, 12, 31))
+        rev_debit, rev_credit = post_close_sums[revenue.id]
+        assert rev_credit - rev_debit == Decimal("0.00")
+        exp_debit, exp_credit = post_close_sums[expense.id]
+        assert exp_debit - exp_credit == Decimal("0.00")
+
+    def test_close_year_rejects_double_close(self, db, branch):
+        from app.modules.finance.models import Account
+        year = 2025
+        cash = Account(branch_id=branch.id, code="1100", name="Cash", account_type="asset")
+        revenue = Account(branch_id=branch.id, code="4100", name="Revenue", account_type="revenue")
+        retained = Account(branch_id=branch.id, code="3200", name="أرباح مرحّلة", account_type="equity")
+        db.add_all([cash, revenue, retained]); db.commit()
+        services.post_simple_revenue_journal(
+            db, branch.id, date(year, 1, 10),
+            debit_account_code="1100", credit_account_code="4100",
+            amount=Decimal("500"), reference="REV-DOUBLE", description="إيراد",
+            source="test_year_close", source_id=3,
+        )
+        self._close_all_months(db, branch, year)
+        services.close_accounting_year(db, branch.id, year, closed_by=1)
+
+        with pytest.raises(ValueError, match="مقفولة بالفعل"):
+            services.close_accounting_year(db, branch.id, year, closed_by=1)
+
+    def test_close_year_rejects_no_activity(self, db, branch):
+        from app.modules.finance.models import Account
+        year = 2025
+        retained = Account(branch_id=branch.id, code="3200", name="أرباح مرحّلة", account_type="equity")
+        db.add(retained); db.commit()
+        self._close_all_months(db, branch, year)
+
+        with pytest.raises(ValueError, match="لا يوجد نشاط مالي"):
+            services.close_accounting_year(db, branch.id, year, closed_by=1)
 
     def test_validate_period_open_blocks_closed(self, db: Session, branch):
         # اقفل الفترة الحالية
@@ -2147,6 +2323,111 @@ class TestBankReconciliationServiceEdgeCases:
         assert summary.is_reconciled is False
 
 
+class TestAgingReport:
+    """2026-08-19 (طلب Mohamed — تقرير أعمار الديون): مين مديون لنا (فوليوهات
+    مفتوحة) ومين إحنا مديونين له (أوامر شراء + مصروفات آجلة)."""
+
+    def test_receivables_from_open_folio_with_balance(self, db, branch):
+        from app.modules.finance.models import Folio
+        check_in = datetime.combine(date.today() - timedelta(days=40), datetime.min.time())
+        folio = Folio(
+            branch_id=branch.id, guest_name="ضيف اختبار", check_in=check_in,
+            check_out=check_in + timedelta(days=3), status="open", total=Decimal("1500"),
+        )
+        db.add(folio); db.commit()
+
+        report = services.get_aging_report(db, branch.id, as_of=date.today())
+        assert len(report.receivables) == 1
+        line = report.receivables[0]
+        assert line.folio_id == folio.id
+        assert line.balance_due == Decimal("1500")
+        assert line.bucket == "31-60"
+        assert report.receivables_total == Decimal("1500")
+
+    def test_closed_folio_excluded_from_receivables(self, db, branch):
+        from app.modules.finance.models import Folio
+        check_in = datetime.combine(date.today() - timedelta(days=10), datetime.min.time())
+        folio = Folio(
+            branch_id=branch.id, guest_name="ضيف مسدد", check_in=check_in,
+            check_out=check_in + timedelta(days=1), status="closed", total=Decimal("500"),
+        )
+        db.add(folio); db.commit()
+
+        report = services.get_aging_report(db, branch.id, as_of=date.today())
+        assert report.receivables == []
+
+    def test_payables_from_unpaid_purchase_order_and_deferred_expense(self, db, branch):
+        from app.modules.finance.models import Account
+        from app.modules.finance.schemas import ExpenseCreate
+        from app.modules.inventory.models import PurchaseOrder, Supplier
+
+        supplier = Supplier(branch_id=branch.id, name="مورد اختبار")
+        db.add(supplier); db.commit()
+        po = PurchaseOrder(
+            branch_id=branch.id, order_number="PO-AGING-001", supplier_id=supplier.id,
+            status="received", ordered_at=date.today() - timedelta(days=100),
+            total_amount=Decimal("2000"), amount_paid=Decimal("500"), payment_status="partial",
+        )
+        db.add(po)
+
+        accrued = Account(branch_id=branch.id, code="2180", name="مصروفات مستحقة", account_type="liability")
+        rent = Account(branch_id=branch.id, code="5100", name="إيجار", account_type="expense")
+        db.add_all([accrued, rent]); db.commit()
+        expense = services.record_expense(db, branch.id, ExpenseCreate(
+            expense_date=date.today() - timedelta(days=10),
+            expense_account_id=rent.id, settlement_account_id=None,
+            amount=Decimal("300"), description="فاتورة مقاول", defer_payment=True,
+        ), recorded_by=1)
+
+        report = services.get_aging_report(db, branch.id, as_of=date.today())
+        assert len(report.payables) == 2
+        by_type = {p.source_type: p for p in report.payables}
+        assert by_type["purchase_order"].remaining == Decimal("1500")
+        assert by_type["purchase_order"].bucket == "90+"
+        assert by_type["purchase_order"].counterparty == "مورد اختبار"
+        assert by_type["expense"].source_id == expense.id
+        assert by_type["expense"].remaining == Decimal("300")
+        assert by_type["expense"].bucket == "0-30"
+        assert report.payables_total == Decimal("1800")
+
+    def test_voided_expense_excluded_from_payables(self, db, branch):
+        from app.modules.finance.models import Account
+        from app.modules.finance.schemas import ExpenseCreate
+        accrued = Account(branch_id=branch.id, code="2180", name="مصروفات مستحقة", account_type="liability")
+        rent = Account(branch_id=branch.id, code="5100", name="إيجار", account_type="expense")
+        db.add_all([accrued, rent]); db.commit()
+        expense = services.record_expense(db, branch.id, ExpenseCreate(
+            expense_date=date.today(),
+            expense_account_id=rent.id, settlement_account_id=None,
+            amount=Decimal("300"), description="ملغى", defer_payment=True,
+        ), recorded_by=1)
+        services.void_expense(db, expense.id, voided_by=1, reason="اختبار إلغاء")
+
+        report = services.get_aging_report(db, branch.id, as_of=date.today())
+        assert report.payables == []
+
+    def test_aging_buckets_summary(self, db, branch):
+        from app.modules.finance.models import Account
+        from app.modules.finance.schemas import ExpenseCreate
+        accrued = Account(branch_id=branch.id, code="2180", name="مصروفات مستحقة", account_type="liability")
+        rent = Account(branch_id=branch.id, code="5100", name="إيجار", account_type="expense")
+        db.add_all([accrued, rent]); db.commit()
+        for days, amount in [(5, "100"), (45, "200"), (75, "300"), (120, "400")]:
+            services.record_expense(db, branch.id, ExpenseCreate(
+                expense_date=date.today() - timedelta(days=days),
+                expense_account_id=rent.id, settlement_account_id=None,
+                amount=Decimal(amount), description=f"مصروف {days} يوم", defer_payment=True,
+            ), recorded_by=1)
+
+        report = services.get_aging_report(db, branch.id, as_of=date.today())
+        buckets = {b.label: b for b in report.payables_buckets}
+        assert buckets["0-30"].amount == Decimal("100")
+        assert buckets["31-60"].amount == Decimal("200")
+        assert buckets["61-90"].amount == Decimal("300")
+        assert buckets["90+"].amount == Decimal("400")
+        assert sum(b.count for b in report.payables_buckets) == 4
+
+
 class TestExpense:
     """2026-08-16 — سند مصروفات حقيقي بفئة (طلب Mohamed صراحةً). الفئة هي
     expense_account_id نفسه (حساب 5xxx)، مفيش taxonomy موازية."""
@@ -2158,6 +2439,76 @@ class TestExpense:
         cash = Account(branch_id=branch.id, code="1100", name="Cash", account_type="asset")
         db.add_all([rent, cash]); db.commit()
         return rent, cash
+
+    def test_expense_above_threshold_needs_pin_from_accountant(self, db, branch, expense_accounts):
+        """2026-08-19 (طلب Mohamed — حد موافقة المصروفات): مبلغ >= الحد
+        (5000 افتراضيًا) من محاسب (level 70) أو مدير (60) — الاتنين
+        الأدوار المسموح لهم أصلاً يسجّلوا سند مصروفات (get_finance_user)
+        — محتاج موافقة admin+ (80). لو الحد فضل 60 كان المحاسب (70)
+        هيتخطّاه تلقائيًا والبوابة كانت هتبقى بلا أثر عمليًا."""
+        from app.modules.finance.schemas import ExpenseCreate
+        rent, cash = expense_accounts
+
+        with pytest.raises(ValueError, match="موافقة مدير"):
+            services.record_expense(db, branch.id, ExpenseCreate(
+                expense_date=date(2026, 8, 19),
+                expense_account_id=rent.id, settlement_account_id=cash.id,
+                amount=Decimal("6000"), description="فوق الحد — محاسب لوحده",
+            ), recorded_by=1, acting_user_level=70)
+
+    def test_expense_below_threshold_no_pin_needed(self, db, branch, expense_accounts):
+        from app.modules.finance.schemas import ExpenseCreate
+        rent, cash = expense_accounts
+
+        expense = services.record_expense(db, branch.id, ExpenseCreate(
+            expense_date=date(2026, 8, 19),
+            expense_account_id=rent.id, settlement_account_id=cash.id,
+            amount=Decimal("100"), description="تحت الحد",
+        ), recorded_by=1, acting_user_level=70)
+        assert expense.amount == Decimal("100")
+
+    def test_expense_above_threshold_admin_self_qualified(self, db, branch, expense_accounts):
+        from app.modules.finance.schemas import ExpenseCreate
+        rent, cash = expense_accounts
+
+        expense = services.record_expense(db, branch.id, ExpenseCreate(
+            expense_date=date(2026, 8, 19),
+            expense_account_id=rent.id, settlement_account_id=cash.id,
+            amount=Decimal("9000"), description="أدمن بنفسه",
+        ), recorded_by=1, acting_user_level=80)
+        assert expense.amount == Decimal("9000")
+
+    def test_expense_above_threshold_with_valid_pin_succeeds_and_audits(self, db, branch, expense_accounts):
+        from app.core.kernel.models.user import User
+        from app.core.kernel.security import get_password_hash
+        from app.modules.core import services as core_services
+        from app.modules.core.models import AuditLog
+        from app.modules.finance.schemas import ExpenseCreate
+        rent, cash = expense_accounts
+
+        admin_user = User(email="exp-admin@test.local", password_hash=get_password_hash("Test@12345"),
+                           full_name="Expense Admin", role="admin", is_active=True)
+        db.add(admin_user); db.commit()
+        core_services.set_pin(db, admin_user.id, "1234", created_by=admin_user.id)
+        db.commit()
+
+        expense = services.record_expense(db, branch.id, ExpenseCreate(
+            expense_date=date(2026, 8, 19),
+            expense_account_id=rent.id, settlement_account_id=cash.id,
+            amount=Decimal("7000"), description="فوق الحد بموافقة",
+            approver_user_id=admin_user.id, approver_pin="1234",
+        ), recorded_by=1, acting_user_level=70)
+        assert expense.amount == Decimal("7000")
+
+        log = (
+            db.query(AuditLog)
+            .filter(AuditLog.entity_type == "expense", AuditLog.entity_id == expense.id,
+                    AuditLog.action == "record_expense")
+            .first()
+        )
+        assert log is not None
+        assert log.approved_by == admin_user.id
+        assert log.user_id == 1
 
     def test_record_expense_posts_balanced_journal(self, db, branch, expense_accounts):
         from app.modules.finance.schemas import ExpenseCreate

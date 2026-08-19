@@ -373,6 +373,15 @@ PERMISSION_CATALOG: list[PermissionCatalogEntry] = [
         "endpoint": "POST /finance/custodies/{custody_id}/void",
     },
     {
+        "resource": "finance.close_year",
+        "action": "execute",
+        "label_ar": "إقفال سنة محاسبية",
+        "label_en": "Close an accounting year",
+        "module": "finance",
+        "min_role_level": 80,
+        "endpoint": "POST /finance/periods/{year}/close-year",
+    },
+    {
         "resource": "finance.void_cash_receipt",
         "action": "execute",
         "label_ar": "إلغاء إذن قبض",

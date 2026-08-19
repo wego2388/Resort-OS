@@ -390,6 +390,25 @@ class AccountingPeriod(Base, TimestampMixin):
     closed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
+class AccountingYearClose(Base, TimestampMixin):
+    """إقفال سنة محاسبية (2026-08-19، طلب Mohamed صراحةً) — سجل لمرة واحدة
+    بس لكل (branch_id, year)، مربوط بقيد الإقفال الحقيقي اللي صفّر كل
+    حسابات الإيرادات/المصروفات في 3200 (أرباح مرحّلة). راجع
+    services.close_accounting_year. عكس AccountingPeriod (بتتقفل شهر شهر
+    وممكن تتكرر)، الجدول ده تسجيل نهائي لمرة واحدة — مفيش "إعادة فتح سنة"
+    في النطاق الحالي."""
+    __tablename__ = "accounting_year_closes"
+    __table_args__ = (UniqueConstraint("branch_id", "year", name="uq_year_close_branch_year"),)
+
+    id:               Mapped[int]      = mapped_column(primary_key=True)
+    branch_id:        Mapped[int]      = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"), index=True)
+    year:             Mapped[int]      = mapped_column(Integer)
+    journal_entry_id: Mapped[int]      = mapped_column(ForeignKey("journal_entries.id", ondelete="RESTRICT"))
+    net_income:       Mapped[Decimal]  = mapped_column(Numeric(12, 2))
+    closed_by:        Mapped[int]      = mapped_column(Integer)
+    closed_at:        Mapped[datetime] = mapped_column(DateTime)
+
+
 class Check(Base, TimestampMixin):
     __tablename__ = "checks"
 

@@ -52,6 +52,17 @@ SENSITIVE_ACTIONS: dict[str, SensitiveAction] = {
         SensitiveAction("cash_movement", "حركة كاش يدوية (إيداع/سحب/تصحيح/فتح درج)"),
         SensitiveAction("view_other_cashier_shift_invoices", "عرض فواتير وردية كاشير تاني"),
         SensitiveAction("override_credit_limit", "تجاوز حد حساب آجل شخصي", min_approver_level=60),
+        # 2026-08-19 (طلب Mohamed) — مش "دايمًا محتاج موافقة" زي باقي
+        # الكتالوج، بل مشروط بمبلغ (راجع settings.EXPENSE_APPROVAL_
+        # THRESHOLD وfinance.services.record_expense) — قرار الحد نفسه
+        # جوه finance.services، مش هنا (الملف ده بيسجّل "مين يوافق"، مش
+        # "امتى الموافقة مطلوبة أصلاً").
+        # min_approver_level=80 (admin) عمدًا مش 60 الافتراضي: كل الأدوار
+        # المسموح لها أصلاً تسجّل سند مصروفات (accountant=70، manager=60،
+        # راجع get_finance_user) لو الحد فضل 60 كان أي محاسب هيبقى "مؤهّل
+        # بنفسه" تلقائيًا (70>=60) والبوابة كلها هتبقى بلا أثر عمليًا —
+        # المطلوب فعليًا إشراف admin+ فوق مستوى المحاسب/المدير نفسه.
+        SensitiveAction("record_expense", "تسجيل سند مصروفات فوق الحد المسموح", min_approver_level=80),
     ]
 }
 
