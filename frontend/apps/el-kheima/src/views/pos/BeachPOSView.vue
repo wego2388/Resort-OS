@@ -245,7 +245,16 @@ const hasItems = computed(() => total.value > 0)
 const availableSlots = computed(() => inventory.value?.available_slots ?? 0)
 const occupancyPct   = computed(() => inventory.value?.capacity_pct ?? 0)
 
+// مفتاح idempotency لمحاولة البيع الحالية (offline per-item loop بس —
+// راجع completeSale). ثابت طول ما محتويات السلة زي ما هي (بيتصفّر لو
+// الكاشير غيّر أي كمية أو السلة اتفضّت)، عشان لو المحاولة فشلت جزئيًا
+// وضغط الكاشير "إتمام البيع" تاني بنفس السلة، كل صنف يبعت بنفس local_id
+// اللي بعته المرة اللي فاتت — الباك إند (services.sell_ticket) أصلاً
+// بيتعرّف على local_id متكرر ويرجّع نفس الحركة القديمة بدل ما يبيع تاني.
+let pendingSaleLocalId: string | null = null
+
 function adjust(type: 'adult' | 'child' | 'resident' | 'towel', delta: number) {
+  pendingSaleLocalId = null
   if (type === 'adult')    adultQty.value    = Math.max(0, adultQty.value + delta)
   if (type === 'child')    childQty.value    = Math.max(0, childQty.value + delta)
   if (type === 'resident') residentQty.value = Math.max(0, residentQty.value + delta)
@@ -253,11 +262,21 @@ function adjust(type: 'adult' | 'child' | 'resident' | 'towel', delta: number) {
 }
 
 function clearCart() {
+  pendingSaleLocalId = null
   adultQty.value    = 0
   childQty.value    = 0
   residentQty.value = 0
   towelQty.value    = 0
   foreignReceived.value = ''
+}
+
+// بيمسح صنف واحد بس من السلة (بعد ما ينجح/ينضاف للطابور فعليًا في حلقة
+// البيع الأوفلاين) — عكس clearCart() اللي بيصفّر السلة كلها.
+function clearCartItem(cartKey: 'adult' | 'child' | 'resident' | 'towel') {
+  if (cartKey === 'adult')    adultQty.value    = 0
+  if (cartKey === 'child')    childQty.value    = 0
+  if (cartKey === 'resident') residentQty.value = 0
+  if (cartKey === 'towel')    towelQty.value    = 0
 }
 
 async function fetchInventory() {
@@ -393,18 +412,34 @@ async function completeSale(approval: Approval | null = null) {
         ...sharedPayload,
       }, { params: { branch_id: branchId.value } })
       for (const tx of data as { id: number }[]) soldTxIds.push(tx.id)
+      clearCart()
     } else {
+      // ⚠️ باج حقيقي كان هنا: كل صنف في السلة كان بيتبعت من غير local_id
+      // خالص — لو صنف نجح (أو اتضاف للطابور) وصنف بعده فشل بخطأ حقيقي
+      // (مثلاً المخزون خلص)، الاستثناء كان بيوقف الحلقة قبل ما يوصل
+      // لـ clearCart()، فالسلة كانت تفضل عارضة كل الكميات الأصلية —
+      // لو الكاشير ضغط "إتمام البيع" تاني من غير ما يلاحظ، الصنف اللي
+      // نجح فعلاً كان بيتباع تاني (خصم سعة/مخزون مزدوج). اتصلح بمفتاح
+      // idempotency ثابت لكل صنف (pendingSaleLocalId، نفس نمط
+      // cart_local_id بتاع المسار الأونلاين) بيتبعت كـ local_id — الباك
+      // إند (services.sell_ticket) أصلاً بيتعرّف عليه ويرجّع نفس الحركة
+      // القديمة بدل بيع تاني لو اتكرر. وكل صنف نجح أو اتضاف للطابور
+      // بيتشال من السلة فورًا (clearCartItem) بدل ما يفضل معروض كأنه
+      // لسه معلّق.
+      pendingSaleLocalId ??= crypto.randomUUID()
+      const saleLocalId = pendingSaleLocalId
       for (const item of lineItems) {
-        const payload = { tx_type: item.tx_type, quantity: item.quantity, ...sharedPayload }
+        const payload = { tx_type: item.tx_type, quantity: item.quantity, local_id: `${saleLocalId}:${item.cartKey}`, ...sharedPayload }
         const data = await submitBeachSale(branchId.value ?? 0, payload)
-        if (data === null) { anyQueued = true; continue }
-        soldTxIds.push(data.id)
+        if (data === null) { anyQueued = true } else { soldTxIds.push(data.id) }
+        clearCartItem(item.cartKey)
       }
+      pendingSaleLocalId = null
+      foreignReceived.value = ''
     }
 
     for (const txId of soldTxIds) await printTicket(txId)
 
-    clearCart()
     if (soldTxIds.length || anyQueued) await fetchInventory()
 
     successMsg.value = anyQueued

@@ -475,6 +475,65 @@ class TestBeachValidation:
         )
         assert list_resp.json()["total"] == 1  # مش 2 — الـ retry مارجعش يعمل بيع جديد
 
+    def test_multi_item_cart_retry_does_not_double_sell_the_item_that_already_succeeded(
+        self, client: TestClient, db, fake_redis, cashier_headers,
+    ):
+        """BeachPOSView.vue's offline per-item loop (2026-08-20 fix): a cart with
+        several categories is sold one /beach/sell request per item, each tagged
+        with a local_id derived from one stable per-sale key
+        (f"{sale_local_id}:{cart_key}", mirroring the online sell-cart path's
+        cart_local_id). If one item fails (here: capacity exhausted for
+        'towel_rent') after another item ('entry') already succeeded, and the
+        cashier retries the whole cart with the exact same keys, the already-sold
+        item must not be sold a second time — only the failing item is retried
+        (and legitimately fails again, since capacity is still exhausted)."""
+        from app.modules.beach import crud as beach_crud
+
+        branch = make_branch_committed(db)
+        branch_cashier_headers = make_branch_linked_cashier_headers(db, branch)
+        # capacity_max عالي (الـ"entry" ينجح من غير عوائق) لكن towels_total=0
+        # (الـ"towel_rent" يفشل دايمًا برفض عمل حقيقي، مش تسابق).
+        beach_crud.get_or_create_inventory(db, branch.id, date.today(), capacity_max=200, towels_total=0)
+        db.commit()
+        sale_key = "cart-attempt-xyz"
+
+        first_entry = client.post(
+            "/api/v1/beach/sell", params={"branch_id": branch.id},
+            json={"tx_type": "entry", "quantity": 1, "local_id": f"{sale_key}:adult"},
+            headers=branch_cashier_headers,
+        )
+        assert first_entry.status_code == 201, first_entry.text
+
+        first_towel = client.post(
+            "/api/v1/beach/sell", params={"branch_id": branch.id},
+            json={"tx_type": "towel_rent", "quantity": 1, "local_id": f"{sale_key}:towel"},
+            headers=branch_cashier_headers,
+        )
+        assert first_towel.status_code == 400  # towels_total=0 — no towel supply at all
+
+        # Cashier retries the whole cart (same local_ids — matches BeachPOSView
+        # keeping pendingSaleLocalId stable across a failed completeSale() and
+        # clearing only the item that already succeeded from the visible cart).
+        retry_entry = client.post(
+            "/api/v1/beach/sell", params={"branch_id": branch.id},
+            json={"tx_type": "entry", "quantity": 1, "local_id": f"{sale_key}:adult"},
+            headers=branch_cashier_headers,
+        )
+        assert retry_entry.status_code == 201, retry_entry.text
+        assert retry_entry.json()["id"] == first_entry.json()["id"]  # same transaction, not a new sale
+
+        retry_towel = client.post(
+            "/api/v1/beach/sell", params={"branch_id": branch.id},
+            json={"tx_type": "towel_rent", "quantity": 1, "local_id": f"{sale_key}:towel"},
+            headers=branch_cashier_headers,
+        )
+        assert retry_towel.status_code == 400  # still legitimately over capacity
+
+        list_resp = client.get(
+            "/api/v1/beach/transactions", params={"branch_id": branch.id}, headers=branch_cashier_headers,
+        )
+        assert list_resp.json()["total"] == 1  # only the one real "entry" sale, never doubled
+
     def test_beach_ignores_general_vat_setting_by_approved_policy(self, client: TestClient, db, fake_redis, cashier_headers):
         """إعداد VAT العام يظل للمطعم/الكافيه وETA؛ سعر الشاطئ نهائي بلا VAT."""
         from app.modules.core.crud import upsert_setting
