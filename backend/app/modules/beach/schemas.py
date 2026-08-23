@@ -208,13 +208,15 @@ class VoidTransactionRequest(BaseModel):
 
 
 class B2BContractCreate(BaseModel):
+    """2026-08-20، طلب Mohamed صراحةً — استبدال كامل لنموذج "سعر لكل ضيف ×
+    حصة يومية" بـ"مبلغ شهري ثابت + حد أقصى استرشادي شهري". راجع
+    beach.models.B2BContract للتفاصيل الكاملة."""
     branch_id:     int
     hotel_name:    str = Field(..., max_length=200)
     hotel_name_ar: Optional[str] = None
     contact_phone: Optional[str] = Field(None, max_length=20)
-    daily_quota:   int = Field(50, ge=1)
-    entry_price:   Decimal = Field(..., gt=0)
-    towel_price:   Decimal = Field(Decimal("0"), ge=0)
+    monthly_fee:       Decimal = Field(..., gt=0)
+    monthly_guest_cap: int     = Field(100, ge=1)
     valid_from:    date
     valid_until:   date
     is_active:     bool = True
@@ -235,15 +237,19 @@ class B2BContractRead(B2BContractCreate):
 
 class B2BContractUpdate(BaseModel):
     """تعديل جزئي — حاليًا لشاشة إدارة الائتمان (حد الائتمان/مهلة السداد)
-    فقط، مش لكل حقول العقد (تجنّبًا لتغيير بيانات تشغيلية حساسة زي الأسعار/
-    الحصة اليومية من غير مسار مخصص لها)."""
+    فقط، مش لكل حقول العقد (تجنّبًا لتغيير بيانات تشغيلية حساسة زي المبلغ
+    الشهري/الحد الأقصى من غير مسار مخصص لها)."""
     credit_limit:       Optional[Decimal] = Field(None, ge=0)
     payment_terms_days: Optional[int]     = Field(None, ge=1, le=365)
 
 
 class B2BSettleRequest(BaseModel):
-    """تسجيل تسوية (تحصيل) رصيد الفندق الشريك حتى تاريخ معيّن."""
+    """تسجيل تسوية (تحصيل) رصيد الفندق الشريك حتى تاريخ معيّن.
+    ``settlement_account_code`` الحساب اللي التحصيل دخل عليه فعليًا
+    (افتراضيًا 1110 بنك — التحصيل عادة تحويل بنكي، مش كاش في درج كاشير
+    الشاطئ)."""
     settled_through: Optional[date] = None
+    settlement_account_code: str = Field("1110", max_length=10)
 
 
 class B2BCheckinRequest(BaseModel):

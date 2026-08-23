@@ -22,10 +22,18 @@ def branch(db: Session):
 
 
 def _seed_accounts(db: Session, branch):
+    """⚠️ 1165 مضاف هنا (2026-08-20) رغم إن generate_dining_beach نفسها
+    مبتنادي post_b2b_monthly_fees خالص (بس b2b_checkin — عدّاد بحت، صفر
+    قيمة مالية): العقد اللي بينشئه (HIST Partner Hotel) بيفضل نشط بنافذة
+    صلاحية سنة كاملة تقريبًا، وpost_b2b_monthly_fees/mark_b2b_contracts_
+    overdue بيفحصوا كل عقود B2B *النشطة عبر كل الفروع* بتصميم — أي تست
+    تاني في نفس الـsuite بينادي الترحيل الشهري هيلاقي العقد ده ويحاول
+    يرحّله، فيفشل بـFinancialConfigurationError لو 1165 مش موجود."""
     from app.modules.finance.models import Account
     for code, name, acc_type in [
         ("1100", "Cash", "asset"), ("1110", "Bank/Card", "asset"),
         ("1150", "Folio AR", "asset"),
+        ("1165", "ذمم فنادق شريكة (B2B)", "asset"),
         ("2160", "VAT Payable", "liability"), ("2165", "Service Charge Payable", "liability"),
         ("4200", "Restaurant Revenue", "revenue"), ("4300", "Beach Revenue", "revenue"),
         ("4400", "Cafe Revenue", "revenue"),
@@ -124,7 +132,12 @@ class TestHistDiningBeachGenerator:
         # الأقل (وربما أكتر لو الخصم في order_no=1 قلل إيراده هو كمان).
         assert restaurant_credit <= Decimal("165000.00") - Decimal("1500.00")
 
-    def test_b2b_transactions_use_contract_entry_price(self, db: Session, branch):
+    def test_b2b_transactions_are_headcount_only_with_zero_price(self, db: Session, branch):
+        """2026-08-20: عقد B2B بقى مبلغ شهري ثابت، مفيش سعر لكل ضيف —
+        اسم هذا الاختبار كان test_b2b_transactions_use_contract_entry_price
+        (حقل entry_price نفسه اتحذف من الموديل). تشيك-إن B2B الآن عدّاد
+        رؤوس بحت، فمعاملاته لازم تُسجَّل بصفر قيمة مالية (راجع
+        beach.services.b2b_checkin)."""
         from app.modules.beach.models import BeachTransaction
 
         _seed_accounts(db, branch)
@@ -135,6 +148,8 @@ class TestHistDiningBeachGenerator:
             BeachTransaction.branch_id == branch.id, BeachTransaction.b2b_contract_id.isnot(None),
         ).all()
         assert len(b2b_tx) == 2
+        assert all(tx.total_amount == Decimal("0") for tx in b2b_tx)
+        assert all(tx.unit_price == Decimal("0") for tx in b2b_tx)
 
     def test_generate_is_deterministic_across_two_branches(self, db: Session, branch):
         from app.modules.core.models import Branch

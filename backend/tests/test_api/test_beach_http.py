@@ -31,6 +31,8 @@ def make_finance_accounts(db, branch):
         ("4300", "Beach Revenue", "revenue"),
         ("1150", "ذمم الفوليو", "asset"),
         ("2160", "ضريبة القيمة المضافة مستحقة", "liability"),
+        ("1110", "البنك", "asset"),
+        ("1165", "ذمم فنادق شريكة (B2B)", "asset"),
     ]
     added = [
         Account(branch_id=branch.id, code=code, name=name, account_type=account_type)
@@ -563,8 +565,8 @@ class TestBeachB2BContracts:
             json={
                 "branch_id": branch.id,
                 "hotel_name": "Grand Resort Hotel",
-                "daily_quota": 10,
-                "entry_price": "150.00",
+                "monthly_guest_cap": 10,
+                "monthly_fee": "45000.00",
                 "valid_from": str(date.today()),
                 "valid_until": str(date.today() + timedelta(days=30)),
             },
@@ -589,7 +591,7 @@ class TestBeachB2BContracts:
         assert status_resp.status_code == 200
         entry = next(s for s in status_resp.json() if s["contract_id"] == contract["id"])
         assert entry["checked_in_today"] == 3
-        assert entry["remaining_quota"] == 7
+        assert entry["remaining_monthly_quota"] == 7
 
     def test_b2b_contract_create_requires_admin(self, client: TestClient, db, fake_redis, manager_headers):
         """manager-level (60) must not be allowed to create a B2B contract (admin=80 required)."""
@@ -599,8 +601,8 @@ class TestBeachB2BContracts:
             json={
                 "branch_id": branch.id,
                 "hotel_name": "Some Hotel",
-                "daily_quota": 10,
-                "entry_price": "150.00",
+                "monthly_guest_cap": 10,
+                "monthly_fee": "45000.00",
                 "valid_from": str(date.today()),
                 "valid_until": str(date.today() + timedelta(days=30)),
             },
@@ -608,27 +610,28 @@ class TestBeachB2BContracts:
         )
         assert resp.status_code == 403
 
-    def test_b2b_checkin_rejected_when_exceeding_daily_quota(
+    def test_b2b_checkin_allowed_when_exceeding_monthly_guest_cap(
         self, client: TestClient, db, fake_redis, super_admin_headers, cashier_headers,
     ):
-        """Real business-rule coverage flagged by an independent review as
-        under-tested: B2B is external-hotel-contract revenue with a fixed
-        daily quota — overselling it means checking in guests the resort
-        never agreed/priced capacity for."""
+        """2026-08-20، قرار Mohamed صراحةً: كان اسم هذا الاختبار
+        test_b2b_checkin_rejected_when_exceeding_daily_quota ويثبت رفض
+        (400) لما الحصة اليومية تتخطى. العقد بقى مبلغ شهري ثابت + حد أقصى
+        استرشادي (مش حصة رفض) — تخطي الحد الشهري مسموح صراحةً، الكاشير
+        يسجّل دخول الضيف بغض النظر والحد بيظهر بس كتنبيه في اللوحة الحيّة."""
         branch = make_branch_committed(db)
         branch_super_admin_headers = super_admin_headers_for_branch(db, branch)
         branch_cashier_headers = make_branch_linked_cashier_headers(db, branch)
         contract = client.post(
             "/api/v1/beach/b2b-contracts",
             json={
-                "branch_id": branch.id, "hotel_name": "Small Quota Hotel",
-                "daily_quota": 5, "entry_price": "150.00",
+                "branch_id": branch.id, "hotel_name": "Small Cap Hotel",
+                "monthly_guest_cap": 5, "monthly_fee": "45000.00",
                 "valid_from": str(date.today()), "valid_until": str(date.today() + timedelta(days=30)),
             },
             headers=branch_super_admin_headers,
         ).json()
 
-        # Uses 4 of the 5-guest quota — should succeed.
+        # Uses 4 of the 5-guest guideline cap — should succeed.
         first = client.post(
             "/api/v1/beach/b2b-checkin", params={"branch_id": branch.id},
             json={"contract_id": contract["id"], "guests_count": 4},
@@ -636,25 +639,25 @@ class TestBeachB2BContracts:
         )
         assert first.status_code == 201, first.text
 
-        # Only 1 guest of quota remains — asking for 2 must be rejected, not
-        # silently allowed past the contracted daily cap.
+        # Only 1 guest of the guideline cap remains — asking for 2 must
+        # still succeed (over-cap check-in is explicitly allowed now),
+        # not be rejected like the old hard daily quota used to be.
         over_resp = client.post(
             "/api/v1/beach/b2b-checkin", params={"branch_id": branch.id},
             json={"contract_id": contract["id"], "guests_count": 2},
             headers=branch_cashier_headers,
         )
-        assert over_resp.status_code == 400
-        assert "الحصة" in over_resp.json()["detail"]
+        assert over_resp.status_code == 201, over_resp.text
 
-        # Confirm quota status reflects only the successful check-in, not
-        # the rejected attempt.
+        # Quota status reflects the full accumulated headcount (6), and the
+        # remaining monthly quota floors at zero rather than going negative.
         status_resp = client.get(
             "/api/v1/beach/b2b-contracts/status",
             params={"branch_id": branch.id}, headers=branch_cashier_headers,
         )
         entry = next(s for s in status_resp.json() if s["contract_id"] == contract["id"])
-        assert entry["checked_in_today"] == 4
-        assert entry["remaining_quota"] == 1
+        assert entry["checked_in_today"] == 6
+        assert entry["remaining_monthly_quota"] == 0
 
     def test_list_b2b_contracts(self, client: TestClient, db, fake_redis, super_admin_headers, manager_headers):
         branch = make_branch_committed(db)
@@ -664,7 +667,7 @@ class TestBeachB2BContracts:
             "/api/v1/beach/b2b-contracts",
             json={
                 "branch_id": branch.id, "hotel_name": "Listed Hotel",
-                "daily_quota": 20, "entry_price": "100.00",
+                "monthly_guest_cap": 20, "monthly_fee": "60000.00",
                 "valid_from": str(date.today()), "valid_until": str(date.today() + timedelta(days=30)),
             },
             headers=branch_super_admin_headers,
@@ -684,7 +687,7 @@ class TestB2BCredit:
     def _create_contract(self, client, branch, headers, **overrides):
         payload = {
             "branch_id": branch.id, "hotel_name": "Credit Test Hotel",
-            "daily_quota": 50, "entry_price": "100.00",
+            "monthly_guest_cap": 50, "monthly_fee": "45000.00",
             "valid_from": str(date.today()), "valid_until": str(date.today() + timedelta(days=30)),
         }
         payload.update(overrides)
@@ -692,21 +695,26 @@ class TestB2BCredit:
         assert resp.status_code == 201, resp.text
         return resp.json()
 
-    def test_b2b_checkin_rejected_when_exceeding_credit_limit(
+    def test_b2b_checkin_ignores_credit_limit_even_when_far_exceeded(
         self, client: TestClient, db, fake_redis, super_admin_headers, cashier_headers,
     ):
+        """2026-08-20، قرار Mohamed صراحةً: عكس السلوك القديم تمامًا (كان
+        اسم هذا الاختبار test_b2b_checkin_rejected_when_exceeding_credit_
+        limit ويثبت رفض 400). تشيك-إن B2B عدّاد رؤوس بحت من غير أي قيمة
+        مالية لحظية — مفيش أي حساب ائتماني ممكن يحصل وقته أصلاً. حد
+        الائتمان بقى مؤشر مراقبة على الرصيد الشهري المرحّل بس، مش بوابة
+        رفض عند التسجيل."""
         branch = make_branch_committed(db)
         branch_super_admin_headers = super_admin_headers_for_branch(db, branch)
         branch_cashier_headers = make_branch_linked_cashier_headers(db, branch)
-        contract = self._create_contract(client, branch, branch_super_admin_headers, credit_limit="300.00")
+        contract = self._create_contract(client, branch, branch_super_admin_headers, credit_limit="1.00")
 
-        over_resp = client.post(
+        resp = client.post(
             "/api/v1/beach/b2b-checkin", params={"branch_id": branch.id},
-            json={"contract_id": contract["id"], "guests_count": 5},  # 500 ج.م > 300 حد
+            json={"contract_id": contract["id"], "guests_count": 5},
             headers=branch_cashier_headers,
         )
-        assert over_resp.status_code == 400
-        assert "حد الائتمان" in over_resp.json()["detail"]
+        assert resp.status_code == 201, resp.text
 
     def test_b2b_checkin_within_credit_limit_succeeds(
         self, client: TestClient, db, fake_redis, super_admin_headers, cashier_headers,
@@ -787,16 +795,23 @@ class TestB2BCredit:
     def test_settle_contract_via_http_resets_balance(
         self, client: TestClient, db, fake_redis, super_admin_headers, cashier_headers, manager_headers,
     ):
+        """2026-08-20: الرصيد المستحق بقى مبني على B2BContractMonth (الرسم
+        الشهري المرحّل فعليًا)، مش على تراكم تشيك-إن. مفيش endpoint HTTP
+        لترحيل الرسم الشهري (بيحصل عبر Celery task دوري بس) — بنستخدم
+        services.post_b2b_monthly_fees مباشرة هنا كـfixture setup، بالظبط
+        زي bill_month() في test_beach.py."""
+        from app.modules.beach import crud as beach_crud, services as beach_services
+
         branch = make_branch_committed(db)
         branch_super_admin_headers = super_admin_headers_for_branch(db, branch)
-        branch_cashier_headers = make_branch_linked_cashier_headers(db, branch)
         branch_manager_headers = make_branch_linked_headers(db, branch, "manager")
         contract = self._create_contract(client, branch, branch_super_admin_headers, credit_limit="300.00")
-        client.post(
-            "/api/v1/beach/b2b-checkin", params={"branch_id": branch.id},
-            json={"contract_id": contract["id"], "guests_count": 2},  # 200 ج.م
-            headers=branch_cashier_headers,
-        )
+        beach_services.post_b2b_monthly_fees(db, date.today())
+        db.commit()
+
+        contract_row = beach_crud.get_b2b_contract(db, contract["id"])
+        outstanding_before = beach_crud.get_b2b_outstanding_balance(db, contract["id"], contract_row.last_settled_at)
+        assert outstanding_before == contract_row.monthly_fee
 
         settle_resp = client.post(
             f"/api/v1/beach/b2b-contracts/{contract['id']}/settle", json={},
@@ -805,13 +820,10 @@ class TestB2BCredit:
         assert settle_resp.status_code == 200, settle_resp.text
         assert settle_resp.json()["last_settled_at"] == str(date.today())
 
-        # بعد التسوية، الرصيد اتصفّر فعليًا — عملية جديدة لحد الحد الكامل تعدي تاني.
-        second = client.post(
-            "/api/v1/beach/b2b-checkin", params={"branch_id": branch.id},
-            json={"contract_id": contract["id"], "guests_count": 2},
-            headers=branch_cashier_headers,
-        )
-        assert second.status_code == 201, second.text
+        # بعد التسوية، الرصيد اتصفّر فعليًا.
+        db.refresh(contract_row)
+        outstanding_after = beach_crud.get_b2b_outstanding_balance(db, contract["id"], contract_row.last_settled_at)
+        assert outstanding_after == Decimal("0")
 
     def test_live_dashboard_includes_overdue_alerts_key(
         self, client: TestClient, db, fake_redis, cashier_headers,

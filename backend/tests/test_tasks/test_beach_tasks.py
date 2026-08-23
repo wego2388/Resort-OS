@@ -15,6 +15,13 @@ import pytest
 # ─── helpers ────────────────────────────────────────────────────────────────
 
 def _make_branch(db, active=True):
+    """⚠️ حسابات 1165/4300 بتتزرع هنا دايمًا (مش بس وقت الحاجة الصريحة
+    ليها): post_b2b_monthly_fees/mark_b2b_contracts_overdue بيفحصوا كل
+    عقود B2B *النشطة عبر كل الفروع* بتصميم (نفس نطاق مهمة Celery
+    الحقيقية) — أي عقد بيتعمل في أي تست في الملف ده (حتى لو مش موضوع
+    التست الحالي) هيدخل في نفس الاستعلام العام، فلازم فرعه يقدر يترحّل
+    عليه رسم شهري من غير FinancialConfigurationError وإلا التستات
+    المتأخرة في نفس الجلسة تتأثر ببيانات تستات سابقة."""
     from app.modules.core.models import Branch
     b = Branch(
         name=f"Beach-Branch-{uuid.uuid4().hex[:6]}",
@@ -23,6 +30,7 @@ def _make_branch(db, active=True):
     )
     db.add(b)
     db.commit()
+    _seed_finance_accounts(db, b)
     return b
 
 
@@ -33,8 +41,8 @@ def _make_b2b_contract(db, branch, contact_phone=None, payment_terms_days=30, is
         branch_id=branch.id,
         hotel_name=f"Hotel-{uuid.uuid4().hex[:4]}",
         contact_phone=contact_phone,
-        daily_quota=50,
-        entry_price=Decimal("150"),
+        monthly_guest_cap=50,
+        monthly_fee=Decimal("4500"),
         valid_from=today - timedelta(days=60),
         valid_until=today + timedelta(days=300),
         is_active=is_active,
@@ -47,17 +55,30 @@ def _make_b2b_contract(db, branch, contact_phone=None, payment_terms_days=30, is
     return c
 
 
-def _make_b2b_day(db, contract, day, total_amount=Decimal("1000")):
-    from app.modules.beach.models import B2BContractDay
-    d = B2BContractDay(
-        contract_id=contract.id,
-        day=day,
-        checked_in_count=5,
-        total_amount=total_amount,
-    )
-    db.add(d)
+def _seed_finance_accounts(db, branch):
+    """2026-08-20: post_b2b_monthly_fees بيرحّل قيد حقيقي (Dr 1165/Cr 4300)
+    — لازم الحسابين يكونوا موجودين على الفرع، وإلا الترحيل نفسه بيفشل
+    بـFinancialConfigurationError. Idempotent."""
+    from app.modules.finance.models import Account
+    existing = {a.code for a in db.query(Account).filter(Account.branch_id == branch.id).all()}
+    wanted = [("1165", "ذمم فنادق شريكة (B2B)", "asset"), ("4300", "Beach Revenue", "revenue")]
+    added = [Account(branch_id=branch.id, code=c, name=n, account_type=t) for c, n, t in wanted if c not in existing]
+    if added:
+        db.add_all(added)
+        db.commit()
+
+
+def _bill_month(db, on_date):
+    """يرحّل الرسم الشهري الثابت لكل عقود B2B النشطة عن الشهر المحتوي
+    ``on_date`` — نفس آلية services.post_b2b_monthly_fees الحقيقية بالظبط
+    (بديل _make_b2b_day القديمة اللي كانت بتبني B2BContractDay.total_amount
+    مباشرة — العمود ده اتحذف من الموديل، والرصيد المستحق/التأخر بقى مبني
+    على B2BContractMonth المُرحَّل فعليًا، راجع crud.get_b2b_oldest_
+    unsettled_month)."""
+    from app.modules.beach.services import post_b2b_monthly_fees
+    billed = post_b2b_monthly_fees(db, on_date)
     db.commit()
-    return d
+    return billed
 
 
 def _make_beach_reservation(db, branch, res_date=None, status="confirmed"):
@@ -121,11 +142,12 @@ class TestBeachB2BOverdue:
     """اختبار mark_b2b_contracts_overdue مباشرة"""
 
     def test_overdue_contract_marked(self, db):
-        """عقد فيه أيام قديمة غير مسوّاة يُصبح overdue"""
+        """عقد رحّله شهر قديم غير مسوّى يُصبح overdue"""
         branch = _make_branch(db)
+        _seed_finance_accounts(db, branch)
         contract = _make_b2b_contract(db, branch, payment_terms_days=7)
-        old_day = date.today() - timedelta(days=10)
-        _make_b2b_day(db, contract, day=old_day)
+        old_day = date.today() - timedelta(days=45)
+        _bill_month(db, old_day)
 
         from app.modules.beach.services import mark_b2b_contracts_overdue
         changed = mark_b2b_contracts_overdue(db, date.today())
@@ -136,11 +158,12 @@ class TestBeachB2BOverdue:
         assert contract.is_overdue is True
 
     def test_contract_within_terms_not_overdue(self, db):
-        """عقد أيامه ضمن المهلة لا يُصبح overdue"""
+        """عقد الشهر المرحّل له لسه ضمن المهلة لا يُصبح overdue"""
         branch = _make_branch(db)
+        _seed_finance_accounts(db, branch)
         contract = _make_b2b_contract(db, branch, payment_terms_days=30)
         recent_day = date.today() - timedelta(days=5)
-        _make_b2b_day(db, contract, day=recent_day)
+        _bill_month(db, recent_day)
 
         from app.modules.beach.services import mark_b2b_contracts_overdue
         mark_b2b_contracts_overdue(db, date.today())
@@ -157,11 +180,12 @@ class TestBeachB2BOverdue:
         wa_module.send_whatsapp_message = lambda phone, msg: sent.append(phone)
         try:
             branch = _make_branch(db)
+            _seed_finance_accounts(db, branch)
             contract = _make_b2b_contract(
                 db, branch, contact_phone="01099991111", payment_terms_days=7,
             )
-            old_day = date.today() - timedelta(days=10)
-            _make_b2b_day(db, contract, day=old_day)
+            old_day = date.today() - timedelta(days=45)
+            _bill_month(db, old_day)
 
             from app.modules.beach.services import mark_b2b_contracts_overdue
             mark_b2b_contracts_overdue(db, date.today())
@@ -178,6 +202,7 @@ class TestBeachB2BOverdue:
         wa_module.send_whatsapp_message = lambda phone, msg: sent.append(phone)
         try:
             branch = _make_branch(db)
+            _seed_finance_accounts(db, branch)
             contract = _make_b2b_contract(
                 db, branch, contact_phone="01099990000", payment_terms_days=7,
             )
@@ -185,8 +210,8 @@ class TestBeachB2BOverdue:
             contract.notified_overdue = True
             db.commit()
 
-            old_day = date.today() - timedelta(days=10)
-            _make_b2b_day(db, contract, day=old_day)
+            old_day = date.today() - timedelta(days=45)
+            _bill_month(db, old_day)
 
             from app.modules.beach.services import mark_b2b_contracts_overdue
             mark_b2b_contracts_overdue(db, date.today())
@@ -195,8 +220,8 @@ class TestBeachB2BOverdue:
         finally:
             wa_module.send_whatsapp_message = original
 
-    def test_no_days_no_overdue(self, db):
-        """عقد بدون أيام لا يُصبح overdue"""
+    def test_no_billed_months_no_overdue(self, db):
+        """عقد من غير أي رسم شهري مُرحَّل لا يُصبح overdue"""
         branch = _make_branch(db)
         contract = _make_b2b_contract(db, branch, payment_terms_days=7)
 
@@ -222,3 +247,46 @@ class TestBeachB2BOverdue:
                 mark_b2b_overdue()
         finally:
             wa_module.send_whatsapp_message = original
+
+
+# ─── post_b2b_monthly_fees task ──────────────────────────────────────────────
+
+class TestBeachB2BMonthlyFeesTask:
+    """اختبار task الـCelery post_b2b_monthly_fees (wrapper حول
+    services.post_b2b_monthly_fees) — نفس نمط TestBeachB2BOverdue.
+    test_task_runs_without_error بالظبط (2026-08-20، جديد مع تحويل عقود
+    B2B لمبلغ شهري ثابت)."""
+
+    def test_task_runs_without_error(self, db):
+        """task post_b2b_monthly_fees يشتغل بدون exception حتى بدون عقود"""
+        from unittest.mock import patch, MagicMock
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=db)
+        ctx.__exit__ = MagicMock(return_value=False)
+        with patch("app.core.database.SessionLocal", return_value=ctx):
+            from app.tasks.beach_tasks import post_b2b_monthly_fees
+            post_b2b_monthly_fees()
+
+    def test_task_bills_active_contract_via_real_session(self, db):
+        """تشغيل الـtask الحقيقي (مش services.post_b2b_monthly_fees مباشرة)
+        على عقد نشط لازم يرحّل رسمه الشهري فعليًا — يثبت إن الـwrapper
+        نفسه (SessionLocal + commit) بيوصل منطق الترحيل صح، مش بس الدالة
+        الداخلية القابلة للاختبار."""
+        from unittest.mock import patch, MagicMock
+        from app.modules.beach import crud as beach_crud
+
+        branch = _make_branch(db)
+        _seed_finance_accounts(db, branch)
+        contract = _make_b2b_contract(db, branch)
+
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=db)
+        ctx.__exit__ = MagicMock(return_value=False)
+        with patch("app.core.database.SessionLocal", return_value=ctx):
+            from app.tasks.beach_tasks import post_b2b_monthly_fees
+            post_b2b_monthly_fees()
+
+        month_start = date.today().replace(day=1)
+        billed_month = beach_crud.get_b2b_contract_month(db, contract.id, month_start)
+        assert billed_month is not None
+        assert billed_month.amount == contract.monthly_fee

@@ -108,10 +108,14 @@ def generate(db: "Session", ctx: "ScenarioContext") -> dict:
         ))
         db.flush()
 
+        # 2026-08-20: نموذج العقد بقى مبلغ شهري ثابت + حد أقصى استرشادي —
+        # القيم دي معادِلة اقتصاديًا للقيم القديمة (سعر يومي 180 ج × حصة 50
+        # شخص × 30 يوم)، نفس صيغة الـ backfill المستخدمة في migration
+        # 45aabf472620 لأي عقد قديم فعلي.
         b2b_contract = beach_crud.create_b2b_contract(db, B2BContractCreate(
             branch_id=branch_id, hotel_name="HIST Partner Hotel",
-            hotel_name_ar="فندق شريك HIST", daily_quota=50,
-            entry_price=Decimal("180.00"), towel_price=Decimal("0"),
+            hotel_name_ar="فندق شريك HIST",
+            monthly_fee=Decimal("270000.00"), monthly_guest_cap=1500,
             valid_from=month_start, valid_until=date(year + 1, month, 1),
         ))
         db.flush()

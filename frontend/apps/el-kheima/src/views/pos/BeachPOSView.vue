@@ -3,7 +3,7 @@ import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api, ENDPOINTS, useAuthStore } from '@resort-os/core'
 import { usePrintDocument, useOfflineQueue } from '@resort-os/core/composables'
-import { useToast } from '@resort-os/ui'
+import { EmptyState, useToast } from '@resort-os/ui'
 import POSCustomerModal from '../../components/dining-pos/POSCustomerModal.vue'
 import PinGuardModal from '../../components/PinGuardModal.vue'
 import type { POSCustomer } from '../../components/dining-pos/types'
@@ -279,6 +279,89 @@ function clearCartItem(cartKey: 'adult' | 'child' | 'resident' | 'towel') {
   if (cartKey === 'towel')    towelQty.value    = 0
 }
 
+// ── تشيك-إن فندق شريك B2B (2026-08-20، طلب Mohamed صراحةً) ─────────────
+// b2b_checkin endpoint كان موجود بالكامل في الباك إند من زمان (راجع
+// beach.services.b2b_checkin) بس مفيش أي شاشة كاشير كانت بتناديه خالص —
+// إدارة العقود نفسها في BeachAdminView.vue بس مفيش طريقة حقيقية لتسجيل
+// دخول ضيوف الفندق. الكاشير هنا بيختار الفندق ويسجّل عدد الضيوف اللي
+// دخلوا فعليًا — العقد بقى مبلغ شهري ثابت (مش سعر لكل ضيف)، فمفيش سعر
+// يتحسب هنا خالص، والحد الشهري الاسترشادي (monthly_guest_cap) تخطّيه
+// مسموح صراحةً (قرار Mohamed) — بيظهر بس كتنبيه معلوماتي، مش رفض.
+type BeachMode = 'retail' | 'hotel'
+const mode = ref<BeachMode>('retail')
+
+interface B2BContractOption {
+  id: number; hotel_name: string; hotel_name_ar: string | null
+  monthly_guest_cap: number
+}
+interface B2BQuotaStatusRow {
+  contract_id: number; checked_in_this_month: number
+  monthly_guest_cap: number; remaining_monthly_quota: number
+  quota_warning: boolean; is_valid_today: boolean
+}
+const b2bContracts = ref<B2BContractOption[]>([])
+const selectedContractId = ref<number | null>(null)
+const hotelGuestsQty = ref(0)
+const hotelWithTowel = ref(false)
+const hotelSubmitting = ref(false)
+const hotelLoading = ref(false)
+const selectedHotelStatus = ref<B2BQuotaStatusRow | null>(null)
+
+const selectedHotel = computed(() =>
+  b2bContracts.value.find(c => c.id === selectedContractId.value) ?? null)
+
+async function fetchB2BContracts() {
+  hotelLoading.value = true
+  try {
+    const { data } = await api.get(ENDPOINTS.beach.b2bContracts, {
+      params: { branch_id: branchId.value, active_only: true },
+    })
+    b2bContracts.value = data
+  } catch {
+    toast.error(t('backoffice.beachPos.loadHotelsError'))
+  } finally {
+    hotelLoading.value = false
+  }
+}
+
+async function fetchSelectedHotelStatus() {
+  if (!selectedContractId.value) { selectedHotelStatus.value = null; return }
+  try {
+    const { data } = await api.get(ENDPOINTS.beach.b2bQuotaStatus, { params: { branch_id: branchId.value } })
+    selectedHotelStatus.value = (data as B2BQuotaStatusRow[]).find(
+      s => s.contract_id === selectedContractId.value,
+    ) ?? null
+  } catch {
+    // معلوماتي بس — مايمنعش الكاشير من تسجيل الدخول لو فشل التحميل
+  }
+}
+watch(selectedContractId, fetchSelectedHotelStatus)
+
+async function switchMode(next: BeachMode) {
+  mode.value = next
+  if (next === 'hotel' && !b2bContracts.value.length) await fetchB2BContracts()
+}
+
+async function completeHotelCheckin() {
+  if (!selectedContractId.value || hotelGuestsQty.value <= 0 || hotelSubmitting.value) return
+  hotelSubmitting.value = true
+  try {
+    await api.post(ENDPOINTS.beach.b2bCheckin, {
+      contract_id: selectedContractId.value,
+      guests_count: hotelGuestsQty.value,
+      with_towel: hotelWithTowel.value,
+    }, { params: { branch_id: branchId.value } })
+    toast.success(t('backoffice.beachPos.hotelCheckinSuccess', { count: hotelGuestsQty.value }))
+    hotelGuestsQty.value = 0
+    hotelWithTowel.value = false
+    await Promise.all([fetchInventory(), fetchSelectedHotelStatus()])
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail ?? t('backoffice.beachPos.hotelCheckinError'))
+  } finally {
+    hotelSubmitting.value = false
+  }
+}
+
 async function fetchInventory() {
   loading.value = true
   try {
@@ -508,6 +591,18 @@ onUnmounted(() => {
       <span>⏳ {{ t('backoffice.beachPos.syncingBanner', { count: pendingCount }) }}</span>
     </div>
 
+    <!-- Retail / Hotel B2B mode toggle -->
+    <div class="flex gap-1 bg-stone-100 dark:bg-gray-700 p-1 rounded-xl mb-3 w-fit">
+      <button
+        @click="switchMode('retail')"
+        :class="['px-4 py-2 rounded-lg text-sm font-semibold transition-all', mode === 'retail' ? 'bg-white dark:bg-surface shadow-sm text-gray-900 dark:text-gray-100' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:text-gray-300']"
+      >🏖️ {{ t('backoffice.beachPos.retailModeTab') }}</button>
+      <button
+        @click="switchMode('hotel')"
+        :class="['px-4 py-2 rounded-lg text-sm font-semibold transition-all', mode === 'hotel' ? 'bg-white dark:bg-surface shadow-sm text-gray-900 dark:text-gray-100' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:text-gray-300']"
+      >🏨 {{ t('backoffice.beachPos.hotelModeTab') }}</button>
+    </div>
+
     <!-- Loading splash -->
     <div v-if="loading && !inventory" class="flex items-center justify-center h-64">
       <div class="motion-safe:animate-spin w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full" />
@@ -522,8 +617,8 @@ onUnmounted(() => {
       </button>
     </div>
 
-    <!-- Main content -->
-    <div v-else-if="inventory" class="grid grid-cols-1 lg:grid-cols-2 gap-4 h-full">
+    <!-- Main content: retail sale -->
+    <div v-else-if="inventory && mode === 'retail'" class="grid grid-cols-1 lg:grid-cols-2 gap-4 h-full">
 
       <!-- ═══ LEFT: Status + Price Cards ═══ -->
       <div class="space-y-4 overflow-y-auto">
@@ -962,6 +1057,92 @@ onUnmounted(() => {
         </div>
       </div>
 
+    </div>
+
+    <!-- Main content: hotel B2B check-in -->
+    <div v-else-if="inventory && mode === 'hotel'" class="grid grid-cols-1 lg:grid-cols-2 gap-4 h-full">
+      <div class="bg-white dark:bg-surface rounded-xl border border-stone-200 dark:border-border p-4 shadow-sm space-y-4">
+        <h2 class="font-bold text-gray-900 dark:text-gray-100 text-base">{{ t('backoffice.beachPos.hotelCheckinTitle') }}</h2>
+
+        <div v-if="hotelLoading" class="flex justify-center py-8">
+          <div class="motion-safe:animate-spin w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full" />
+        </div>
+        <EmptyState v-else-if="!b2bContracts.length" icon="🏨" :title="t('backoffice.beachPos.noActiveHotels')" />
+        <template v-else>
+          <div>
+            <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">{{ t('backoffice.beachPos.selectHotel') }}</label>
+            <select
+              v-model="selectedContractId"
+              class="min-h-11 w-full rounded-xl border border-stone-300 bg-white px-3 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-400/30 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+            >
+              <option :value="null" disabled>{{ t('backoffice.beachPos.selectHotelPlaceholder') }}</option>
+              <option v-for="c in b2bContracts" :key="c.id" :value="c.id">{{ c.hotel_name_ar || c.hotel_name }}</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">{{ t('backoffice.beachPos.guestsCount') }}</label>
+            <div class="flex items-center gap-3">
+              <button
+                @click="hotelGuestsQty = Math.max(0, hotelGuestsQty - 1)"
+                class="w-11 h-11 rounded-xl border border-stone-300 dark:border-gray-600 text-lg font-bold text-gray-700 dark:text-gray-300"
+              >−</button>
+              <input
+                v-model.number="hotelGuestsQty" type="number" min="0"
+                class="w-24 text-center min-h-11 rounded-xl border border-stone-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 text-lg font-bold"
+              />
+              <button
+                @click="hotelGuestsQty += 1"
+                class="w-11 h-11 rounded-xl border border-stone-300 dark:border-gray-600 text-lg font-bold text-gray-700 dark:text-gray-300"
+              >+</button>
+            </div>
+          </div>
+
+          <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+            <input v-model="hotelWithTowel" type="checkbox" class="rounded" />
+            {{ t('backoffice.beachPos.withTowel') }}
+          </label>
+
+          <button
+            @click="completeHotelCheckin"
+            :disabled="!selectedContractId || hotelGuestsQty <= 0 || hotelSubmitting"
+            class="w-full min-h-12 rounded-xl bg-blue-600 text-white font-bold text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+          >
+            <div v-if="hotelSubmitting" class="motion-safe:animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full" />
+            <span>{{ hotelSubmitting ? t('backoffice.beachPos.processing') : t('backoffice.beachPos.checkinButton') }}</span>
+          </button>
+        </template>
+      </div>
+
+      <!-- حالة الفندق المختار: الحد الشهري الاسترشادي + المتبقي — معلوماتي
+           بحت، تخطي الحد مسموح صراحةً (قرار Mohamed) فمفيش رفض هنا. -->
+      <div class="bg-white dark:bg-surface rounded-xl border border-stone-200 dark:border-border p-4 shadow-sm">
+        <h2 class="font-bold text-gray-900 dark:text-gray-100 text-base mb-3">{{ t('backoffice.beachPos.hotelStatusTitle') }}</h2>
+        <div v-if="!selectedHotel" class="text-sm text-gray-400 dark:text-gray-400 py-8 text-center">
+          {{ t('backoffice.beachPos.selectHotelToSeeStatus') }}
+        </div>
+        <div v-else class="space-y-3">
+          <div class="text-sm font-semibold text-gray-900 dark:text-gray-100">{{ selectedHotel.hotel_name_ar || selectedHotel.hotel_name }}</div>
+          <div v-if="selectedHotelStatus" class="space-y-2">
+            <div class="flex justify-between text-sm">
+              <span class="text-gray-500 dark:text-gray-400">{{ t('backoffice.beachPos.checkedInThisMonth') }}</span>
+              <span class="font-bold text-gray-900 dark:text-gray-100">{{ selectedHotelStatus.checked_in_this_month }} / {{ selectedHotelStatus.monthly_guest_cap }}</span>
+            </div>
+            <div class="h-2 w-full overflow-hidden rounded-full bg-stone-200 dark:bg-gray-700">
+              <div
+                :class="['h-full', selectedHotelStatus.remaining_monthly_quota <= 0 ? 'bg-red-500' : selectedHotelStatus.quota_warning ? 'bg-amber-500' : 'bg-green-500']"
+                :style="{ width: `${Math.min(100, (selectedHotelStatus.checked_in_this_month / selectedHotelStatus.monthly_guest_cap) * 100)}%` }"
+              />
+            </div>
+            <p v-if="selectedHotelStatus.remaining_monthly_quota <= 0" class="text-xs text-amber-600 dark:text-amber-400">
+              {{ t('backoffice.beachPos.overMonthlyCapHint') }}
+            </p>
+            <p v-else-if="selectedHotelStatus.quota_warning" class="text-xs text-amber-600 dark:text-amber-400">
+              {{ t('backoffice.beachPos.nearMonthlyCapHint', { count: selectedHotelStatus.remaining_monthly_quota }) }}
+            </p>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- 2026-08-11: المودالات دي لازم تفضل داخل الـroot div ده — الصفحة

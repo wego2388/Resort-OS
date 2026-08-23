@@ -70,19 +70,23 @@ def make_branch_linked_cashier(db, branch):
 
 
 def make_contract(
-    db, branch, quota=10, entry_price=Decimal("80"), towel_price=Decimal("30"),
+    db, branch, guest_cap=10, monthly_fee=Decimal("2400"),
     valid_from=None, valid_until=None, is_active=True,
     credit_limit=None, payment_terms_days=30,
 ):
+    """2026-08-20، طلب Mohamed صراحةً — نموذج العقد بقى مبلغ شهري ثابت +
+    حد أقصى استرشادي شهري (مش سعر لكل ضيف × حصة يومية). valid_from
+    الافتراضي بعيد جدًا في الماضي (مش "أمس" زي قبل كده) عشان اختبارات
+    الترحيل الشهري/التأخر اللي بتحاكي شهور قديمة (45+ يوم) تفضل داخل
+    نافذة صلاحية العقد من غير ما كل تست يحتاج يحدد التاريخ صراحةً."""
     today = date.today()
     data = B2BContractCreate(
         branch_id=branch.id,
         hotel_name=f"Hotel {uuid.uuid4().hex[:6]}",
-        daily_quota=quota,
-        entry_price=entry_price,
-        towel_price=towel_price,
-        valid_from=valid_from or (today - timedelta(days=1)),
-        valid_until=valid_until or (today + timedelta(days=30)),
+        monthly_guest_cap=guest_cap,
+        monthly_fee=monthly_fee,
+        valid_from=valid_from or (today - timedelta(days=400)),
+        valid_until=valid_until or (today + timedelta(days=400)),
         is_active=is_active,
         credit_limit=credit_limit,
         payment_terms_days=payment_terms_days,
@@ -90,6 +94,16 @@ def make_contract(
     obj = crud.create_b2b_contract(db, data)
     db.commit()
     return obj
+
+
+def bill_month(db, on_date):
+    """يرحّل الرسم الشهري الثابت لكل عقود B2B النشطة عن الشهر المحتوي
+    on_date — نفس آلية services.post_b2b_monthly_fees الحقيقية بالظبط
+    (تُستخدم هنا كـfixture setup لتست تانية محتاجة رصيد مستحق حقيقي، مش
+    بيانات وهمية منفصلة عن الدفاتر)."""
+    billed = services.post_b2b_monthly_fees(db, on_date)
+    db.commit()
+    return billed
 
 
 class TestBeachInventory:
@@ -481,26 +495,32 @@ class TestVoidTransaction:
         voided = services.void_transaction(db, tx.id, voided_by=1, reason="غلط في الكمية")
         assert voided.voided_reason == "غلط في الكمية"
 
-    def test_void_b2b_checkin_reverses_outstanding_balance(self, db):
-        """⚠️ باج حقيقي كان هنا قبل إضافة حد الائتمان: إلغاء عملية تشيك-إن
-        B2B كان بيعكس الـ inventory والقيد المحاسبي، بس مايلمسش
-        B2BContractDay.checked_in_count/total_amount خالص — يعني الرصيد
-        المستحق على الفندق (المستخدم دلوقتي في حساب حد الائتمان والتأخر)
-        كان هيفضل متضخّم للأبد حتى بعد الإلغاء الفعلي."""
+    def test_void_b2b_checkin_reverses_headcount_without_raising(self, db):
+        """⚠️ باج حقيقي كان هنا (2026-08-20، أثناء استبدال نموذج العقد
+        بمبلغ شهري ثابت): تشيك-إن B2B بقى بيتسجّل بـ total_amount=0
+        (مفيش سعر لكل ضيف — الرسم بيترحّل شهريًا منفصل، راجع
+        services.post_b2b_monthly_fees)، بس void_transaction كانت لسه
+        بتنادي _post_beach_revenue_reversal_journal لأي معاملة شاطئ من
+        غير استثناء B2B — والدالة دي بترفض صراحةً أي قيد بإجمالي صفر
+        ("إجمالي القيد المحاسبي غير صالح (صفر أو سالب)"). يعني إلغاء أي
+        تشيك-إن B2B كان مستحيل فعليًا (استثناء غير متوقع)، حتى لو
+        الإلغاء نفسه إجراء تشغيلي بسيط (تصحيح عدد ضيوف اتسجّل غلط).
+        اتصلح بتخطي القيد/دفعة الوردية بالكامل لمعاملات B2B (مفيش أي
+        منهم كان اتسجّل أصلاً وقت التشيك-إن)."""
         branch = make_branch(db)
-        contract = make_contract(db, branch, entry_price=Decimal("100"))
+        contract = make_contract(db, branch)
         req = B2BCheckinRequest(contract_id=contract.id, guests_count=4)
         tx = services.b2b_checkin(db, branch.id, req)
+        assert tx.total_amount == Decimal("0")
 
-        balance_after_checkin = crud.get_b2b_outstanding_balance(db, contract.id)
-        assert balance_after_checkin == Decimal("400")
+        day_before = crud.get_or_create_contract_day(db, contract.id, date.today())
+        assert day_before.checked_in_count == 4
 
-        services.void_transaction(db, tx.id, voided_by=1, reason="اختبار")
+        voided = services.void_transaction(db, tx.id, voided_by=1, reason="اختبار")
+        assert voided.voided_at is not None
 
-        balance_after_void = crud.get_b2b_outstanding_balance(db, contract.id)
-        assert balance_after_void == Decimal("0")
-        day = crud.get_or_create_contract_day(db, contract.id, date.today())
-        assert day.checked_in_count == 0
+        day_after = crud.get_or_create_contract_day(db, contract.id, date.today())
+        assert day_after.checked_in_count == 0
 
 
 class TestShiftAttachment:
@@ -632,23 +652,31 @@ class TestB2BCheckin:
         req = B2BCheckinRequest(contract_id=contract.id, guests_count=2, with_towel=True)
         tx = services.b2b_checkin(db, branch.id, req)
         assert tx.tx_type == "entry_towel"
-        assert tx.total_amount == (contract.entry_price + contract.towel_price) * 2
+        assert tx.total_amount == Decimal("0")
 
     def test_b2b_quota_tracking(self, db):
         branch = make_branch(db)
-        contract = make_contract(db, branch, quota=5)
+        contract = make_contract(db, branch, guest_cap=5)
         req = B2BCheckinRequest(contract_id=contract.id, guests_count=3)
         services.b2b_checkin(db, branch.id, req)
 
         day = crud.get_or_create_contract_day(db, contract.id, date.today())
         assert day.checked_in_count == 3
 
-    def test_b2b_quota_exceeded_raises(self, db):
+    def test_b2b_over_monthly_cap_allowed_not_rejected(self, db):
+        """2026-08-20، قرار Mohamed صراحةً: تخطي الحد الشهري الاسترشادي
+        (monthly_guest_cap) مسموح — مفيش رفض خالص، عكس الحصة اليومية
+        القديمة اللي كانت بترفض بمجرد ما تتخطى. الكاشير يقدر يسجّل دخول
+        الضيف بغض النظر، والحد بيظهر بس كتنبيه في اللوحة الحيّة
+        (services.get_b2b_quota_status)."""
         branch = make_branch(db)
-        contract = make_contract(db, branch, quota=2)
+        contract = make_contract(db, branch, guest_cap=2)
         req = B2BCheckinRequest(contract_id=contract.id, guests_count=3)
-        with pytest.raises(ValueError, match="حصة"):
-            services.b2b_checkin(db, branch.id, req)
+        tx = services.b2b_checkin(db, branch.id, req)
+        assert tx.quantity == 3
+
+        day = crud.get_or_create_contract_day(db, contract.id, date.today())
+        assert day.checked_in_count == 3
 
     def test_b2b_nonexistent_contract_raises(self, db):
         branch = make_branch(db)
@@ -685,12 +713,18 @@ class TestB2BCheckin:
         with pytest.raises(ValueError, match="غير سارٍ"):
             services.b2b_checkin(db, branch.id, req)
 
-    def test_b2b_price_calculation(self, db):
+    def test_b2b_checkin_never_has_a_price(self, db):
+        """2026-08-20: العقد مبلغ شهري ثابت، مفيش سعر لكل ضيف — أي تشيك-إن
+        B2B لازم يتسجّل بـ unit_price/total_amount/vat_amount = 0 بغض
+        النظر عن عدد الضيوف، مع فوطة أو من غيرها. الرسم الحقيقي بيترحّل
+        شهريًا منفصل (راجع services.post_b2b_monthly_fees)."""
         branch = make_branch(db)
-        contract = make_contract(db, branch, entry_price=Decimal("100"), towel_price=Decimal("40"))
-        req = B2BCheckinRequest(contract_id=contract.id, guests_count=4, with_towel=False)
+        contract = make_contract(db, branch)
+        req = B2BCheckinRequest(contract_id=contract.id, guests_count=4, with_towel=True)
         tx = services.b2b_checkin(db, branch.id, req)
-        assert tx.total_amount == Decimal("400")
+        assert tx.unit_price == Decimal("0")
+        assert tx.total_amount == Decimal("0")
+        assert tx.vat_amount == Decimal("0")
 
     def test_concurrent_checkin_raises_concurrency_error(self, db, monkeypatch):
         """باج حقيقي كان هنا: b2b_checkin كان بيقرا/يعدّل
@@ -725,7 +759,7 @@ class TestB2BCheckin:
         from tests.conftest import TestingSessionLocal
 
         branch = make_branch(db)
-        contract = make_contract(db, branch, quota=10)
+        contract = make_contract(db, branch, guest_cap=10)
         today = date.today()
         dbA = TestingSessionLocal()
         dbB = TestingSessionLocal()
@@ -736,7 +770,7 @@ class TestB2BCheckin:
             assert dayB.checked_in_count == 0
 
             lockedA = crud.lock_contract_day_for_update(dbA, dayA.id)
-            crud.increment_b2b_checkins(dbA, contract.id, today, 4, Decimal("320"))
+            crud.increment_b2b_checkins(dbA, contract.id, today, 4)
             dbA.commit()
 
             lockedB = crud.lock_contract_day_for_update(dbB, dayB.id)
@@ -752,32 +786,33 @@ class TestB2BCheckin:
 
 
 class TestB2BQuotaStatus:
-    """حالة حصة B2B اليوم — للوحة الحيّة (quota_warning ≤5 متبقين)."""
+    """حالة الحد الشهري الاسترشادي لعقود B2B — للوحة الحيّة (quota_warning
+    ≤5 متبقين من الحد الشهري، مش اليومي بعد 2026-08-20)."""
 
     def test_no_usage_yet_shows_full_quota(self, db):
         branch = make_branch(db)
-        contract = make_contract(db, branch, quota=10)
+        contract = make_contract(db, branch, guest_cap=10)
         status = services.get_b2b_quota_status(db, branch.id)
         assert len(status) == 1
         assert status[0]["checked_in_today"] == 0
-        assert status[0]["remaining_quota"] == 10
+        assert status[0]["remaining_monthly_quota"] == 10
         assert status[0]["quota_warning"] is False
 
     def test_quota_warning_triggers_at_5_or_fewer_remaining(self, db):
         branch = make_branch(db)
-        contract = make_contract(db, branch, quota=8)
+        contract = make_contract(db, branch, guest_cap=8)
         req = B2BCheckinRequest(contract_id=contract.id, guests_count=4)
         services.b2b_checkin(db, branch.id, req)  # remaining = 4
 
         status = services.get_b2b_quota_status(db, branch.id)
         assert status[0]["checked_in_today"] == 4
-        assert status[0]["remaining_quota"] == 4
+        assert status[0]["remaining_monthly_quota"] == 4
         assert status[0]["quota_warning"] is True
 
     def test_quota_warning_sends_whatsapp_to_contract_contact(self, db):
         from unittest.mock import patch
         branch = make_branch(db)
-        contract = make_contract(db, branch, quota=8)
+        contract = make_contract(db, branch, guest_cap=8)
         contract.contact_phone = "01055555555"
         db.commit()
 
@@ -790,15 +825,22 @@ class TestB2BQuotaStatus:
         assert phone_arg == "01055555555"
         assert contract.hotel_name in message_arg
 
-    def test_quota_exhausted(self, db):
+    def test_over_monthly_cap_shows_zero_remaining_without_warning(self, db):
+        """2026-08-20، قرار Mohamed صراحةً: تخطي الحد الشهري الاسترشادي
+        مسموح — مفيش "is_quota_exhausted" خالص بعد دلوقتي.
+        remaining_monthly_quota بتقف عند صفر (مش سالب،
+        beach_engine.B2BContractState.remaining_monthly_quota بيستخدم
+        max(0, ...))، وquota_warning بترجع False لأنها تنبيه "قرّبت من
+        الحد" (0 < remaining ≤ 5)، مش تنبيه "اتخطّى الحد فعلاً"."""
         branch = make_branch(db)
-        contract = make_contract(db, branch, quota=3)
-        req = B2BCheckinRequest(contract_id=contract.id, guests_count=3)
+        contract = make_contract(db, branch, guest_cap=3)
+        req = B2BCheckinRequest(contract_id=contract.id, guests_count=5)  # تخطّى الحد، مقبول
         services.b2b_checkin(db, branch.id, req)
 
         status = services.get_b2b_quota_status(db, branch.id)
-        assert status[0]["is_quota_exhausted"] is True
-        assert status[0]["remaining_quota"] == 0
+        assert status[0]["checked_in_this_month"] == 5
+        assert status[0]["remaining_monthly_quota"] == 0
+        assert status[0]["quota_warning"] is False
 
     def test_inactive_contracts_excluded(self, db):
         branch = make_branch(db)
@@ -815,77 +857,117 @@ class TestB2BCredit:
     ائتمانية متكررة حقيقية في resort-os اليوم — الفوليوهات بتتسوّى فورًا
     عند الخروج، وCRM.total_spent مجرد إحصائية تاريخية مش رصيد مستحق."""
 
-    def test_checkin_within_limit_succeeds(self, db):
+    def test_checkin_ignores_credit_limit_even_when_far_exceeded(self, db):
+        """2026-08-20، قرار Mohamed صراحةً: قبل كده checkin كان بيرفض
+        (400 "تخطى حد الائتمان") لو إجمالي المستحق هيتخطى credit_limit —
+        الاسمين test_checkin_within_limit_succeeds/test_checkin_exceeding_
+        limit_rejected كانا بيثبتوا كده. تشيك-إن B2B بقى عدّاد رؤوس بحت
+        (صفر قيمة مالية لحظية، راجع b2b_checkin) فمفيش أي حساب ائتماني
+        ممكن يحصل وقته أصلاً — الحد بقى مؤشر مراقبة على الرصيد الشهري
+        المرحّل بس (get_b2b_quota_status)، مش بوابة رفض عند التسجيل."""
         branch = make_branch(db)
-        contract = make_contract(db, branch, entry_price=Decimal("100"), credit_limit=Decimal("1000"))
-        req = B2BCheckinRequest(contract_id=contract.id, guests_count=5)  # 500 ج.م
-        tx = services.b2b_checkin(db, branch.id, req)
+        contract = make_contract(db, branch, credit_limit=Decimal("1"), guest_cap=1000)
+        tx = services.b2b_checkin(db, branch.id, B2BCheckinRequest(contract_id=contract.id, guests_count=150))
         assert tx.id is not None
+        assert tx.total_amount == Decimal("0")
 
-    def test_checkin_exceeding_limit_rejected(self, db):
-        branch = make_branch(db)
-        contract = make_contract(db, branch, entry_price=Decimal("100"), credit_limit=Decimal("300"))
-        req = B2BCheckinRequest(contract_id=contract.id, guests_count=5)  # 500 ج.م > 300 حد
-        with pytest.raises(ValueError, match="حد الائتمان"):
-            services.b2b_checkin(db, branch.id, req)
-
-        # العملية المرفوضة ميستهلكش أي سعة/حصة فعليًا — لا شيء اتغيّر.
-        day = crud.get_or_create_contract_day(db, contract.id, date.today())
-        assert day.checked_in_count == 0
+        # عدّة تشيك-إن متتالية كمان من غير أي رفض — مفيش "تراكم نحو الحد" خالص
+        # (السعة الفيزيائية القصوى الافتراضية 200، فبنفضل تحتها).
+        tx2 = services.b2b_checkin(db, branch.id, B2BCheckinRequest(contract_id=contract.id, guests_count=40))
+        assert tx2.id is not None
 
     def test_no_credit_limit_means_unrestricted(self, db):
-        """credit_limit=None (الافتراضي) — مفيش أي تحقق ائتماني خالص، زي
-        سلوك النظام قبل هذه الإضافة تمامًا."""
+        """credit_limit=None (الافتراضي) — نفس سلوك أي credit_limit تاني
+        دلوقتي: مفيش أي تحقق وقت التسجيل خالص."""
         branch = make_branch(db)
-        contract = make_contract(db, branch, entry_price=Decimal("1000"), quota=100)
+        contract = make_contract(db, branch, guest_cap=1000)
         req = B2BCheckinRequest(contract_id=contract.id, guests_count=50)
         tx = services.b2b_checkin(db, branch.id, req)
         assert tx.id is not None
 
-    def test_second_checkin_accumulates_toward_limit(self, db):
-        branch = make_branch(db)
-        contract = make_contract(db, branch, entry_price=Decimal("100"), credit_limit=Decimal("450"), quota=100)
-        services.b2b_checkin(db, branch.id, B2BCheckinRequest(contract_id=contract.id, guests_count=4))  # 400
-
-        with pytest.raises(ValueError, match="حد الائتمان"):
-            services.b2b_checkin(db, branch.id, B2BCheckinRequest(contract_id=contract.id, guests_count=1))  # +100 = 500 > 450
-
     def test_settle_resets_outstanding_balance(self, db):
+        """الرصيد المستحق بقى مبني على B2BContractMonth (الرسم الشهري
+        المرحّل فعليًا)، مش على تراكم تشيك-إن يومي — لازم نرحّل الشهر
+        (bill_month، نفس آلية post_b2b_monthly_fees الحقيقية) الأول قبل ما
+        يبقى فيه رصيد مستحق أصلاً."""
         branch = make_branch(db)
-        contract = make_contract(db, branch, entry_price=Decimal("100"), credit_limit=Decimal("300"))
-        services.b2b_checkin(db, branch.id, B2BCheckinRequest(contract_id=contract.id, guests_count=2))  # 200
+        contract = make_contract(db, branch)
+        bill_month(db, date.today())
+
+        outstanding_before = crud.get_b2b_outstanding_balance(db, contract.id, contract.last_settled_at)
+        assert outstanding_before == contract.monthly_fee
 
         settled = services.settle_b2b_contract(db, contract.id, date.today())
         assert settled.last_settled_at == date.today()
         assert crud.get_b2b_outstanding_balance(db, contract.id, settled.last_settled_at) == Decimal("0")
 
-        # بعد التسوية، فيه مساحة ائتمان تانية.
-        tx = services.b2b_checkin(db, branch.id, B2BCheckinRequest(contract_id=contract.id, guests_count=2))
-        assert tx.id is not None
+    def test_settle_posts_reversing_journal_entry(self, db):
+        """✅ فجوة حقيقية اتصلحت 2026-08-20: التسوية قبل كده كانت مجرد
+        تصفير رصيد بدون أي أثر محاسبي — رصيد 1165 (ذمم فنادق شريكة) كان
+        هيفضل متضخّم للأبد حتى بعد ما الفندق يدفع فعليًا. دلوقتي المفروض
+        يترحّل قيد حقيقي Dr <حساب التسوية> / Cr 1165 بالمبلغ المستحق فعليًا."""
+        from app.modules.finance import crud as finance_crud
+
+        branch = make_branch(db)
+        contract = make_contract(db, branch)
+        bill_month(db, date.today())
+        outstanding = crud.get_b2b_outstanding_balance(db, contract.id, contract.last_settled_at)
+
+        services.settle_b2b_contract(db, contract.id, date.today())
+
+        entries, total = finance_crud.list_journal_entries(db, branch.id, source="beach_b2b_settlement")
+        assert total == 1
+        entry = entries[0]
+        assert entry.source_id == contract.id
+        total_debit = sum(l.debit for l in entry.lines)
+        total_credit = sum(l.credit for l in entry.lines)
+        assert total_debit == total_credit == outstanding
+
+        receivable_account = finance_crud.get_account_by_code(db, branch.id, "1165")
+        receivable_line = next(l for l in entry.lines if l.account_id == receivable_account.id)
+        assert receivable_line.credit == outstanding
+
+    def test_settle_with_zero_outstanding_posts_no_journal(self, db):
+        """عقد لسه ما اترحّلش له أي رسم شهري (أو اتسوّى بالفعل) — التسوية
+        لازم تنجح من غير ما تترحّل أي قيد بمبلغ صفر."""
+        from app.modules.finance import crud as finance_crud
+
+        branch = make_branch(db)
+        contract = make_contract(db, branch)
+
+        settled = services.settle_b2b_contract(db, contract.id, date.today())
+        assert settled.last_settled_at == date.today()
+        _, total = finance_crud.list_journal_entries(db, branch.id, source="beach_b2b_settlement")
+        assert total == 0
 
     def test_settle_nonexistent_contract_raises(self, db):
         with pytest.raises(ValueError):
             services.settle_b2b_contract(db, 9999)
 
     def test_mark_overdue_flags_old_unsettled_balance(self, db):
+        """``changed`` مش بالضرورة 1 بالظبط هنا: crud.list_active_b2b_
+        contracts (زي mark_b2b_contracts_overdue/post_b2b_monthly_fees
+        الاتنين) بتفحص كل عقود B2B النشطة عبر كل الفروع عمدًا (نفس نطاق
+        مهمة Celery الحقيقية) — وbill_month() بتاعتنا بترحّل فعليًا لأي
+        عقد تاني اتعمل في تستات سابقة في نفس الجلسة ولسه مالوش رسم مُرحَّل
+        عن الشهر القديم ده. الفحص الموثوق هنا هو حالة عقدنا إحنا بعد
+        refresh، مش العدد الإجمالي الخام."""
         branch = make_branch(db)
         contract = make_contract(db, branch, payment_terms_days=30)
         old_day = date.today() - timedelta(days=45)
-        crud.increment_b2b_checkins(db, contract.id, old_day, 3, Decimal("300"))
-        db.commit()
+        bill_month(db, old_day)
 
         changed = services.mark_b2b_contracts_overdue(db, date.today())
         db.commit()
         db.refresh(contract)
-        assert changed == 1
+        assert changed >= 1
         assert contract.is_overdue is True
 
     def test_mark_overdue_ignores_recent_balance(self, db):
         branch = make_branch(db)
         contract = make_contract(db, branch, payment_terms_days=30)
         recent_day = date.today() - timedelta(days=5)
-        crud.increment_b2b_checkins(db, contract.id, recent_day, 3, Decimal("300"))
-        db.commit()
+        bill_month(db, recent_day)
 
         services.mark_b2b_contracts_overdue(db, date.today())
         db.commit()
@@ -896,8 +978,7 @@ class TestB2BCredit:
         branch = make_branch(db)
         contract = make_contract(db, branch, payment_terms_days=30)
         old_day = date.today() - timedelta(days=45)
-        crud.increment_b2b_checkins(db, contract.id, old_day, 3, Decimal("300"))
-        db.commit()
+        bill_month(db, old_day)
         services.mark_b2b_contracts_overdue(db, date.today())
         db.commit()
         db.refresh(contract)
@@ -916,8 +997,7 @@ class TestB2BCredit:
         contract.contact_phone = "01099999999"
         db.commit()
         old_day = date.today() - timedelta(days=45)
-        crud.increment_b2b_checkins(db, contract.id, old_day, 3, Decimal("300"))
-        db.commit()
+        bill_month(db, old_day)
 
         with patch("app.core.kernel.whatsapp.send_whatsapp_message", return_value=True) as mock_send:
             services.mark_b2b_contracts_overdue(db, date.today())
@@ -930,15 +1010,23 @@ class TestB2BCredit:
 
     def test_quota_status_includes_credit_and_overdue_fields(self, db):
         branch = make_branch(db)
-        contract = make_contract(db, branch, entry_price=Decimal("100"), credit_limit=Decimal("150"))
-        services.b2b_checkin(db, branch.id, B2BCheckinRequest(contract_id=contract.id, guests_count=1))
+        contract = make_contract(db, branch, credit_limit=Decimal("5000"))  # > monthly_fee الافتراضي (2400)
+        bill_month(db, date.today())
 
         status = services.get_b2b_quota_status(db, branch.id)
-        entry = status[0]
-        assert entry["credit_limit"] == Decimal("150")
-        assert entry["outstanding_balance"] == Decimal("100")
+        entry = next(e for e in status if e["contract_id"] == contract.id)
+        assert entry["credit_limit"] == Decimal("5000")
+        assert entry["outstanding_balance"] == contract.monthly_fee
         assert entry["credit_exceeded"] is False
         assert entry["is_overdue"] is False
+
+    def test_quota_status_flags_credit_exceeded(self, db):
+        branch = make_branch(db)
+        contract = make_contract(db, branch, credit_limit=Decimal("1"))
+        bill_month(db, date.today())  # monthly_fee الافتراضي (2400) > حد 1
+
+        status = services.get_b2b_quota_status(db, branch.id)
+        assert status[0]["credit_exceeded"] is True
 
 
 class TestBeachReservation:
@@ -1188,6 +1276,11 @@ class TestEODReport:
         assert report["vs_yesterday_pct"] == 100.0  # ضعف الإيراد (2x)
 
     def test_b2b_tracked_in_report(self, db):
+        """2026-08-20: تشيك-إن B2B عدّاد رؤوس بحت — b2b_entries لسه بيتحسب
+        صح، لكن b2b_revenue اليومي لازم يبقى صفر دايمًا (مفيش سعر لحظي خالص،
+        الرسم الشهري الثابت بيترحّل مرة واحدة شهريًا عبر post_b2b_monthly_
+        fees، مش يوميًا لكل تشيك-إن) — عكس النظام القديم اللي كان بيحسب
+        سعر × عدد الضيوف وقت التسجيل."""
         branch = make_branch(db)
         today = date.today()
         contract = make_contract(db, branch)
@@ -1196,7 +1289,7 @@ class TestEODReport:
 
         report = services.get_eod_report(db, branch.id, today)
         assert report["b2b_entries"] == 4
-        assert report["b2b_revenue"] > 0
+        assert report["b2b_revenue"] == 0
 
     def test_generate_eod_pdf(self, db):
         branch = make_branch(db)
@@ -1207,10 +1300,14 @@ class TestEODReport:
 
 
 def make_finance_accounts(db, branch):
-    """يزرع 1100 (نقدية) و4300 (إيرادات الشاطئ) و1150 (ذمم الفوليو) و2160.
+    """يزرع 1100 (نقدية) و4300 (إيرادات الشاطئ) و1150 (ذمم الفوليو) و2160
+    و1110 (بنك، تسوية B2B) و1165 (ذمم فنادق شريكة B2B).
 
     الشاطئ الجديد بلا VAT ولا يستخدم 2160؛ الحساب باقٍ لأن بقية المنظومة
-    الخاضعة للضريبة واختبارات التوافق التاريخي تحتاجه.
+    الخاضعة للضريبة واختبارات التوافق التاريخي تحتاجه. 1110/1165 اتضافوا
+    2026-08-20 مع تحويل عقود B2B لمبلغ شهري ثابت — post_b2b_monthly_fees/
+    settle_b2b_contract الحقيقيين بيترحّلوا عليهم فعليًا (راجع services.py)،
+    فلازم يكونوا موجودين لأي تست بيستخدم bill_month()/settle_b2b_contract.
     Idempotent (بيتخطى أي كود موجود بالفعل) — make_branch بينادي الدالة دي
     تلقائيًا، فالاستدعاء الصريح القديم في بعض التستات بقى no-op آمن."""
     from app.modules.finance.models import Account
@@ -1222,6 +1319,8 @@ def make_finance_accounts(db, branch):
         ("4300", "Beach Revenue", "revenue"),
         ("1150", "ذمم الفوليو", "asset"),
         ("2160", "ضريبة القيمة المضافة مستحقة", "liability"),
+        ("1110", "البنك", "asset"),
+        ("1165", "ذمم فنادق شريكة (B2B)", "asset"),
     ]
     added = [
         Account(branch_id=branch.id, code=code, name=name, account_type=account_type)
@@ -1303,7 +1402,12 @@ class TestBeachRevenueJournalPosting:
         assert captured["total"] == float(tx.total_amount)
         assert all("ضريبة" not in label for label, _value in captured["fields"])
 
-    def test_b2b_checkin_posts_journal_entry(self, db):
+    def test_b2b_checkin_posts_no_journal_entry(self, db):
+        """2026-08-20: عكس السلوك القديم تمامًا (كان اسم هذا الاختبار
+        test_b2b_checkin_posts_journal_entry ويؤكد وجود قيد فوري). تشيك-إن
+        B2B بقى عدّاد رؤوس بحت من غير أي أثر مالي لحظي — الرسم الشهري
+        الثابت بيترحّل مرة واحدة شهريًا فقط (source="beach_b2b_monthly"،
+        راجع services.post_b2b_monthly_fees)، مش لكل تشيك-إن."""
         from app.modules.finance import crud as finance_crud
         branch = make_branch(db)
         make_finance_accounts(db, branch)
@@ -1311,10 +1415,12 @@ class TestBeachRevenueJournalPosting:
 
         tx = services.b2b_checkin(db, branch.id, B2BCheckinRequest(contract_id=contract.id, guests_count=3))
 
-        entries, total = finance_crud.list_journal_entries(db, branch.id, source="beach")
         assert tx.vat_amount == Decimal("0.00")
-        assert total == 1
-        assert entries[0].source_id == tx.id
+        assert tx.total_amount == Decimal("0.00")
+        _, beach_total = finance_crud.list_journal_entries(db, branch.id, source="beach")
+        assert beach_total == 0
+        _, monthly_total = finance_crud.list_journal_entries(db, branch.id, source="beach_b2b_monthly")
+        assert monthly_total == 0
 
     def test_missing_accounts_blocks_sale(self, db):
         """OPS-DATA-02 FIN-TAX-01: عكس السلوك القديم تمامًا (كان اسم هذا
@@ -1563,7 +1669,7 @@ class TestTimezoneBugFixes:
 
         branch = make_branch(db)
         contract = make_contract(
-            db, branch, quota=5,
+            db, branch, guest_cap=5,
             valid_from=forced_date - timedelta(days=1),
             valid_until=forced_date + timedelta(days=30),
         )

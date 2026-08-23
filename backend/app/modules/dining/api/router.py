@@ -1576,7 +1576,7 @@ def hotel_consumption_report(
     لكل فندق يعرض:
     - إجمالي الطلبات، عدد الضيوف، الإيراد
     - تفصيل لكل منفذ (مطعم/كافيه) بشكل منفصل
-    - بيانات العقد (daily_quota + entry_price) للمقارنة
+    - بيانات العقد (المبلغ الشهري الثابت + الحد الأقصى الاسترشادي) للمقارنة
 
     يتطلب مستوى مدير+.
     """
@@ -1594,8 +1594,8 @@ def hotel_consumption_report(
             total_orders=r["total_orders"],
             total_guests=r["total_guests"],
             total_revenue=r["total_revenue"],
-            contract_daily_quota=r["contract_daily_quota"],
-            contract_entry_price=r["contract_entry_price"],
+            contract_monthly_guest_cap=r["contract_monthly_guest_cap"],
+            contract_monthly_fee=r["contract_monthly_fee"],
             by_outlet=[
                 HotelOutletBreakdown(**outlet_row)
                 for outlet_row in r["by_outlet"]

@@ -77,12 +77,15 @@ class BeachInventoryState:
 
 @dataclass
 class B2BContractState:
+    """2026-08-20، طلب Mohamed صراحةً — نموذج "مبلغ شهري ثابت + حد أقصى
+    استرشادي" بدل "سعر لكل ضيف × حصة يومية" القديم. ``monthly_guest_cap``
+    مش حد رفض — تخطيه مسموح صراحةً (قرار Mohamed)، بيولّد بس تنبيه واحد
+    للفندق (راجع quota_warning) زي تحذير الحصة القديم بالظبط."""
     contract_id: int
     hotel_name: str
-    daily_quota: int
-    checked_in_today: int
-    entry_price: Decimal
-    towel_price: Decimal
+    monthly_guest_cap: int
+    checked_in_this_month: int
+    monthly_fee: Decimal
     is_active: bool
     valid_from: date
     valid_until: date
@@ -92,17 +95,14 @@ class B2BContractState:
         return self.valid_from <= check_date <= self.valid_until
 
     @property
-    def remaining_quota(self) -> int:
-        return max(0, self.daily_quota - self.checked_in_today)
-
-    @property
-    def is_quota_exhausted(self) -> bool:
-        return self.checked_in_today >= self.daily_quota
+    def remaining_monthly_quota(self) -> int:
+        return max(0, self.monthly_guest_cap - self.checked_in_this_month)
 
     @property
     def quota_warning(self) -> bool:
-        """يُرسل WhatsApp للفندق لما يبقى 5 أشخاص أو أقل."""
-        return 0 < self.remaining_quota <= 5
+        """يُرسل WhatsApp للفندق لما يبقى 5 أشخاص أو أقل من الحد الشهري —
+        تنبيه بس، مش رفض (تخطي الحد مسموح صراحةً)."""
+        return 0 < self.remaining_monthly_quota <= 5
 
 
 # ── Validation ────────────────────────────────────────────────────────────────
@@ -145,17 +145,18 @@ def validate_entry(
 
 def validate_b2b_checkin(
     contract: B2BContractState,
-    guests_count: int,
     check_date: Optional[date] = None,
 ) -> BeachValidationResult:
-    """تحقق من حصة الفندق قبل تسجيل دخول B2B.
+    """تحقق من صلاحية عقد الفندق قبل تسجيل دخول B2B — الحد الشهري (2026-08-20)
+    مش جزء من التحقق ده خالص: تخطي الحد مسموح صراحةً (قرار Mohamed)، فمفيش
+    رفض بسببه هنا — بس تنبيه واتساب منفصل (راجع services.b2b_checkin).
 
     ⚠️ باج حقيقي كان هنا: التحقق كان بيقتصر على `is_active` بس — عقد فندق
     منتهي فعليًا (valid_until فات معاده من شهور) بس لسه `is_active=True` في
     الداتابيز (محدش رجع يقفله يدويًا) كان يعدّي تسجيل الدخول عادي وبيستهلك
-    سعة/فوط حقيقية ويتحاسب الفندق عليه، رغم إن العقد انتهى فعليًا. دلوقتي
-    بيتحقق كمان من نافذة الصلاحية (valid_from/valid_until) بالنسبة لتاريخ
-    العملية نفسه (مش دايمًا النهاردة، عشان check-in بتاريخ سابق يتحقق صح)."""
+    سعة/فوط حقيقية، رغم إن العقد انتهى فعليًا. دلوقتي بيتحقق كمان من نافذة
+    الصلاحية (valid_from/valid_until) بالنسبة لتاريخ العملية نفسه (مش دايمًا
+    النهاردة، عشان check-in بتاريخ سابق يتحقق صح)."""
     check_date = check_date or date.today()
     if not contract.is_active:
         return BeachValidationResult(False, "عقد الفندق غير نشط")
@@ -164,16 +165,6 @@ def validate_b2b_checkin(
             False,
             f"عقد {contract.hotel_name} غير سارٍ في هذا التاريخ "
             f"(سارٍ من {contract.valid_from} إلى {contract.valid_until})"
-        )
-    if contract.is_quota_exhausted:
-        return BeachValidationResult(
-            False,
-            f"استُنفدت الحصة اليومية لـ {contract.hotel_name} ({contract.daily_quota} شخص)"
-        )
-    if contract.checked_in_today + guests_count > contract.daily_quota:
-        return BeachValidationResult(
-            False,
-            f"الحصة المتبقية {contract.remaining_quota} شخص فقط"
         )
     return BeachValidationResult(True)
 
@@ -205,32 +196,7 @@ def calculate_tx_price(
     return base * quantity
 
 
-def calculate_b2b_price(
-    contract: B2BContractState,
-    guests_count: int,
-    with_towel: bool,
-) -> Decimal:
-    """إجمالي دخول B2B (دخول + فوط اختياري)."""
-    total = contract.entry_price * guests_count
-    if with_towel:
-        total += contract.towel_price * guests_count
-    return total
-
-
-# ── Credit limit & dunning (B2B فقط — راجع تعليق B2BContract في models.py) ────
-
-def would_exceed_credit_limit(
-    outstanding_balance: Decimal,
-    new_charge: Decimal,
-    credit_limit: Optional[Decimal],
-) -> bool:
-    """True لو إضافة ``new_charge`` للرصيد الحالي هتتخطى حد الائتمان.
-    ``credit_limit=None`` يعني مفيش حد مضبوط لهذا الفندق — دايمًا False
-    (نفس سلوك daily_quota لو contract مفيهوش حد بمعنى "مسموح دايمًا")."""
-    if credit_limit is None:
-        return False
-    return (outstanding_balance + new_charge) > credit_limit
-
+# ── Dunning (تأخر السداد — B2B فقط، راجع تعليق B2BContract في models.py) ──
 
 def is_contract_overdue(
     oldest_unsettled_day: Optional[date],

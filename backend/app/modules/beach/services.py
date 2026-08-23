@@ -21,14 +21,12 @@ from app.resort_os.beach_engine import (
     DEFAULT_BEACH_CAPACITY_MAX,
     B2BContractState,
     BeachInventoryState,
-    calculate_b2b_price,
     calculate_inventory_delta,
     calculate_tx_price,
     is_contract_overdue,
     parse_beach_capacity_max,
     validate_b2b_checkin,
     validate_entry,
-    would_exceed_credit_limit,
 )
 
 logger = logging.getLogger(__name__)
@@ -669,16 +667,26 @@ def _post_beach_folio_charge_journal(db: Session, tx: "BeachTransaction") -> Non
     )
 
 
-def _contract_state(contract_row: "B2BContract", checked_in_today: int) -> B2BContractState:
+def _month_bounds(day: date) -> tuple[date, date]:
+    """أول وآخر يوم في الشهر التقويمي اللي يحتوي ``day`` — يُستخدم لحساب
+    استهلاك الحد الشهري الاسترشادي ولقطة guests_count وقت الترحيل الشهري."""
+    start = day.replace(day=1)
+    if start.month == 12:
+        end = date(start.year, 12, 31)
+    else:
+        end = date(start.year, start.month + 1, 1) - timedelta(days=1)
+    return start, end
+
+
+def _contract_state(contract_row: "B2BContract", checked_in_this_month: int) -> B2BContractState:
     """يبني B2BContractState من صف B2BContract — نقطة واحدة عشان أي حقل
     جديد (زي valid_from/valid_until) يتضاف مرة واحدة بس، مش يتكرر في 3 أماكن."""
     return B2BContractState(
         contract_id=contract_row.id,
         hotel_name=contract_row.hotel_name,
-        daily_quota=contract_row.daily_quota,
-        checked_in_today=checked_in_today,
-        entry_price=contract_row.entry_price,
-        towel_price=contract_row.towel_price,
+        monthly_guest_cap=contract_row.monthly_guest_cap,
+        checked_in_this_month=checked_in_this_month,
+        monthly_fee=contract_row.monthly_fee,
         is_active=contract_row.is_active,
         valid_from=contract_row.valid_from,
         valid_until=contract_row.valid_until,
@@ -691,6 +699,12 @@ def b2b_checkin(
     data: B2BCheckinRequest,
     tx_date: Optional[date] = None,
 ) -> BeachTransaction:
+    """2026-08-20، طلب Mohamed صراحةً: عقد B2B بقى مبلغ شهري ثابت، فتشيك-إن
+    الضيف بقى عدّاد بحت — مفيش سعر، مفيش رفض لو الحد الشهري الاسترشادي
+    اتخطّى (تخطّيه مسموح صراحةً)، ومفيش قيد محاسبي هنا خالص (الإيراد
+    بيترحّل مرة واحدة شهريًا — راجع post_b2b_monthly_fees). المتبقّي اللي
+    لسه حقيقي فعليًا: صلاحية العقد + سعة/فوط الشاطئ الفعلية (قيود فيزيائية
+    حقيقية، مش شرط عقد)."""
     tx_date = tx_date or _business_today()
 
     contract_row = crud.get_b2b_contract(db, data.contract_id)
@@ -699,9 +713,12 @@ def b2b_checkin(
 
     contract_day = crud.get_or_create_contract_day(db, data.contract_id, tx_date)
     contract_day = _lock_contract_day_or_raise(db, contract_day)
-    contract_state = _contract_state(contract_row, contract_day.checked_in_count)
 
-    validation = validate_b2b_checkin(contract_state, data.guests_count, tx_date)
+    month_start, month_end = _month_bounds(tx_date)
+    checked_in_this_month = crud.get_b2b_checked_in_count_for_month(db, data.contract_id, month_start, month_end)
+    contract_state = _contract_state(contract_row, checked_in_this_month)
+
+    validation = validate_b2b_checkin(contract_state, tx_date)
     if not validation.valid:
         raise ValueError(validation.error)
 
@@ -719,49 +736,27 @@ def b2b_checkin(
     if not inv_validation.valid:
         raise ValueError(inv_validation.error)
 
-    total = calculate_b2b_price(contract_state, data.guests_count, data.with_towel)
-    vat   = BEACH_VAT_AMOUNT
-
-    # تحقق من حد الائتمان — قبل أي تعديل فعلي على inventory/checked_in_count
-    # عشان لو اتخطى الحد، محدش يتأثر ولا يتحتاج عكس. راجع تعليق B2BContract
-    # في models.py: حد ائتمان صريح (مش None) معناه مدير الإيرادات قرر عمدًا
-    # إن الفندق ده يستاهل حد أقصى للرصيد المستحق — تخطيه لازم يترفض بوضوح
-    # (زي استنفاد الحصة اليومية بالظبط)، مش يتحول لمجرد تحذير صامت ممكن حد
-    # يتجاهله تحت ضغط الشغل (نفس فئة الأخطاء الصامتة اللي اتصلحت في موديولات
-    # تانية قبل كده في هذا المشروع). المقارنة على أساس `total` (قبل الضريبة)
-    # مش `total + vat` — عشان تفضل متسقة مع B2BContractDay.total_amount نفسه
-    # (نفس العمود اللي بيتجمع منه outstanding_balance وبيُعرض كـ "إيراد B2B"
-    # في اللوحة الحيّة أصلاً)، مش رقم تاني بمعنى مختلف شوية.
-    if contract_row.credit_limit is not None:
-        outstanding = crud.get_b2b_outstanding_balance(db, data.contract_id, contract_row.last_settled_at)
-        if would_exceed_credit_limit(outstanding, total, contract_row.credit_limit):
-            raise ValueError(
-                f"تخطّى حد الائتمان لعقد {contract_row.hotel_name} — "
-                f"الرصيد المستحق حاليًا {outstanding:,.2f} ج.م + هذه العملية "
-                f"{total:,.2f} ج.م هيتعدّى الحد المسموح "
-                f"{contract_row.credit_limit:,.2f} ج.م. سوّي الحساب مع الفندق "
-                f"أو ارفع حد الائتمان من شاشة إدارة عقود B2B قبل المتابعة."
-            )
-
     cap_delta, towel_delta = calculate_inventory_delta(tx_type, data.guests_count)
     crud.apply_inventory_delta(db, inv_row, cap_delta, towel_delta)
 
-    crud.increment_b2b_checkins(db, data.contract_id, tx_date, data.guests_count, total)
+    crud.increment_b2b_checkins(db, data.contract_id, tx_date, data.guests_count)
 
-    # تحذير الحصة (warning إذا بقي ≤ 5) — لازم يتحسب على العدد بعد الزيادة
-    # (increment_b2b_checkins فوق)، وإلا التحذير كان هيتأخر تسجيل دخول واحد
-    # كامل عن اللحظة الفعلية اللي الحصة توصل فيها للحد (باج توقيت حقيقي).
-    updated_day = crud.get_or_create_contract_day(db, data.contract_id, tx_date)
-    updated_state = _contract_state(contract_row, updated_day.checked_in_count)
-    if updated_state.quota_warning and not updated_day.notified_quota_warning:
-        updated_day.notified_quota_warning = True
+    # تحذير الحد الشهري (warning إذا بقي ≤ 5) — لازم يتحسب على العدد بعد
+    # الزيادة فوق، وإلا التحذير كان هيتأخر تسجيل دخول واحد كامل عن اللحظة
+    # الفعلية اللي الحد يوصل فيها (نفس باج التوقيت اللي كان موجود في النسخة
+    # اليومية القديمة). ``notified_quota_warning_period`` بيتقارن بأول يوم
+    # في الشهر الحالي — بيتصفّر ضمنيًا كل شهر جديد من غير أي مهمة Celery
+    # منفصلة تصفّره.
+    updated_state = _contract_state(contract_row, checked_in_this_month + data.guests_count)
+    if updated_state.quota_warning and contract_row.notified_quota_warning_period != month_start:
+        contract_row.notified_quota_warning_period = month_start
         db.flush()
         if contract_row.contact_phone:
             try:
                 from app.core.kernel.whatsapp import send_whatsapp_message  # noqa: PLC0415
                 send_whatsapp_message(
                     contract_row.contact_phone,
-                    f"تنبيه: حصة {contract_row.hotel_name} اليومية في الخيمة بيتش أوشكت على الانتهاء (≤5 متبقي).",
+                    f"تنبيه: الحد الشهري لـ {contract_row.hotel_name} في الخيمة بيتش أوشك على الانتهاء (≤5 متبقي هذا الشهر).",
                 )
             except Exception:
                 pass  # ميمنعش إتمام تسجيل الدخول لو فشل إرسال التنبيه
@@ -770,16 +765,17 @@ def b2b_checkin(
         "branch_id":       branch_id,
         "tx_type":         tx_type,
         "quantity":        data.guests_count,
-        "unit_price":      contract_row.entry_price,
-        "total_amount":    total,
-        "vat_amount":      vat,
+        "unit_price":      Decimal("0"),
+        "total_amount":    Decimal("0"),
+        "vat_amount":      Decimal("0"),
         "surge_applied":   False,
         "tx_date":         tx_date,
         "cashier_id":      data.cashier_id,
         "b2b_contract_id": data.contract_id,
     })
 
-    _post_beach_revenue_journal(db, tx)
+    # مفيش ترحيل إيراد هنا عمدًا — الرسم الشهري الثابت بيترحّل مرة واحدة
+    # شهريًا (راجع post_b2b_monthly_fees)، مش لكل تشيك-إن.
 
     db.commit()
     db.refresh(tx)
@@ -825,7 +821,15 @@ def _void_transaction_atomic(
     # عكس الأثر المالي — نفس التفرّع اللي حصل وقت sell_ticket بالظبط.
     # الحساب الآجل له دفتر فرعي وقيد Dr 1160 مستقل؛ معاملته كبيع كاش هنا
     # كانت ستنشئ Cr 1100 وهمي وتترك مديونية العميل كما هي.
-    if tx.payment_method == "credit_account":
+    #
+    # تشيك-إن B2B (2026-08-20): مفيش أثر مالي خالص وقت التسجيل (الرسم
+    # الشهري الثابت بيترحّل منفصل شهريًا — راجع b2b_checkin) فمفيش قيد
+    # عكسي ولا دفعة وردية يتلغوا هنا. _post_beach_revenue_reversal_journal
+    # كانت هترفض فعليًا (gross_amount=0 → ValueError) لو اتنادت على معاملة
+    # زي دي.
+    if tx.b2b_contract_id:
+        pass
+    elif tx.payment_method == "credit_account":
         from app.modules.credit import crud as credit_crud  # noqa: PLC0415
         from app.modules.credit import services as credit_services  # noqa: PLC0415
 
@@ -864,16 +868,14 @@ def _void_transaction_atomic(
         _post_beach_revenue_reversal_journal(db, tx)
         _void_shift_payment(db, tx, voided_by)
 
-    # عكس رصيد B2B المستحق لو العملية كانت تشيك-إن فندق شريك — راجع تعليق
-    # crud.decrement_b2b_checkins: باج حقيقي كان هنا قبل إضافة حد الائتمان
-    # (الإلغاء كان بيعكس كل حاجة إلا رصيد الفندق نفسه). ⚠️ باج تاني اتصلح
-    # هنا (2026-07-28): decrement_b2b_checkins بتعمل قراءة/تعديل غير مقفولة
-    # لصف B2BContractDay — نفس فئة باج الـinventory فوق بالظبط، لو تشيك-إن
-    # B2B جديد حصل في نفس اللحظة، الإلغاء كان ممكن يمسح أثره بصمت.
+    # عكس عدّاد B2B اليومي (checked_in_count بس دلوقتي — مفيش مبلغ يتعكس
+    # منذ 2026-08-20، راجع models.B2BContractDay) لو العملية كانت تشيك-إن
+    # فندق شريك. القفل هنا نفس فئة قفل الـinventory فوق بالظبط — لو تشيك-إن
+    # B2B جديد حصل في نفس اللحظة، الإلغاء كان ممكن يمسح أثره بصمت من غيره.
     if tx.b2b_contract_id:
         day_row = crud.get_or_create_contract_day(db, tx.b2b_contract_id, tx.tx_date)
         _lock_contract_day_or_raise(db, day_row)
-        crud.decrement_b2b_checkins(db, tx.b2b_contract_id, tx.tx_date, tx.quantity, tx.total_amount)
+        crud.decrement_b2b_checkins(db, tx.b2b_contract_id, tx.tx_date, tx.quantity)
 
     # ⚠️ باج حقيقي كان هنا (اتصلح 2026-07-28): إلغاء معاملة اتسجّلت عن طريق
     # خريطة الشاطئ الحية (checkin_location) كان بيعكس كل الأثر المالي/المخزني
@@ -1124,53 +1126,132 @@ def generate_eod_report_pdf(db: Session, branch_id: int, report_date: Optional[d
 
 
 def get_b2b_quota_status(db: Session, branch_id: int, day: Optional[date] = None) -> list[dict]:
-    """حالة حصص/ائتمان كل فنادق B2B النشطة اليوم — بيوصل quota_warning
-    (≤5 أشخاص متبقين) من beach_engine.B2BContractState + حالة الائتمان
-    (outstanding_balance/credit_limit/is_overdue) لنفس اللوحة الحيّة، بنفس
-    نمط عرض العقود المنتهية (is_valid_today) اللي اتضاف قبل كده."""
+    """حالة الحد الشهري الاسترشادي + الائتمان لكل فنادق B2B النشطة — بيوصل
+    quota_warning (≤5 متبقي من الحد الشهري) من beach_engine.B2BContractState
+    + حالة الائتمان (outstanding_balance/credit_limit/is_overdue) لنفس
+    اللوحة الحيّة. ``checked_in_today`` لسه معروض منفصل (إحصائية تشغيلية
+    مفيدة للكاشير حتى لو الحد نفسه بقى شهري مش يومي)."""
     day = day or _business_today()
+    month_start, month_end = _month_bounds(day)
     rows = crud.list_b2b_contracts_with_today_usage(db, branch_id, day)
 
     result = []
     for contract, checked_in_today in rows:
-        state = _contract_state(contract, checked_in_today)
+        checked_in_this_month = crud.get_b2b_checked_in_count_for_month(db, contract.id, month_start, month_end)
+        state = _contract_state(contract, checked_in_this_month)
         outstanding = crud.get_b2b_outstanding_balance(db, contract.id, contract.last_settled_at)
         result.append({
-            "contract_id":        state.contract_id,
-            "hotel_name":         state.hotel_name,
-            "daily_quota":        state.daily_quota,
-            "checked_in_today":   state.checked_in_today,
-            "remaining_quota":    state.remaining_quota,
-            "is_quota_exhausted": state.is_quota_exhausted,
-            "quota_warning":      state.quota_warning,
-            "is_valid_today":     state.is_valid_on(day),
-            "credit_limit":       contract.credit_limit,
-            "outstanding_balance": outstanding,
-            "credit_exceeded":    (
+            "contract_id":           state.contract_id,
+            "hotel_name":            state.hotel_name,
+            "checked_in_today":      checked_in_today,
+            "monthly_guest_cap":     state.monthly_guest_cap,
+            "checked_in_this_month": state.checked_in_this_month,
+            "remaining_monthly_quota": state.remaining_monthly_quota,
+            "quota_warning":         state.quota_warning,
+            "is_valid_today":        state.is_valid_on(day),
+            "monthly_fee":           contract.monthly_fee,
+            "credit_limit":          contract.credit_limit,
+            "outstanding_balance":   outstanding,
+            "credit_exceeded":       (
                 contract.credit_limit is not None and outstanding > contract.credit_limit
             ),
-            "is_overdue":         contract.is_overdue,
-            "payment_terms_days": contract.payment_terms_days,
+            "is_overdue":            contract.is_overdue,
+            "payment_terms_days":    contract.payment_terms_days,
         })
     return result
 
 
 def settle_b2b_contract(
     db: Session, contract_id: int, settled_through: Optional[date] = None,
+    settlement_account_code: str = "1110",
 ) -> "B2BContract":
     """يسجّل تسوية (تحصيل) رصيد الفندق الشريك — يُستدعى لما الفندق يدفع
-    فاتورته الدورية. بيصفّر الرصيد المستحق فعليًا لحد تاريخ التسوية وبيلغي
-    علم التأخر."""
+    فاتورته الدورية (عادة تحويل بنكي للمنتجع، مش كاش في درج كاشير الشاطئ —
+    الحساب الافتراضي 1110 بنك، مش 1100 صندوق). بيرحّل قيد تحصيل حقيقي
+    (Dr <settlement_account_code> / Cr 1165) بالمبلغ المستحق فعليًا قبل ما
+    يصفّر الرصيد، وبيلغي علم التأخر.
+
+    ✅ فجوة حقيقية اتصلحت هنا (2026-08-20): قبل كده التسوية كانت مجرد
+    تصفير رصيد بدون أي أثر محاسبي — رصيد 1165 (ذمم فنادق شريكة) كان
+    هيفضل متضخّم للأبد حتى بعد ما الفندق يدفع فعليًا. مفيش قيد لو الرصيد
+    المستحق صفر أصلاً (عقد جديد لسه ما اتحاسبش عليه شهر، أو اتسوّى بالفعل)."""
     contract = crud.get_b2b_contract(db, contract_id)
     if not contract:
         raise ValueError(f"العقد {contract_id} غير موجود")
     settled_through = settled_through or _business_today()
     if contract.last_settled_at and settled_through < contract.last_settled_at:
         raise ValueError("تاريخ التسوية لا يمكن أن يكون قبل آخر تسوية مسجّلة")
+
+    outstanding = crud.get_b2b_outstanding_balance(db, contract_id, contract.last_settled_at)
+    if outstanding > 0:
+        from app.modules.finance import crud as finance_crud  # noqa: PLC0415
+        from app.modules.finance.schemas import JournalEntryCreate, JournalLineCreate  # noqa: PLC0415
+        from app.modules.finance.services import post_journal_entry  # noqa: PLC0415
+
+        settlement_account = finance_crud.get_account_by_code(db, contract.branch_id, settlement_account_code)
+        receivable_account = finance_crud.get_account_by_code(db, contract.branch_id, "1165")
+        if not settlement_account or not receivable_account:
+            raise ValueError("حسابات التسوية أو ذمم الفنادق الشريكة غير معرّفة في دليل الحسابات")
+        post_journal_entry(
+            db,
+            JournalEntryCreate(
+                branch_id=contract.branch_id, entry_date=settled_through,
+                reference=f"B2B-SETTLE-{contract.id}-{settled_through.isoformat()}",
+                description=f"تسوية رصيد B2B — {contract.hotel_name}",
+                source="beach_b2b_settlement", source_id=contract.id,
+                lines=[
+                    JournalLineCreate(account_id=settlement_account.id, debit=outstanding, credit=Decimal("0")),
+                    JournalLineCreate(account_id=receivable_account.id, debit=Decimal("0"), credit=outstanding),
+                ],
+            ),
+            user_id=0,
+        )
+
     contract = crud.settle_b2b_contract(db, contract, settled_through)
     db.commit()
     db.refresh(contract)
     return contract
+
+
+def post_b2b_monthly_fees(db: Session, today: Optional[date] = None) -> int:
+    """يرحّل الرسم الشهري الثابت لكل عقد B2B نشط لسه ما ترحّلش له الشهر
+    الحالي — الجزء القابل للاختبار من مهمة Celery الدورية (نفس نمط
+    mark_b2b_contracts_overdue: دالة service خالصة بتاخد db + today وتُرجع
+    عدد العقود اللي اترحّلها، والـ task نفسه بس wrapper حول SessionLocal +
+    commit). idempotent على مستويين: B2BContractMonth.UniqueConstraint
+    (contract_id, period_month) بيتحقق منه هنا قبل أي محاولة، وpost_taxed_
+    sale_journal's فحص source/source_id/reference (لو الاتنين اتخطّوا لأي
+    سبب، القيد نفسه برضو مايتكررش)."""
+    from app.modules.finance.services import post_taxed_sale_journal  # noqa: PLC0415
+
+    today = today or _business_today()
+    month_start, month_end = _month_bounds(today)
+    contracts = crud.list_active_b2b_contracts(db)
+    billed = 0
+    for contract in contracts:
+        # العقد لازم يكون سارٍ في جزء على الأقل من الشهر ده — لو خلص خلاص
+        # قبل بداية الشهر أو لسه ما بدأش لحد آخره، مفيش رسم يترحّل.
+        if contract.valid_until < month_start or contract.valid_from > month_end:
+            continue
+        if crud.get_b2b_contract_month(db, contract.id, month_start):
+            continue  # اترحّل بالفعل لهذا الشهر
+
+        guests_count = crud.get_b2b_checked_in_count_for_month(db, contract.id, month_start, month_end)
+        entry = post_taxed_sale_journal(
+            db, contract.branch_id, today,
+            debit_account_code="1165", revenue_account_code="4300",
+            net_revenue_amount=contract.monthly_fee,
+            reference=f"B2B-MONTHLY-{contract.id}-{month_start.isoformat()}",
+            description=f"رسم شهري ثابت — {contract.hotel_name} ({month_start:%Y-%m})",
+            source="beach_b2b_monthly", source_id=contract.id,
+            cost_center_code="BEACH",
+            commit_cost_centers=False,
+        )
+        crud.create_b2b_contract_month(
+            db, contract.id, month_start, guests_count, contract.monthly_fee, entry.id,
+        )
+        billed += 1
+    return billed
 
 
 def mark_b2b_contracts_overdue(db: Session, today: Optional[date] = None) -> int:
@@ -1182,10 +1263,10 @@ def mark_b2b_contracts_overdue(db: Session, today: Optional[date] = None) -> int
     دخول في حالة التأخر (notified_overdue) — نفس نمط quota_warning في
     b2b_checkin، عشان مبعتش رسالة كل يوم للفندق طول ما لسه متأخر."""
     today = today or _business_today()
-    contracts = crud.list_active_b2b_contracts_for_overdue_check(db)
+    contracts = crud.list_active_b2b_contracts(db)
     changed = 0
     for contract in contracts:
-        oldest_unsettled = crud.get_b2b_oldest_unsettled_day(db, contract.id, contract.last_settled_at)
+        oldest_unsettled = crud.get_b2b_oldest_unsettled_month(db, contract.id, contract.last_settled_at)
         overdue_now = is_contract_overdue(oldest_unsettled, today, contract.payment_terms_days)
         if overdue_now != contract.is_overdue:
             contract.is_overdue = overdue_now

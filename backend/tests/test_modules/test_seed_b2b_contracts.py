@@ -15,8 +15,10 @@ from datetime import date
 
 from sqlalchemy.orm import Session
 
-from app.modules.beach.models import B2BContract, B2BContractDay
+from app.modules.beach import services as beach_services
+from app.modules.beach.models import B2BContract
 from app.modules.core.models import Branch
+from app.modules.finance.models import Account
 from app.seed import _seed_b2b_contracts
 
 
@@ -24,6 +26,14 @@ def _make_branch(db: Session) -> Branch:
     b = Branch(name="Seed Test Branch", name_ar="فرع اختبار",
                code=f"SEED-{uuid.uuid4().hex[:8].upper()}")
     db.add(b)
+    db.commit()
+    # الديمو المتأخر (Palm Oasis) بيرحّل قيد محاسبي حقيقي (Dr 1165/Cr 4300)
+    # وقت الزرع — لازم الحسابين يكونوا موجودين، وإلا _seed_b2b_contracts
+    # نفسها هتفشل بـFinancialConfigurationError.
+    db.add_all([
+        Account(branch_id=b.id, code="1165", name="ذمم فنادق شريكة (B2B)", account_type="asset"),
+        Account(branch_id=b.id, code="4300", name="Beach Revenue", account_type="revenue"),
+    ])
     db.commit()
     return b
 
@@ -43,19 +53,18 @@ def test_seed_b2b_contracts_creates_active_contracts(db: Session):
     for c in contracts:
         assert c.is_active is True
         assert c.valid_from <= today <= c.valid_until
-        assert c.daily_quota > 0
-        assert c.entry_price > 0
+        assert c.monthly_guest_cap > 0
+        assert c.monthly_fee > 0
 
-    # one contract seeded near its daily quota so the live dashboard's
-    # quota_warning alert has something to show on a fresh environment.
-    near_exhausted = db.query(B2BContractDay).filter(
-        B2BContractDay.contract_id.in_([c.id for c in contracts]),
-        B2BContractDay.day == today,
-    ).all()
-    assert any(
-        (next(c for c in contracts if c.id == d.contract_id).daily_quota - d.checked_in_count) <= 5
-        for d in near_exhausted
-    )
+    # 2026-08-20: العقد بقى مبلغ شهري ثابت + حد أقصى استرشادي، مفيش حصة
+    # يومية خالص — بدل "عقد قريب من استنفاد الحصة اليومية"، الديمو الحقيقي
+    # هنا هو عقد واحد بس مسجّل is_overdue=True برصيد مستحق حقيقي مرحّل
+    # فعليًا (Dr 1165/Cr 4300، راجع _seed_b2b_contracts) — عشان لوحة
+    # is_overdue الحيّة يكون عندها حاجة تعرضها على بيئة زرع جديدة.
+    status = beach_services.get_b2b_quota_status(db, branch.id)
+    overdue_entries = [s for s in status if s["is_overdue"]]
+    assert len(overdue_entries) == 1
+    assert overdue_entries[0]["outstanding_balance"] > 0
 
 
 def test_seed_b2b_contracts_is_idempotent(db: Session):

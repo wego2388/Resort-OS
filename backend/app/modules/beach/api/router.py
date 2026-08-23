@@ -517,7 +517,9 @@ def settle_contract(
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"العقد {contract_id} غير موجود")
     _assert_beach_branch(db, user, contract.branch_id, "تسوية عقد B2B")
     try:
-        obj = services.settle_b2b_contract(db, contract_id, data.settled_through)
+        obj = services.settle_b2b_contract(
+            db, contract_id, data.settled_through, data.settlement_account_code,
+        )
         return B2BContractRead.model_validate(obj)
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))

@@ -4512,7 +4512,6 @@
       "expiredBadge": "منتهي — خارج نافذة الصلاحية",
       "overdueBadge": "متأخر السداد",
       "creditExceededBadge": "تخطّى حد الائتمان",
-      "checkedInToday": "دخلوا اليوم",
       "remaining": "متبقي",
       "outstandingBalance": "رصيد مستحق",
       "egp": "ج.م",
@@ -4543,7 +4542,8 @@
       "transactionType": "نوع العملية",
       "quantity": "الكمية",
       "total": "الإجمالي",
-      "noTransactionsToday": "لا توجد عمليات اليوم"
+      "noTransactionsToday": "لا توجد عمليات اليوم",
+      "checkedInThisMonth": "دخلوا هذا الشهر"
     },
     "crm": {
       "title": "إدارة علاقات العملاء (CRM)",
@@ -5426,10 +5426,8 @@
       "addContract": "+ إضافة عقد",
       "overduePrefix": "⚠️ متأخر:",
       "lowQuotaPrefix": "⚡ حصة منخفضة:",
-      "slotsRemainingToday": "— {count} مكان متبقٍ اليوم",
       "noB2bContracts": "لا توجد عقود B2B",
       "hotel": "الفندق",
-      "dailyQuota": "الحصة اليومية",
       "creditLimit": "حد الائتمان",
       "paymentTerms": "مهلة السداد",
       "validity": "الصلاحية",
@@ -5457,8 +5455,6 @@
       "hotelNameRequired": "اسم الفندق *",
       "arabicName": "الاسم بالعربي",
       "contactNumber": "رقم التواصل",
-      "entryPriceRequired": "سعر الدخول (ج) *",
-      "towelPriceEgp": "سعر الفوطة (ج)",
       "fromDate": "من تاريخ",
       "untilDateRequired": "حتى تاريخ *",
       "creditLimitEgp": "حد الائتمان (ج)",
@@ -5489,7 +5485,11 @@
       "settlementDone": "تمت التسوية",
       "settlementError": "تعذّر إجراء التسوية",
       "creditUpdated": "تم تحديث بيانات الائتمان",
-      "updateError": "تعذّر التحديث"
+      "updateError": "تعذّر التحديث",
+      "monthlyGuestCap": "الحد الأقصى الشهري للضيوف",
+      "monthlyFee": "المبلغ الشهري الثابت",
+      "monthlyFeeRequired": "المبلغ الشهري الثابت (ج) *",
+      "slotsRemainingThisMonth": "— {count} مكان متبقٍ هذا الشهر"
     },
     "beachMap": {
       "title": "خريطة الشاطئ",
@@ -5616,7 +5616,24 @@
       "cashReceivedInsufficient": "المبلغ المستلم أقل من الإجمالي",
       "changeDueEGP": "الفكة",
       "paymentChannel": "قناة التحصيل",
-      "paymentChannelDefault": "افتراضي"
+      "paymentChannelDefault": "افتراضي",
+      "retailModeTab": "بيع مباشر",
+      "hotelModeTab": "تشيك-إن فندق",
+      "loadHotelsError": "تعذر تحميل الفنادق الشريكة",
+      "hotelCheckinSuccess": "تم تسجيل دخول {count} ضيف ✓",
+      "hotelCheckinError": "تعذر تسجيل الدخول",
+      "hotelCheckinTitle": "تسجيل دخول ضيوف فندق",
+      "noActiveHotels": "لا توجد عقود فنادق نشطة",
+      "selectHotel": "اختر الفندق",
+      "selectHotelPlaceholder": "اختر فندقًا...",
+      "guestsCount": "عدد الضيوف",
+      "withTowel": "مع فوطة",
+      "checkinButton": "تسجيل الدخول",
+      "hotelStatusTitle": "حالة الفندق",
+      "selectHotelToSeeStatus": "اختر فندقًا لعرض حالته",
+      "checkedInThisMonth": "دخلوا هذا الشهر",
+      "overMonthlyCapHint": "⚠️ تخطّى الحد الأقصى الاسترشادي لهذا الشهر — الدخول مسموح، للعلم فقط",
+      "nearMonthlyCapHint": "الحد الأقصى الاسترشادي أوشك على الانتهاء — متبقي {count} فقط"
     },
     "finance": {
       "title": "المالية",

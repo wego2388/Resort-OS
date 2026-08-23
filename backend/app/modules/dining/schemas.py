@@ -857,11 +857,11 @@ class HotelConsumptionRow(BaseModel):
     total_orders:       int
     total_guests:       int           # مجموع guests_count على الطلبات
     total_revenue:      Decimal
-    # مقارنة بقيمة العقد (entry_price × daily_quota × أيام الفترة)
-    # nullable لأن daily_quota/entry_price حقول الشاطئ مش الدايننج —
-    # بس بيديك فكرة: "الفندق ده بيكسبني ولا لا؟"
-    contract_daily_quota:    int
-    contract_entry_price:    Decimal
+    # مقارنة بقيمة العقد (المبلغ الشهري الثابت + الحد الأقصى الاسترشادي —
+    # راجع beach.models.B2BContract، 2026-08-20) — بيديك فكرة: "الفندق ده
+    # استهلاك الدايننج بتاعه معقول بالنسبة لعقده الأساسي ولا لا؟"
+    contract_monthly_guest_cap: int
+    contract_monthly_fee:       Decimal
     # تفصيل لكل منفذ (مطعم/كافيه) بشكل منفصل
     by_outlet: list[HotelOutletBreakdown] = Field(default_factory=list)
 

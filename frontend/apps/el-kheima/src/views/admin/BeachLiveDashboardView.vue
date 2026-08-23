@@ -15,9 +15,10 @@ const auth = useAuthStore()
 const branchId = computed(() => auth.branchId)
 
 interface B2BStatus {
-  contract_id: number; hotel_name: string; daily_quota: number
-  checked_in_today: number; remaining_quota: number
-  is_quota_exhausted: boolean; quota_warning: boolean
+  contract_id: number; hotel_name: string
+  checked_in_today: number; checked_in_this_month: number
+  monthly_guest_cap: number; remaining_monthly_quota: number
+  quota_warning: boolean
   // باج حقيقي كان هنا (اتصلح 2026-07-06): عقد فندق منتهي فعليًا
   // (valid_until فات) بس لسه is_active=True كان يظهر هنا زي أي شريك سليم
   // بالظبط — "8 متبقي" باللون الأخضر — رغم إن أي محاولة تسجيل دخول فعلية
@@ -214,7 +215,7 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
              class="flex animate-pulse items-center gap-3 rounded-xl border border-red-200 bg-red-50 p-3 dark:border-red-800 dark:bg-red-950/40">
           <span class="text-xl">🚨</span>
           <span class="text-sm font-bold text-red-700 dark:text-red-300">
-            {{ t('backoffice.beachLive.quotaAlert', { name: a.hotel_name, remaining: a.remaining_quota, quota: a.daily_quota }) }}
+            {{ t('backoffice.beachLive.quotaAlert', { name: a.hotel_name, remaining: a.remaining_monthly_quota, quota: a.monthly_guest_cap }) }}
           </span>
         </div>
       </div>
@@ -299,17 +300,17 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
                     {{ t('backoffice.beachLive.creditExceededBadge') }}
                   </span>
                 </div>
-                <div class="text-[11px] text-gray-400 dark:text-gray-400 mt-0.5">{{ c.checked_in_today }} / {{ c.daily_quota }} {{ t('backoffice.beachLive.checkedInToday') }}</div>
+                <div class="text-[11px] text-gray-400 dark:text-gray-400 mt-0.5">{{ c.checked_in_this_month }} / {{ c.monthly_guest_cap }} {{ t('backoffice.beachLive.checkedInThisMonth') }}</div>
               </div>
               <div class="w-32 flex-shrink-0">
                 <div class="h-2 w-full overflow-hidden rounded-full bg-stone-200 dark:bg-gray-700">
-                  <div :class="['h-full', !c.is_valid_today ? 'bg-gray-400' : c.is_quota_exhausted ? 'bg-red-500' : c.quota_warning ? 'bg-amber-500' : 'bg-green-500']"
-                       :style="{ width: `${Math.min(100, (c.checked_in_today / c.daily_quota) * 100)}%` }" />
+                  <div :class="['h-full', !c.is_valid_today ? 'bg-gray-400' : c.remaining_monthly_quota <= 0 ? 'bg-red-500' : c.quota_warning ? 'bg-amber-500' : 'bg-green-500']"
+                       :style="{ width: `${Math.min(100, (c.checked_in_this_month / c.monthly_guest_cap) * 100)}%` }" />
                 </div>
               </div>
               <div class="text-end flex-shrink-0 w-20">
-                <div :class="['text-sm font-black', !c.is_valid_today ? 'text-gray-400 dark:text-gray-400' : c.is_quota_exhausted ? 'text-red-500' : c.quota_warning ? 'text-amber-500' : 'text-green-600']">
-                  {{ c.remaining_quota }}
+                <div :class="['text-sm font-black', !c.is_valid_today ? 'text-gray-400 dark:text-gray-400' : c.remaining_monthly_quota <= 0 ? 'text-red-500' : c.quota_warning ? 'text-amber-500' : 'text-green-600']">
+                  {{ c.remaining_monthly_quota }}
                 </div>
                 <div class="text-[10px] text-gray-400 dark:text-gray-400">{{ t('backoffice.beachLive.remaining') }}</div>
               </div>

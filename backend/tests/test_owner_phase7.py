@@ -32,10 +32,22 @@ def _tok(email: str, branch_id: int = 1) -> str:
 import uuid
 
 def _branch(db):
+    """⚠️ حسابات 1165/4300 لازم تتزرع هنا دايمًا: بعض التستات هنا بتنشئ
+    عقود B2B نشطة (test_owner_exceptions_*)، وpost_b2b_monthly_fees
+    بتفحص كل عقود B2B النشطة عبر كل الفروع بتصميم — أي تست تاني بعدها في
+    نفس الـsuite بينادي الترحيل هيلاقيها ويفشل بـFinancialConfigurationError
+    لو الحسابات مش موجودة."""
     from app.modules.core.models import Branch
+    from app.modules.finance.models import Account
     code = f"T7-{uuid.uuid4().hex[:6].upper()}"
     b = Branch(name="Branch7", name_ar="فرع7", code=code, gm_phone="+201000000000")
-    db.add(b); db.flush(); return b
+    db.add(b); db.flush()
+    db.add_all([
+        Account(branch_id=b.id, code="1165", name="ذمم فنادق شريكة (B2B)", account_type="asset"),
+        Account(branch_id=b.id, code="4300", name="Beach Revenue", account_type="revenue"),
+    ])
+    db.flush()
+    return b
 
 
 def _owner(db, email: str, branch_id: int):
@@ -314,7 +326,7 @@ def test_owner_exceptions_critical_before_attention(client, db, setup_db):
     from app.modules.beach.models import B2BContract
     contract = B2BContract(
         branch_id=branch.id, hotel_name="فندق المتأخر",
-        daily_quota=30, entry_price=Decimal("80"),
+        monthly_guest_cap=30, monthly_fee=Decimal("2400"),
         valid_from=date(2026, 1, 1), valid_until=date(2026, 12, 31),
         is_active=True, is_overdue=True,
     )
@@ -342,7 +354,7 @@ def test_owner_exceptions_b2b_overdue_appears(client, db, setup_db):
     from app.modules.beach.models import B2BContract
     contract = B2BContract(
         branch_id=branch.id, hotel_name="فندق الاختبار",
-        daily_quota=20, entry_price=Decimal("100"),
+        monthly_guest_cap=20, monthly_fee=Decimal("3000"),
         valid_from=date(2026, 1, 1), valid_until=date(2026, 12, 31),
         is_active=True, is_overdue=True,
     )

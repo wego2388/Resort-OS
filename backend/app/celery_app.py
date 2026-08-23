@@ -89,6 +89,10 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.beach_tasks.mark_b2b_overdue",
         "schedule": crontab(hour=2, minute=15),      # زي timeshare/leasing mark_overdue
     },
+    "beach-b2b-post-monthly-fees": {
+        "task": "app.tasks.beach_tasks.post_b2b_monthly_fees",
+        "schedule": crontab(hour=2, minute=30),      # بعد mark_b2b_overdue بشوية
+    },
 
     # ─── HR ───────────────────────────────────────────────────────────
     "hr-mark-absent": {

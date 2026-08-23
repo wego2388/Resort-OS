@@ -4512,7 +4512,6 @@
       "expiredBadge": "Expired — outside validity window",
       "overdueBadge": "Overdue",
       "creditExceededBadge": "Credit limit exceeded",
-      "checkedInToday": "checked in today",
       "remaining": "remaining",
       "outstandingBalance": "Outstanding balance",
       "egp": "EGP",
@@ -4543,7 +4542,8 @@
       "transactionType": "Transaction type",
       "quantity": "Quantity",
       "total": "Total",
-      "noTransactionsToday": "No transactions today"
+      "noTransactionsToday": "No transactions today",
+      "checkedInThisMonth": "checked in this month"
     },
     "crm": {
       "title": "Customer Relationship Management (CRM)",
@@ -5426,10 +5426,8 @@
       "addContract": "+ Add contract",
       "overduePrefix": "⚠️ Overdue:",
       "lowQuotaPrefix": "⚡ Low quota:",
-      "slotsRemainingToday": "— {count} slots left today",
       "noB2bContracts": "No B2B contracts",
       "hotel": "Hotel",
-      "dailyQuota": "Daily quota",
       "creditLimit": "Credit limit",
       "paymentTerms": "Payment terms",
       "validity": "Validity",
@@ -5457,8 +5455,6 @@
       "hotelNameRequired": "Hotel name *",
       "arabicName": "Arabic name",
       "contactNumber": "Contact number",
-      "entryPriceRequired": "Entry price (EGP) *",
-      "towelPriceEgp": "Towel price (EGP)",
       "fromDate": "From date",
       "untilDateRequired": "Until date *",
       "creditLimitEgp": "Credit limit (EGP)",
@@ -5489,7 +5485,11 @@
       "settlementDone": "Settlement recorded",
       "settlementError": "Couldn't record the settlement",
       "creditUpdated": "Credit details updated",
-      "updateError": "Couldn't update"
+      "updateError": "Couldn't update",
+      "monthlyGuestCap": "Monthly guest cap",
+      "monthlyFee": "Monthly fixed fee",
+      "monthlyFeeRequired": "Monthly fixed fee (EGP) *",
+      "slotsRemainingThisMonth": "— {count} slots left this month"
     },
     "beachMap": {
       "title": "Beach Map",
@@ -5616,7 +5616,24 @@
       "cashReceivedInsufficient": "Amount received is less than the total",
       "changeDueEGP": "Change due",
       "paymentChannel": "Payment channel",
-      "paymentChannelDefault": "Default"
+      "paymentChannelDefault": "Default",
+      "retailModeTab": "Walk-in Sale",
+      "hotelModeTab": "Hotel Check-in",
+      "loadHotelsError": "Failed to load partner hotels",
+      "hotelCheckinSuccess": "{count} guest(s) checked in ✓",
+      "hotelCheckinError": "Failed to check in",
+      "hotelCheckinTitle": "Hotel Guest Check-in",
+      "noActiveHotels": "No active hotel contracts",
+      "selectHotel": "Select Hotel",
+      "selectHotelPlaceholder": "Choose a hotel...",
+      "guestsCount": "Number of Guests",
+      "withTowel": "With towel",
+      "checkinButton": "Check In",
+      "hotelStatusTitle": "Hotel Status",
+      "selectHotelToSeeStatus": "Select a hotel to see its status",
+      "checkedInThisMonth": "checked in this month",
+      "overMonthlyCapHint": "⚠️ Exceeded the guideline monthly cap — entry allowed, informational only",
+      "nearMonthlyCapHint": "Guideline monthly cap almost reached — only {count} left"
     },
     "finance": {
       "title": "Finance",

@@ -12,9 +12,22 @@ from fastapi.testclient import TestClient
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 def _branch(db):
+    """⚠️ حسابات 1165/4300 لازم تتزرع هنا دايمًا: _b2b_contract تحت بتنشئ
+    عقود B2B نشطة على الفرع، وservices.post_b2b_monthly_fees/
+    mark_b2b_contracts_overdue بيفحصوا كل عقود B2B *النشطة عبر كل الفروع*
+    بتصميم (نفس نطاق مهمة Celery الحقيقية) — أي تست تاني في الـsuite
+    الكامل بينادي post_b2b_monthly_fees هيلاقي العقد ده ويحاول يرحّله،
+    فيفشل بـFinancialConfigurationError لو الحسابات مش موجودة."""
     from app.modules.core.models import Branch
+    from app.modules.finance.models import Account
     b = Branch(name=f"CovBr-{uuid.uuid4().hex[:12]}", code=f"CV-{uuid.uuid4().hex[:12].upper()}")
-    db.add(b); db.commit(); return b
+    db.add(b); db.commit()
+    db.add_all([
+        Account(branch_id=b.id, code="1165", name="ذمم فنادق شريكة (B2B)", account_type="asset"),
+        Account(branch_id=b.id, code="4300", name="Beach Revenue", account_type="revenue"),
+    ])
+    db.commit()
+    return b
 
 def _outlet(db, branch):
     from app.modules.dining.models import Outlet
@@ -509,8 +522,8 @@ def _b2b_contract(db, branch):
         hotel_name=f"Hotel-{uuid.uuid4().hex[:6]}",
         hotel_name_ar=None,
         contact_phone="01000000000",
-        daily_quota=50,
-        entry_price=Decimal("100.00"),
+        monthly_guest_cap=1500,
+        monthly_fee=Decimal("100000.00"),
         valid_from=today - timedelta(days=30),
         valid_until=today + timedelta(days=365),
         is_active=True,
