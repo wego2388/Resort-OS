@@ -203,6 +203,36 @@ const orderTypeOptions = computed<Array<{ value: OrderType; label: string; icon:
 // أثر على بيانات المنتجع) لعدد مرات إضافة كل صنف للسلة على الجهاز ده —
 // نفس فكرة "Favorites" في أنظمة POS الاحترافية (Foodics/Toast)، بيسرّع
 // اختيار الأصناف المتكررة للكاشير اللي بيشتغل على نفس المحطة يوميًا.
+// 2026-08-23، طلب Mohamed صراحةً — لما النت يقطع، المنيو والطاولات كانت
+// بتفضى تمامًا (الشاشة بتترسم أول مرة أو تتحدّث من غير أي بيانات مخزّنة —
+// loadOutlets/loadMenu/loadTables ما كانوش بيحفظوا آخر رد ناجح خالص)، يعني
+// أي إعادة تحميل للصفحة أو mount جديد وقت انقطاع النت كان يسيب الكاشير من
+// غير منيو ولا طاولات لحد ما النت يرجع. نفس فكرة `useOfflineQueue('dining')`
+// الموجودة بالفعل (بتحفظ الطلبات المُنشأة أوفلاين وتزامنها تلقائيًا عند
+// الاتصال)، بس هنا للقراءة: آخر رد ناجح من السيرفر بيتخزّن في localStorage
+// (نفس نمط FREQ_STORAGE_PREFIX تحت بالظبط)، ولو أي فشل شبكة حصل، الشاشة
+// بترجع لآخر نسخة معروفة بدل ما تفضى — والمزامنة الفعلية بترجع أوتوماتيك
+// أول ما isOnline يرجع true (راجع الـ watch تحت).
+const CACHE_STORAGE_PREFIX = 'pos:dining:cache:'
+
+function loadCached<T>(key: string): T | null {
+  try {
+    const raw = localStorage.getItem(`${CACHE_STORAGE_PREFIX}${key}`)
+    return raw ? (JSON.parse(raw) as T) : null
+  } catch {
+    return null
+  }
+}
+
+function saveCached<T>(key: string, value: T) {
+  try {
+    localStorage.setItem(`${CACHE_STORAGE_PREFIX}${key}`, JSON.stringify(value))
+  } catch {
+    // localStorage ممكن يبقى غير متاح (وضع خاص/سعة ممتلئة) — الكاش تحسين
+    // إضافي بس، مفيش داعي يوقف تدفق الطلب لأجله.
+  }
+}
+
 const FREQ_STORAGE_PREFIX = 'pos:itemFreq:'
 const FREQ_MIN_TAPS = 3     // متطلب حد أدنى قبل ما الصف يظهر — يمنع صف فاضي/عشوائي أول استخدام
 const FREQ_TOP_N = 8
@@ -293,19 +323,28 @@ function itemPrice(item: DiningItemRow): number {
 }
 
 async function loadOutlets() {
+  const cacheKey = `outlets:${branchId.value}`
   try {
     const { data } = await api.get(ENDPOINTS.dining.outlets, {
       params: { branch_id: branchId.value, active_only: true },
     })
     outlets.value = data
     if (data.length && selectedOutletId.value === null) selectedOutletId.value = data[0].id
+    saveCached(cacheKey, data)
   } catch {
+    const cached = loadCached<DiningOutlet[]>(cacheKey)
+    if (cached?.length) {
+      outlets.value = cached
+      if (selectedOutletId.value === null) selectedOutletId.value = cached[0].id
+      if (!isOnline.value) return  // آخر نسخة معروفة كافية أثناء الانقطاع — بلاغ الخطأ زيادة مربكة
+    }
     toast.error(t('backoffice.pos.errors.loadOutlets'))
   }
 }
 
 async function loadMenu() {
   if (!selectedOutletId.value) return
+  const cacheKey = `menu:${selectedOutletId.value}`
   menuLoading.value = true
   try {
     const [categoryResponse, itemResponse] = await Promise.all([
@@ -315,7 +354,15 @@ async function loadMenu() {
     categories.value = categoryResponse.data
     items.value = itemResponse.data
     selectedCategoryId.value = 'all'
+    saveCached(cacheKey, { categories: categoryResponse.data, items: itemResponse.data })
   } catch {
+    const cached = loadCached<{ categories: DiningCategory[]; items: DiningItemRow[] }>(cacheKey)
+    if (cached) {
+      categories.value = cached.categories
+      items.value = cached.items
+      selectedCategoryId.value = 'all'
+      if (!isOnline.value) { menuLoading.value = false; return }
+    }
     toast.error(t('backoffice.pos.errors.loadOutletData'))
   } finally {
     menuLoading.value = false
@@ -323,10 +370,17 @@ async function loadMenu() {
 }
 
 async function loadTables() {
+  const cacheKey = `tables:${branchId.value}`
   try {
     const { data } = await api.get(ENDPOINTS.dining.tables(branchId.value ?? 0))
     tables.value = data
+    saveCached(cacheKey, data)
   } catch {
+    const cached = loadCached<VenueTable[]>(cacheKey)
+    if (cached) {
+      tables.value = cached
+      if (!isOnline.value) return
+    }
     toast.error(t('backoffice.pos.errors.loadTables'))
   }
 }
@@ -429,10 +483,10 @@ function addLineToCart(
     notes: choice.notes,
     extraIds: choice.extraIds,
     extraTexts: choice.extraTexts,
-    extrasLabel: [
-      ...extras.map(option => localizedName(option)),
-      ...textAnswers,
-    ].join(listSeparator.value),
+    // منفصلين عمدًا (2026-08-23) — إضافات مُختارة مقابل إجابات نصية حرة،
+    // عشان يتعرضوا مميزين في السلة بدل نص واحد مخلوط (راجع types.ts).
+    extrasLabel: extras.map(option => localizedName(option)).join(listSeparator.value),
+    textAnswersLabel: textAnswers.join(listSeparator.value),
   })
 }
 
@@ -447,17 +501,35 @@ function onExtrasConfirm(choice: {
   extrasModalItem.value = null
 }
 
-function adjustQuantity(key: string, delta: number) {
+// 2026-08-23، طلب Mohamed صراحةً — كان إنقاص الكمية لصفر بيمسح الصنف بالكامل
+// بصمت (نفس فعل الحذف الصريح تمامًا)، ومسح صنف واحد (باقي إضافاته/ملاحظاته)
+// كان بدون أي تأكيد خالص — عكس مسح السلة كلها (requestClearDraft) اللي عنده
+// تأكيد فعلي. الحذف (سواء بالزرار أو بالإنقاص لصفر) بقى يمر بنفس useConfirm()
+// الموجود بالفعل في هذا الملف، بدل مكوّن جديد.
+async function adjustQuantity(key: string, delta: number) {
   if (cartLocked.value) return
   const line = cart.value.find(item => item.key === key)
   if (!line) return
+  if (line.quantity + delta <= 0) {
+    await removeLine(key)
+    return
+  }
   line.quantity += delta
-  if (line.quantity <= 0) removeLine(key)
 }
 
-function removeLine(key: string) {
+async function removeLine(key: string) {
   if (cartLocked.value) return
-  cart.value = cart.value.filter(line => line.key !== key)
+  const line = cart.value.find(item => item.key === key)
+  if (!line) return
+  const accepted = await confirm({
+    title: t('backoffice.pos.cart.removeItemTitle'),
+    message: t('backoffice.pos.cart.removeItemMessage', { name: name({ name: line.name, name_ar: line.nameAr }) }),
+    confirmText: t('backoffice.pos.cart.removeItemConfirm'),
+    cancelText: t('backoffice.pos.cart.keepOrder'),
+    danger: true,
+  })
+  if (!accepted) return
+  cart.value = cart.value.filter(item => item.key !== key)
 }
 
 function buildOrderPayload() {
@@ -757,9 +829,15 @@ function openWorkspace(next: POSWorkspace) {
   if (next === 'active' || next === 'beach_map') loadActiveOrders()
 }
 
+// 2026-08-23، طلب Mohamed صراحةً — كان الكاشير مجبر يمر بشاشة الطاولات (ويكتب
+// اسم ضيف إجباري) قبل ما يشوف المنيو خالص، حتى لو الطلب تيك أواي/توصيل/خدمة
+// غرف مش صالة، لأن orderType الافتراضي 'dine_in' دايمًا. صف اختيار نوع الطلب
+// موجود بالفعل جوه شاشة 'order' — المشكلة كانت في التنقّل بس، مش في التصميم.
+// دلوقتي بيوديك لشاشة الطلب مباشرة أيًا كان النوع الحالي؛ لو الكاشير اختار
+// "صالة" فعلاً، changeOrderType() الموجودة أصلاً بتوديه لشاشة الطاولات —
+// سلوك الصالة نفسه متغيّرش، اتشالت بس البوابة الإجبارية قبل اختيار النوع.
 function beginNewOrder() {
-  if (orderType.value === 'dine_in' && !selectedTableId.value) workspace.value = 'tables'
-  else workspace.value = 'order'
+  workspace.value = 'order'
 }
 
 function selectCustomer(customer: POSCustomer) {
@@ -878,6 +956,19 @@ function handleKeydown(event: KeyboardEvent) {
 
 watch([selectedCategoryId, searchQuery], () => {
   if (menuScrollEl.value) menuScrollEl.value.scrollTop = 0
+})
+
+// 2026-08-23 — لما الاتصال يرجع بعد انقطاع، حدّث المنيو/الطاولات/الطلبات
+// النشطة فورًا من السيرفر بدل ما تستنى تفاعل الكاشير — نفس لحظة المزامنة
+// اللي useOfflineQueue('dining') بيستخدمها بالفعل لتفريغ الطلبات المحفوظة
+// أوفلاين (راجع تعليق CACHE_STORAGE_PREFIX فوق لمنطق القراءة أثناء الانقطاع).
+watch(isOnline, (online, wasOnline) => {
+  if (online && wasOnline === false) {
+    loadOutlets()
+    loadMenu()
+    loadTables()
+    loadActiveOrders()
+  }
 })
 
 onMounted(async () => {
@@ -1111,7 +1202,7 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
                 type="button"
                 :disabled="cartLocked || !item.is_available"
                 :class="[
-                  'relative min-h-[138px] rounded-2xl border-2 p-3 text-start shadow-sm active:scale-[0.99] transition-all flex flex-col justify-between gap-3 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+                  'relative min-h-[138px] rounded-xl border p-3 text-start shadow-sm active:scale-[0.99] transition-all flex flex-col justify-between gap-3 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
                   item.is_available
                     ? 'border-stone-200 dark:border-border bg-white dark:bg-surface hover:border-primary-400 hover:shadow-md disabled:opacity-60'
                     : 'border-stone-200 dark:border-border bg-stone-100 dark:bg-gray-900/40 opacity-60 grayscale-[35%]',

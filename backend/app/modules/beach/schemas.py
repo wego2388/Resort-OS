@@ -29,6 +29,9 @@ class BeachInventoryRead(BaseModel):
     child_price:      Decimal = Decimal("0")
     resident_price:   Decimal = Decimal("0")
     towel_price:      Decimal = Decimal("0")
+    # 2026-08-23: رسم "خدمة" ثابت لدخول مأكولات خارجية — نفس نمط towel_price
+    # بالظبط (سعر إضافي مستقل، من غير تأثير على السعة).
+    outside_food_fee_price: Decimal = Decimal("0")
     surge_active:     bool = False
     # app.resort_os.beach_engine.calculate_tx_price يفسّر surge_pct=50.0 كـ
     # "+50%" (يعني الضرب في 1.5) — المضاعف ده نفسه، جاهز يتضرب في الأسعار
@@ -49,7 +52,7 @@ class BeachInventoryRead(BaseModel):
 
 class BeachSellRequest(BaseModel):
     """طلب بيع تذكرة دخول أو فوطة."""
-    tx_type:         str = Field(..., pattern=r"^(entry|entry_child|entry_resident|entry_towel|towel_rent|towel_return)$")
+    tx_type:         str = Field(..., pattern=r"^(entry|entry_child|entry_resident|entry_towel|towel_rent|towel_return|outside_food_fee)$")
     # حد أعلى تشغيلي — يمنع إدخال غلط بالغلط (زفير رقم زيادة) من غير ما
     # يقيّد حجوزات مجموعات حقيقية معقولة لمنتجع واحد.
     quantity:        int = Field(1, ge=1, le=100)
@@ -119,7 +122,7 @@ class BeachSellRequest(BaseModel):
 
 class BeachCartLineItem(BaseModel):
     """صنف واحد داخل سلة بيع متعددة الأصناف (زي "2 بالغ + فوطة")."""
-    tx_type:  str = Field(..., pattern=r"^(entry|entry_child|entry_resident|entry_towel|towel_rent|towel_return)$")
+    tx_type:  str = Field(..., pattern=r"^(entry|entry_child|entry_resident|entry_towel|towel_rent|towel_return|outside_food_fee)$")
     quantity: int = Field(1, ge=1, le=100)
 
 

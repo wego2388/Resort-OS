@@ -4138,6 +4138,9 @@
         "clearMessage": "Cart items will be removed. If the order is already saved on the server, it will also be cancelled.",
         "clearConfirm": "Yes, clear order",
         "keepOrder": "Keep order",
+        "removeItemTitle": "Remove item?",
+        "removeItemMessage": "\"{name}\" will be removed from the order along with its extras and notes.",
+        "removeItemConfirm": "Yes, remove",
         "mobileCart": "Cart ({count})"
       },
       "customer": {
@@ -5473,7 +5476,8 @@
         "entryResident": "Resident",
         "entryTowel": "Entry + towel",
         "towelRent": "Towel rental",
-        "towelReturn": "Towel return"
+        "towelReturn": "Towel return",
+        "outsideFoodFee": "Service (outside food)"
       },
       "surgeUpdated": "Surge updated",
       "surgeUpdateError": "Couldn't update surge",
@@ -5568,6 +5572,7 @@
       "child": "Child",
       "resident": "Resident",
       "towel": "Towel",
+      "service": "Service",
       "egp": "EGP",
       "originalPrice": "(base: {price} EGP)",
       "noSurge": "no surge",
@@ -5633,7 +5638,21 @@
       "selectHotelToSeeStatus": "Select a hotel to see its status",
       "checkedInThisMonth": "checked in this month",
       "overMonthlyCapHint": "⚠️ Exceeded the guideline monthly cap — entry allowed, informational only",
-      "nearMonthlyCapHint": "Guideline monthly cap almost reached — only {count} left"
+      "nearMonthlyCapHint": "Guideline monthly cap almost reached — only {count} left",
+      "quickAddLabel": "Quick add:",
+      "recentGuestsDetail": "{count} guests",
+      "recentActivityTitle": "Recent Activity",
+      "reprintAction": "Reprint",
+      "voidAction": "Void",
+      "voidModalTitle": "Void Transaction",
+      "voidReasonLabel": "Void reason",
+      "voidReasonPlaceholder": "Enter reason (min. 3 characters)",
+      "cancelAction": "Cancel",
+      "confirmVoid": "Confirm Void",
+      "voidSuccess": "Transaction voided successfully",
+      "voidError": "Failed to void transaction",
+      "ticketSaleLabel": "Ticket sale",
+      "retailShortcutsHint": "Shortcuts: 1-5 to add item (Shift to subtract), Enter to complete sale, Esc to clear order"
     },
     "finance": {
       "title": "Finance",

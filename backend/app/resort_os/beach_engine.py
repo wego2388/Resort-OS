@@ -46,6 +46,11 @@ TX_CONFIG: dict[str, dict] = {
     "entry_towel":    {"base_amount": 250, "capacity_delta": -1, "towel_delta": -1},
     "towel_rent":     {"base_amount":  50, "capacity_delta":  0, "towel_delta": -1},
     "towel_return":   {"base_amount":   0, "capacity_delta":  0, "towel_delta": +1},
+    # 2026-08-23، طلب Mohamed صراحةً — رسم "خدمة" ثابت للضيوف اللي بيدخلوا
+    # معاهم مأكولات من برّه المنتجع. مفيش أثر على سعة الشاطئ ولا مخزون
+    # الفوط خالص (capacity_delta=towel_delta=0) — نفس منطق towel_rent بالظبط
+    # (رسم إضافي مستقل، مش تذكرة دخول)، بس من غير استهلاك أي مورد فعلي.
+    "outside_food_fee": {"base_amount": 50, "capacity_delta": 0, "towel_delta": 0},
 }
 
 TX_TYPES = tuple(TX_CONFIG.keys())

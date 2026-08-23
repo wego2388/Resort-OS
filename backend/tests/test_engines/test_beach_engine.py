@@ -64,9 +64,10 @@ def _b2b(
 
 def _base_prices() -> dict[str, Decimal]:
     return {
-        "entry":       Decimal("200"),
-        "entry_towel": Decimal("250"),
-        "towel_rent":  Decimal("50"),
+        "entry":            Decimal("200"),
+        "entry_towel":      Decimal("250"),
+        "towel_rent":       Decimal("50"),
+        "outside_food_fee": Decimal("50"),
     }
 
 
@@ -210,6 +211,12 @@ class TestValidateEntry:
         result = validate_entry(empty_towels, "towel_rent")
         assert result.valid is False
 
+    def test_outside_food_fee_no_capacity_or_towel_check(self):
+        """رسم الخدمة (2026-08-23، طلب Mohamed) رسم إضافي مستقل — بيمر حتى لو
+        الشاطئ ممتلئ ومفيش فوط خالص، لأنه مش بيستهلك أي منهم."""
+        result = validate_entry(_state(capacity_used=200, capacity_max=200, towels_available=0), "outside_food_fee")
+        assert result.valid is True
+
     def test_towel_return_always_valid(self):
         """إرجاع الفوطة دائماً صحيح"""
         result = validate_entry(_state(), "towel_return")
@@ -337,6 +344,10 @@ class TestCalculateTxPrice:
         result = calculate_tx_price("entry", {}, surge_pct=0.0)
         assert result == Decimal(str(TX_CONFIG["entry"]["base_amount"]))
 
+    def test_outside_food_fee_base_price(self):
+        result = calculate_tx_price("outside_food_fee", _base_prices(), surge_pct=0.0)
+        assert result == Decimal("50")
+
 
 # ─── calculate_inventory_delta ────────────────────────────────────────
 
@@ -366,6 +377,11 @@ class TestCalculateInventoryDelta:
         cap_delta, towel_delta = calculate_inventory_delta("entry_towel", quantity=4)
         assert cap_delta == -4
         assert towel_delta == -4
+
+    def test_outside_food_fee_no_inventory_impact(self):
+        cap_delta, towel_delta = calculate_inventory_delta("outside_food_fee", quantity=3)
+        assert cap_delta == 0
+        assert towel_delta == 0
 
     def test_unknown_tx_returns_zero_delta(self):
         cap_delta, towel_delta = calculate_inventory_delta("unknown_type")

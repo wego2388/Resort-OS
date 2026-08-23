@@ -192,20 +192,23 @@ def _get_base_prices(db: Session, branch_id: int) -> dict[str, Decimal]:
         child    = _price("beach.price.child",    "100")
         resident = _price("beach.price.resident", "150")
         towel    = _price("beach.price.towel",    "50")
+        service  = _price("beach.price.outside_food_fee", "50")
         return {
-            "entry":          adult,
-            "entry_child":    child,
-            "entry_resident": resident,
-            "entry_towel":    adult + towel,
-            "towel_rent":     towel,
+            "entry":            adult,
+            "entry_child":      child,
+            "entry_resident":   resident,
+            "entry_towel":      adult + towel,
+            "towel_rent":       towel,
+            "outside_food_fee": service,
         }
     except Exception:
         return {
-            "entry":          Decimal("200"),
-            "entry_child":    Decimal("100"),
-            "entry_resident": Decimal("150"),
-            "entry_towel":    Decimal("250"),
-            "towel_rent":     Decimal("50"),
+            "entry":            Decimal("200"),
+            "entry_child":      Decimal("100"),
+            "entry_resident":   Decimal("150"),
+            "entry_towel":      Decimal("250"),
+            "towel_rent":       Decimal("50"),
+            "outside_food_fee": Decimal("50"),
         }
 
 

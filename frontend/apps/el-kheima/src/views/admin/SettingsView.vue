@@ -95,6 +95,13 @@ const SETTINGS_META: Record<string, SettingMeta> = {
     },
     live: true,
   },
+  'beach.price.outside_food_fee': {
+    description: {
+      ar: 'رسم "خدمة" ثابت (جنيه) للضيوف اللي بيدخلوا معاهم مأكولات من برّه المنتجع — يظهر كزر منفصل بكاشير الشاطئ (البيع المباشر)، بدون أي تأثير على سعة الشاطئ أو مخزون الفوط.',
+      en: 'Flat "service" fee (EGP) for guests bringing in food from outside the resort — shown as a separate button at the beach cashier (walk-in sale), with no effect on beach capacity or towel stock.',
+    },
+    live: true,
+  },
   no_show_deadline_hour: {
     description: {
       ar: 'الساعة (بتوقيت المنتجع، بالأرقام فقط من 0 لـ23 — مثلاً 18 يعني 6 مساءً) اللي بعدها الحجوزات المؤكدة اللي محدش وصلها بتتحول تلقائيًا لـ"لم يحضر". بتتفحص كل ساعة عبر مهمة مجدولة فعلية.',

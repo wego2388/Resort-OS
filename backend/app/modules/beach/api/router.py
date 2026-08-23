@@ -148,6 +148,7 @@ def get_inventory(
         "towels_used": row.towels_used, "surge_pct": row.surge_pct,
         "adult_price": prices["entry"], "child_price": prices["entry_child"],
         "resident_price": prices["entry_resident"], "towel_price": prices["towel_rent"],
+        "outside_food_fee_price": prices["outside_food_fee"],
     }
     return BeachInventoryRead.model_validate(data)
 

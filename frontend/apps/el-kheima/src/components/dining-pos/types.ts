@@ -59,6 +59,11 @@ export interface CartLine {
   extraIds: number[]
   extraTexts: Record<number, string>
   extrasLabel: string
+  // 2026-08-23: منفصل عمدًا عن extrasLabel — إضافات مُختارة من قائمة (زي
+  // "بدون بصل") مقابل إجابة نصية حرة على سؤال الصنف (زي "كام سمكة؟: 3")
+  // كانوا متلخبطين في نص واحد بدون تمييز في السلة؛ الكاشير محتاج يفرّق
+  // بينهم بسرعة وقت المراجعة قبل التحصيل.
+  textAnswersLabel: string
 }
 
 export interface ActiveOrder {

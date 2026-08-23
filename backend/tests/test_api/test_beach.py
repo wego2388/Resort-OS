@@ -250,6 +250,25 @@ class TestSellTicket:
         assert tx.tx_type == "towel_rent"
         assert tx.quantity == 3
 
+    def test_sell_outside_food_fee(self, db):
+        """2026-08-23، طلب Mohamed صراحةً — رسم "خدمة" ثابت لدخول مأكولات
+        خارجية، بدون أي تأثير على سعة الشاطئ أو مخزون الفوط."""
+        branch = make_branch(db)
+        inv = crud.get_or_create_inventory(db, branch.id, date.today())
+        db.commit()
+        capacity_before = inv.capacity_used
+        towels_before = inv.towels_available
+
+        req = BeachSellRequest(tx_type="outside_food_fee", quantity=2)
+        tx = services.sell_ticket(db, branch.id, req)
+        assert tx.tx_type == "outside_food_fee"
+        assert tx.quantity == 2
+        assert tx.total_amount == Decimal("100")  # 50 × 2
+
+        db.refresh(inv)
+        assert inv.capacity_used == capacity_before
+        assert inv.towels_available == towels_before
+
     def test_inventory_updated_after_sale(self, db):
         branch = make_branch(db)
         inv_before = crud.get_or_create_inventory(db, branch.id, date.today())

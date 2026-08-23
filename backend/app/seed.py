@@ -1805,6 +1805,7 @@ def _seed_settings(db: Session) -> None:
         "beach.price.child":            "50",
         "beach.price.resident":         "70",
         "beach.price.towel":            "30",
+        "beach.price.outside_food_fee": "50",
         "no_show_policy":               "full_first_night",
         "no_show_deadline_hour":        "18",
         "discount_approval_threshold":  "500",

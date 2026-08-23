@@ -326,6 +326,7 @@ const txTypeLabels = computed<Record<string, string>>(() => ({
   entry_resident: t('backoffice.beachAdmin.txType.entryResident'),
   entry_towel: t('backoffice.beachAdmin.txType.entryTowel'), towel_rent: t('backoffice.beachAdmin.txType.towelRent'),
   towel_return: t('backoffice.beachAdmin.txType.towelReturn'),
+  outside_food_fee: t('backoffice.beachAdmin.txType.outsideFoodFee'),
 }))
 
 onMounted(() => switchTab('summary'))

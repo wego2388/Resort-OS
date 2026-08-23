@@ -175,13 +175,14 @@ const cartGroups = computed(() => {
                 </div>
                 <div v-if="line.variantLabel" class="text-xs text-primary-700 dark:text-primary-300 mt-1">{{ line.variantLabel }}</div>
                 <div v-if="line.extrasLabel" class="text-xs text-gray-500 dark:text-gray-400 mt-1 leading-relaxed">{{ line.extrasLabel }}</div>
+                <div v-if="line.textAnswersLabel" class="text-xs text-amber-700 dark:text-amber-400 mt-1 leading-relaxed">✏️ {{ line.textAnswersLabel }}</div>
                 <div v-if="line.notes" class="text-xs text-gray-500 dark:text-gray-400 mt-1">📝 {{ line.notes }}</div>
               </div>
               <IconButton
                 icon="close"
                 :label="t('backoffice.pos.removeItem')"
                 variant="danger"
-                size="md"
+                size="lg"
                 :disabled="cartLocked"
                 @click="emit('remove', line.key)"
               />

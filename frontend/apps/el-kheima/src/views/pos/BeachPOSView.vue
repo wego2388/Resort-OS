@@ -3,14 +3,16 @@ import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api, ENDPOINTS, useAuthStore } from '@resort-os/core'
 import { usePrintDocument, useOfflineQueue } from '@resort-os/core/composables'
-import { EmptyState, useToast } from '@resort-os/ui'
+import { AppButton, AppModal, EmptyState, useToast } from '@resort-os/ui'
+import { useStaffFormat } from '@resort-os/core/i18n/staff'
 import POSCustomerModal from '../../components/dining-pos/POSCustomerModal.vue'
 import PinGuardModal from '../../components/PinGuardModal.vue'
 import type { POSCustomer } from '../../components/dining-pos/types'
-import { moneyToMinor, minorToMoney } from '../../components/dining-pos/money'
+import { moneyToMinor, minorToMoney, cashPresetMinorValues } from '../../components/dining-pos/money'
 
 const toast = useToast()
 const { t } = useI18n()
+const { formatTime } = useStaffFormat()
 const { printBlob } = usePrintDocument()
 
 // ── Offline queue ──────────────────────────────────────────────────────────────
@@ -36,6 +38,7 @@ interface BeachInventory {
   child_price: number
   resident_price: number
   towel_price: number
+  outside_food_fee_price: number
   surge_active: boolean
   surge_multiplier: number
 }
@@ -79,6 +82,10 @@ const adultQty    = ref(0)
 const childQty    = ref(0)
 const residentQty = ref(0)
 const towelQty    = ref(0)
+// طلب Mohamed (2026-08-23): رسم "خدمة" ثابت للضيوف اللي بيدخلوا معاهم
+// مأكولات من برّه المنتجع — نفس معاملة الفوطة بالظبط (سعر إضافي مستقل،
+// من غير أي تأثير على سعة الشاطئ، وبدون surge — راجع computed `prices`).
+const serviceQty  = ref(0)
 
 // ── POS-03: حالة العملة ────────────────────────────────────────────────────────
 const cashCurrency   = ref<CashCurrency>('EGP')
@@ -173,6 +180,15 @@ const changeMinorEGP = computed(() => {
   if (receivedMinorEGP.value === null) return null
   return receivedMinorEGP.value - totalMinorEGP.value
 })
+// طلب Mohamed (2026-08-23): تسهيل إدخال المبلغ المستلم زي كاشير الدايننج
+// بالظبط — أزرار جاهزة (المبلغ بالظبط + أقرب فئات نقدية شائعة فوقه: ٥٠/
+// ١٠٠/٢٠٠/٥٠٠ ج) بدل ما الكاشير يكتب رقم بالكيبورد في كل عملية. نفس
+// الدالة المشتركة المستخدمة في POSPaymentModal.vue (dining-pos/money.ts)
+// بالظبط — مفيش منطق تسعير جديد اتكرر هنا.
+const cashPresets = computed(() => cashPresetMinorValues(total.value))
+function selectCashPreset(minor: number) {
+  cashReceivedEGP.value = minorToMoney(minor)
+}
 
 async function selectCustomer(customer: POSCustomer) {
   selectedCustomer.value = customer
@@ -223,13 +239,14 @@ watch(employeeCreditHolderId, () => {
 const firstButtonRef = ref<HTMLButtonElement | null>(null)
 
 const prices = computed(() => {
-  if (!inventory.value) return { adult: 0, child: 0, resident: 0, towel: 0 }
+  if (!inventory.value) return { adult: 0, child: 0, resident: 0, towel: 0, service: 0 }
   const m = inventory.value.surge_active ? inventory.value.surge_multiplier : 1
   return {
     adult:    Math.round(inventory.value.adult_price * m),
     child:    Math.round(inventory.value.child_price * m),
     resident: Math.round(inventory.value.resident_price * m),
     towel:    inventory.value.towel_price, // towels no surge
+    service:  inventory.value.outside_food_fee_price, // نفس معاملة الفوطة — بدون surge
   }
 })
 
@@ -237,7 +254,8 @@ const total = computed(() =>
   adultQty.value * prices.value.adult +
   childQty.value * prices.value.child +
   residentQty.value * prices.value.resident +
-  towelQty.value * prices.value.towel,
+  towelQty.value * prices.value.towel +
+  serviceQty.value * prices.value.service,
 )
 
 const hasItems = computed(() => total.value > 0)
@@ -253,12 +271,13 @@ const occupancyPct   = computed(() => inventory.value?.capacity_pct ?? 0)
 // بيتعرّف على local_id متكرر ويرجّع نفس الحركة القديمة بدل ما يبيع تاني.
 let pendingSaleLocalId: string | null = null
 
-function adjust(type: 'adult' | 'child' | 'resident' | 'towel', delta: number) {
+function adjust(type: 'adult' | 'child' | 'resident' | 'towel' | 'service', delta: number) {
   pendingSaleLocalId = null
   if (type === 'adult')    adultQty.value    = Math.max(0, adultQty.value + delta)
   if (type === 'child')    childQty.value    = Math.max(0, childQty.value + delta)
   if (type === 'resident') residentQty.value = Math.max(0, residentQty.value + delta)
   if (type === 'towel')    towelQty.value    = Math.max(0, towelQty.value + delta)
+  if (type === 'service')  serviceQty.value  = Math.max(0, serviceQty.value + delta)
 }
 
 function clearCart() {
@@ -267,16 +286,18 @@ function clearCart() {
   childQty.value    = 0
   residentQty.value = 0
   towelQty.value    = 0
+  serviceQty.value  = 0
   foreignReceived.value = ''
 }
 
 // بيمسح صنف واحد بس من السلة (بعد ما ينجح/ينضاف للطابور فعليًا في حلقة
 // البيع الأوفلاين) — عكس clearCart() اللي بيصفّر السلة كلها.
-function clearCartItem(cartKey: 'adult' | 'child' | 'resident' | 'towel') {
+function clearCartItem(cartKey: 'adult' | 'child' | 'resident' | 'towel' | 'service') {
   if (cartKey === 'adult')    adultQty.value    = 0
   if (cartKey === 'child')    childQty.value    = 0
   if (cartKey === 'resident') residentQty.value = 0
   if (cartKey === 'towel')    towelQty.value    = 0
+  if (cartKey === 'service')  serviceQty.value  = 0
 }
 
 // ── تشيك-إن فندق شريك B2B (2026-08-20، طلب Mohamed صراحةً) ─────────────
@@ -342,16 +363,30 @@ async function switchMode(next: BeachMode) {
   if (next === 'hotel' && !b2bContracts.value.length) await fetchB2BContracts()
 }
 
+// إضافة سريعة لعدد الضيوف — مجموعات الفنادق بتوصل غالبًا بالعشرات
+// (مثال محمد الحقيقي: 90 ضيف لفندق بانوراما دفعة واحدة)، فزرار +1 لوحده
+// مش كفاية عمليًا. الأزرار دي بتزود على القيمة الحالية، مش بتستبدلها.
+function addGuests(delta: number) {
+  hotelGuestsQty.value = Math.max(0, hotelGuestsQty.value + delta)
+}
+
 async function completeHotelCheckin() {
   if (!selectedContractId.value || hotelGuestsQty.value <= 0 || hotelSubmitting.value) return
   hotelSubmitting.value = true
   try {
-    await api.post(ENDPOINTS.beach.b2bCheckin, {
+    const { data } = await api.post(ENDPOINTS.beach.b2bCheckin, {
       contract_id: selectedContractId.value,
       guests_count: hotelGuestsQty.value,
       with_towel: hotelWithTowel.value,
     }, { params: { branch_id: branchId.value } })
     toast.success(t('backoffice.beachPos.hotelCheckinSuccess', { count: hotelGuestsQty.value }))
+    pushRecent({
+      kind: 'hotel',
+      label: selectedHotel.value?.hotel_name_ar || selectedHotel.value?.hotel_name || '',
+      detail: t('backoffice.beachPos.recentGuestsDetail', { count: hotelGuestsQty.value }),
+      amount: null,
+      txIds: [data.id],
+    })
     hotelGuestsQty.value = 0
     hotelWithTowel.value = false
     await Promise.all([fetchInventory(), fetchSelectedHotelStatus()])
@@ -379,7 +414,7 @@ async function fetchInventory() {
   }
 }
 
-interface BeachSaleLineItem { tx_type: string; quantity: number; cartKey: 'adult' | 'child' | 'resident' | 'towel' }
+interface BeachSaleLineItem { tx_type: string; quantity: number; cartKey: 'adult' | 'child' | 'resident' | 'towel' | 'service' }
 
 // ⚠️ باج حقيقي كان هنا: كان الكود بيبني طلب واحد مجمّع (entries[] + towels +
 // towel_price + payment_method) ويبعته لـ /beach/sell — الـ schema الحقيقي
@@ -394,6 +429,7 @@ function buildCartLineItems(): BeachSaleLineItem[] {
   if (childQty.value > 0)    items.push({ tx_type: 'entry_child',    quantity: childQty.value,    cartKey: 'child' })
   if (residentQty.value > 0) items.push({ tx_type: 'entry_resident', quantity: residentQty.value, cartKey: 'resident' })
   if (towelQty.value > 0)    items.push({ tx_type: 'towel_rent',     quantity: towelQty.value,    cartKey: 'towel' })
+  if (serviceQty.value > 0)  items.push({ tx_type: 'outside_food_fee', quantity: serviceQty.value, cartKey: 'service' })
   return items
 }
 
@@ -406,6 +442,71 @@ async function printTicket(txId: number) {
     }
   } catch {
     // ticket printing is optional — don't block success
+  }
+}
+
+// ── آخر العمليات (جلسة العمل الحالية بس، مش محفوظة) ─────────────────────
+// طلب Mohamed (2026-08-23): تحسين شاشة كاشير الشاطئ بالكامل. فجوة حقيقية
+// اتحلّت هنا: الكاشير كان يقدر يبيع/يسجّل دخول، بس أي طباعة تانية للتذكرة
+// أو تصحيح غلطة (رقم غلط، صنف غلط) كان لازم يروح لشاشة الإدارة (BeachAdminView)
+// ويدوّر على المعاملة بالـid — احتكاك حقيقي في لحظة الزحمة عند البوابة.
+// إعادة الطباعة متاحة لأي كاشير (زي زرار الطباعة الأصلي بعد البيع مباشرة)،
+// والإلغاء يتاح بصريًا للمدير+ بس (auth.hasRole('manager')) — نفس الصلاحية
+// الحقيقية على الـbackend (require_permission min_role_level=60)، الزر هنا
+// مجرد واجهة مطابقة تمامًا لنمط BeachAdminView.vue's openVoidModal/confirmVoid.
+interface RecentEntry {
+  key: string
+  kind: 'retail' | 'hotel'
+  label: string
+  detail: string
+  amount: number | null
+  txIds: number[]
+  time: string
+}
+const MAX_RECENT = 6
+const recentEntries = ref<RecentEntry[]>([])
+const isManager = computed(() => auth.hasRole('manager'))
+
+function pushRecent(entry: Omit<RecentEntry, 'key' | 'time'>) {
+  recentEntries.value.unshift({
+    ...entry,
+    key: crypto.randomUUID(),
+    time: formatTime(new Date()),
+  })
+  if (recentEntries.value.length > MAX_RECENT) recentEntries.value.length = MAX_RECENT
+}
+
+async function reprintEntry(entry: RecentEntry) {
+  for (const txId of entry.txIds) await printTicket(txId)
+}
+
+const voidingEntry = ref<RecentEntry | null>(null)
+const voidReason = ref('')
+const voidSubmitting = ref(false)
+
+function openVoidModal(entry: RecentEntry) {
+  voidingEntry.value = entry
+  voidReason.value = ''
+}
+
+async function confirmVoidEntry() {
+  if (!voidingEntry.value || voidReason.value.trim().length < 3) return
+  voidSubmitting.value = true
+  try {
+    for (const txId of voidingEntry.value.txIds) {
+      await api.post(ENDPOINTS.beach.transactionVoid(txId), { reason: voidReason.value.trim() })
+    }
+    toast.success(t('backoffice.beachPos.voidSuccess'))
+    recentEntries.value = recentEntries.value.filter(e => e.key !== voidingEntry.value!.key)
+    voidingEntry.value = null
+    await Promise.all([
+      fetchInventory(),
+      mode.value === 'hotel' ? fetchSelectedHotelStatus() : Promise.resolve(),
+    ])
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail ?? t('backoffice.beachPos.voidError'))
+  } finally {
+    voidSubmitting.value = false
   }
 }
 
@@ -462,6 +563,11 @@ async function completeSale(approval: Approval | null = null) {
     const lineItems = buildCartLineItems()
     const soldTxIds: number[] = []
     let anyQueued = false
+    // اتحسب قبل أي clearCart/clearCartItem تحت — الكميات بترجع صفر بعدها
+    const saleTotal = total.value
+    const saleDetail = lineItems
+      .map(item => t('backoffice.beachPos.cartLine', { label: t(`backoffice.beachPos.${item.cartKey}`), qty: item.quantity }))
+      .join('، ')
 
     // POS-03: payload إضافي للعملة
     const fxPayload = cashCurrency.value !== 'EGP' && currentFxRate.value > 0
@@ -523,6 +629,16 @@ async function completeSale(approval: Approval | null = null) {
 
     for (const txId of soldTxIds) await printTicket(txId)
 
+    if (soldTxIds.length) {
+      pushRecent({
+        kind: 'retail',
+        label: t('backoffice.beachPos.ticketSaleLabel'),
+        detail: saleDetail,
+        amount: saleTotal,
+        txIds: soldTxIds,
+      })
+    }
+
     if (soldTxIds.length || anyQueued) await fetchInventory()
 
     successMsg.value = anyQueued
@@ -562,15 +678,55 @@ async function onCreditApproval(approval: Approval) {
 // تزامن منه.
 let refreshInterval: ReturnType<typeof setInterval> | null = null
 
+// ── اختصارات لوحة مفاتيح (بيع مباشر) ────────────────────────────────────
+// نفس نمط UnifiedPOSView.vue (isTypingTarget guard) — كاشير البوابة بيكرر
+// نفس الحركة عشرات المرات في الساعة، وأي ثانية فرق بتتجمع على مدار اليوم.
+// 1-4 = إضافة صنف (بالغ/طفل/مقيم/فوطة، بترتيب البطاقات)، Shift+نفس الرقم =
+// إنقاص، Enter = إتمام البيع، Esc = مسح الطلب. متعطّلة وقت أي مودال مفتوح
+// أو لو التركيز في حقل إدخال (حساب آجل، مبلغ مستلم...) عشان متتعارضش مع
+// الكتابة العادية.
+function isTypingTarget(target: EventTarget | null): boolean {
+  const element = target as HTMLElement | null
+  return !!element && (
+    ['INPUT', 'TEXTAREA', 'SELECT'].includes(element.tagName) || element.isContentEditable
+  )
+}
+
+const CART_KEY_BY_DIGIT: Record<string, 'adult' | 'child' | 'resident' | 'towel' | 'service'> = {
+  '1': 'adult', '2': 'child', '3': 'resident', '4': 'towel', '5': 'service',
+}
+
+function handleKeydown(event: KeyboardEvent) {
+  if (mode.value !== 'retail' || !inventory.value) return
+  if (showCustomerModal.value || showCreditPinGuard.value || voidingEntry.value) return
+  if (isTypingTarget(event.target)) return
+
+  if (event.key === 'Escape') {
+    if (hasItems.value) { event.preventDefault(); clearCart() }
+    return
+  }
+  if (event.key === 'Enter') {
+    if (hasItems.value && !submitting.value) { event.preventDefault(); completeSale() }
+    return
+  }
+  const cartKey = CART_KEY_BY_DIGIT[event.key]
+  if (cartKey) {
+    event.preventDefault()
+    adjust(cartKey, event.shiftKey ? -1 : 1)
+  }
+}
+
 onMounted(() => {
   fetchInventory()
   fetchFxRates()  // POS-03: جلب أسعار الصرف عند فتح الشاشة
   loadPaymentChannels()
   refreshInterval = setInterval(fetchInventory, 30_000)
+  window.addEventListener('keydown', handleKeydown)
 })
 
 onUnmounted(() => {
   if (refreshInterval) clearInterval(refreshInterval)
+  window.removeEventListener('keydown', handleKeydown)
 })
 </script>
 
@@ -601,6 +757,40 @@ onUnmounted(() => {
         @click="switchMode('hotel')"
         :class="['px-4 py-2 rounded-lg text-sm font-semibold transition-all', mode === 'hotel' ? 'bg-white dark:bg-surface shadow-sm text-gray-900 dark:text-gray-100' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:text-gray-300']"
       >🏨 {{ t('backoffice.beachPos.hotelModeTab') }}</button>
+    </div>
+
+    <!-- ═══ آخر العمليات — إعادة طباعة لأي كاشير، إلغاء للمدير+ بس ═══ -->
+    <div v-if="recentEntries.length" class="mb-3">
+      <div class="mb-1.5 text-xs font-semibold text-gray-500 dark:text-gray-400">
+        {{ t('backoffice.beachPos.recentActivityTitle') }}
+      </div>
+      <div class="flex gap-2 overflow-x-auto pb-1">
+        <div
+          v-for="entry in recentEntries" :key="entry.key"
+          class="flex min-w-[190px] shrink-0 flex-col gap-1 rounded-xl border border-stone-200 dark:border-border bg-white dark:bg-surface p-2.5 shadow-sm"
+        >
+          <div class="flex items-center justify-between gap-2">
+            <span class="truncate text-xs font-bold text-gray-900 dark:text-gray-100">
+              {{ entry.kind === 'hotel' ? '🏨' : '🏖️' }} {{ entry.label }}
+            </span>
+            <span class="shrink-0 text-[11px] text-gray-400 dark:text-gray-400">{{ entry.time }}</span>
+          </div>
+          <div class="text-[11px] text-gray-500 dark:text-gray-400">{{ entry.detail }}</div>
+          <div v-if="entry.amount !== null" class="text-xs font-black text-blue-700 dark:text-blue-300">
+            {{ entry.amount }} {{ t('backoffice.beachPos.egp') }}
+          </div>
+          <div class="mt-0.5 flex gap-1.5">
+            <button
+              type="button" @click="reprintEntry(entry)"
+              class="flex-1 rounded-lg border border-stone-200 dark:border-border py-1 text-[11px] font-semibold text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800"
+            >🖨️ {{ t('backoffice.beachPos.reprintAction') }}</button>
+            <button
+              v-if="isManager" type="button" @click="openVoidModal(entry)"
+              class="flex-1 rounded-lg border border-red-200 dark:border-red-900 py-1 text-[11px] font-semibold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30"
+            >{{ t('backoffice.beachPos.voidAction') }}</button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Loading splash -->
@@ -778,6 +968,32 @@ onUnmounted(() => {
             </div>
           </div>
 
+          <!-- Service — رسم دخول مأكولات خارجية (طلب Mohamed 2026-08-23) —
+               نفس معاملة الفوطة بالظبط: سعر ثابت، بدون surge، بدون أي
+               تأثير على سعة الشاطئ. -->
+          <div class="bg-white dark:bg-surface rounded-xl border border-stone-200 dark:border-border p-4 shadow-sm">
+            <div class="text-center mb-3">
+              <div class="text-3xl mb-1">🍱</div>
+              <div class="font-bold text-gray-900 dark:text-gray-100 text-sm">{{ t('backoffice.beachPos.service') }}</div>
+              <div class="mt-1 text-2xl font-black text-rose-700 dark:text-rose-300">
+                {{ prices.service }}<span class="text-xs font-normal text-gray-500 ms-1">{{ t('backoffice.beachPos.egp') }}</span>
+              </div>
+              <div class="text-xs text-gray-400 mt-0.5">{{ t('backoffice.beachPos.noSurge') }}</div>
+            </div>
+            <div class="flex items-center justify-center gap-3">
+              <button
+                @click="adjust('service', -1)"
+                :disabled="serviceQty === 0"
+                class="h-12 w-12 rounded-lg bg-gray-100 text-lg font-bold leading-none transition-colors hover:bg-gray-200 disabled:opacity-40 dark:bg-gray-800 dark:hover:bg-gray-700"
+              >−</button>
+              <span class="text-xl font-black w-8 text-center text-gray-900 dark:text-gray-100">{{ serviceQty }}</span>
+              <button
+                @click="adjust('service', 1)"
+                class="w-12 h-12 rounded-lg bg-rose-500 hover:bg-rose-600 text-white font-bold text-lg transition-colors leading-none"
+              >+</button>
+            </div>
+          </div>
+
         </div>
       </div>
 
@@ -818,6 +1034,13 @@ onUnmounted(() => {
           >
             <span class="text-gray-700 dark:text-gray-300">🏊 {{ t('backoffice.beachPos.cartLine', { label: t('backoffice.beachPos.towel'), qty: towelQty }) }}</span>
             <span class="font-semibold text-gray-900 dark:text-gray-100">{{ t('backoffice.beachPos.lineTotal', { amount: towelQty * prices.towel }) }}</span>
+          </div>
+          <div
+            v-if="serviceQty > 0"
+            class="flex items-center justify-between py-2.5 border-b border-dashed border-stone-200 dark:border-border"
+          >
+            <span class="text-gray-700 dark:text-gray-300">🍱 {{ t('backoffice.beachPos.cartLine', { label: t('backoffice.beachPos.service'), qty: serviceQty }) }}</span>
+            <span class="font-semibold text-gray-900 dark:text-gray-100">{{ t('backoffice.beachPos.lineTotal', { amount: serviceQty * prices.service }) }}</span>
           </div>
 
           <!-- Empty state -->
@@ -1007,6 +1230,16 @@ onUnmounted(() => {
                   :placeholder="total.toFixed(2)"
                 />
               </div>
+              <!-- إدخال سريع بأزرار جاهزة (المبلغ بالظبط + أقرب فئات نقدية
+                   شائعة) — نفس الطريقة السهلة المستخدمة في كاشير الدايننج. -->
+              <div class="flex flex-wrap gap-2">
+                <button
+                  v-for="preset in cashPresets" :key="preset"
+                  type="button"
+                  @click="selectCashPreset(preset)"
+                  class="min-h-[36px] px-3 rounded-lg border border-stone-200 dark:border-border bg-white dark:bg-surface text-sm font-bold tabular-nums text-gray-700 dark:text-gray-300 hover:border-blue-400 dark:hover:border-blue-500"
+                >{{ minorToMoney(preset) }} {{ t('backoffice.beachPos.egp') }}</button>
+              </div>
               <div
                 v-if="changeMinorEGP !== null"
                 :class="[
@@ -1054,6 +1287,10 @@ onUnmounted(() => {
             </button>
           </div>
 
+          <p class="text-center text-[11px] text-gray-400 dark:text-gray-400">
+            {{ t('backoffice.beachPos.retailShortcutsHint') }}
+          </p>
+
         </div>
       </div>
 
@@ -1095,6 +1332,17 @@ onUnmounted(() => {
                 @click="hotelGuestsQty += 1"
                 class="w-11 h-11 rounded-xl border border-stone-300 dark:border-gray-600 text-lg font-bold text-gray-700 dark:text-gray-300"
               >+</button>
+            </div>
+            <!-- إضافة سريعة — مجموعات الفنادق غالبًا بالعشرات (زي مثال
+                 بانوراما: 90 ضيف دفعة واحدة)، +1 لوحده مش عملي هنا. -->
+            <div class="flex items-center gap-2 mt-2">
+              <span class="text-xs text-gray-400 dark:text-gray-400">{{ t('backoffice.beachPos.quickAddLabel') }}</span>
+              <button
+                v-for="n in [5, 10, 25]" :key="n"
+                type="button"
+                @click="addGuests(n)"
+                class="min-h-9 rounded-lg border border-stone-300 dark:border-gray-600 px-3 text-sm font-bold text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800"
+              >+{{ n }}</button>
             </div>
           </div>
 
@@ -1171,6 +1419,25 @@ onUnmounted(() => {
       @approved="onCreditApproval"
       @cancel="showCreditPinGuard = false; creditApprovalError = ''"
     />
+    <AppModal :open="!!voidingEntry" @close="voidingEntry = null" :title="t('backoffice.beachPos.voidModalTitle')">
+      <div class="space-y-4">
+        <p class="text-sm text-gray-600 dark:text-gray-400">{{ voidingEntry?.label }} — {{ voidingEntry?.detail }}</p>
+        <div>
+          <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">{{ t('backoffice.beachPos.voidReasonLabel') }}</label>
+          <textarea
+            v-model="voidReason" rows="2" minlength="3" maxlength="200"
+            class="w-full border border-gray-300 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 rounded-lg px-3 py-2 text-sm"
+            :placeholder="t('backoffice.beachPos.voidReasonPlaceholder')"
+          />
+        </div>
+        <div class="flex gap-3 justify-end">
+          <AppButton variant="ghost" @click="voidingEntry = null">{{ t('backoffice.beachPos.cancelAction') }}</AppButton>
+          <AppButton variant="danger" :disabled="voidReason.trim().length < 3" :loading="voidSubmitting" @click="confirmVoidEntry">
+            {{ t('backoffice.beachPos.confirmVoid') }}
+          </AppButton>
+        </div>
+      </div>
+    </AppModal>
   </div>
 </template>
 

@@ -4138,6 +4138,9 @@
         "clearMessage": "ستُحذف أصناف السلة، وإذا كان الطلب مسجلاً على السيرفر فسيُلغى أيضًا.",
         "clearConfirm": "نعم، امسح الطلب",
         "keepOrder": "احتفظ بالطلب",
+        "removeItemTitle": "حذف الصنف؟",
+        "removeItemMessage": "هيتحذف \"{name}\" من الطلب بكل إضافاته وملاحظاته.",
+        "removeItemConfirm": "نعم، احذف",
         "mobileCart": "السلة ({count})"
       },
       "customer": {
@@ -5473,7 +5476,8 @@
         "entryResident": "مقيم",
         "entryTowel": "دخول + فوطة",
         "towelRent": "إيجار فوطة",
-        "towelReturn": "إرجاع فوطة"
+        "towelReturn": "إرجاع فوطة",
+        "outsideFoodFee": "خدمة (مأكولات خارجية)"
       },
       "surgeUpdated": "تم تحديث الـ Surge",
       "surgeUpdateError": "تعذّر تحديث الـ Surge",
@@ -5568,6 +5572,7 @@
       "child": "طفل",
       "resident": "مقيم",
       "towel": "فوطة",
+      "service": "خدمة",
       "egp": "ج",
       "originalPrice": "(أصل: {price} ج)",
       "noSurge": "بدون surge",
@@ -5633,7 +5638,21 @@
       "selectHotelToSeeStatus": "اختر فندقًا لعرض حالته",
       "checkedInThisMonth": "دخلوا هذا الشهر",
       "overMonthlyCapHint": "⚠️ تخطّى الحد الأقصى الاسترشادي لهذا الشهر — الدخول مسموح، للعلم فقط",
-      "nearMonthlyCapHint": "الحد الأقصى الاسترشادي أوشك على الانتهاء — متبقي {count} فقط"
+      "nearMonthlyCapHint": "الحد الأقصى الاسترشادي أوشك على الانتهاء — متبقي {count} فقط",
+      "quickAddLabel": "إضافة سريعة:",
+      "recentGuestsDetail": "{count} ضيف",
+      "recentActivityTitle": "آخر العمليات",
+      "reprintAction": "إعادة طباعة",
+      "voidAction": "إلغاء",
+      "voidModalTitle": "إلغاء العملية",
+      "voidReasonLabel": "سبب الإلغاء",
+      "voidReasonPlaceholder": "اكتب السبب (3 أحرف على الأقل)",
+      "cancelAction": "تراجع",
+      "confirmVoid": "تأكيد الإلغاء",
+      "voidSuccess": "تم إلغاء العملية بنجاح",
+      "voidError": "تعذّر إلغاء العملية",
+      "ticketSaleLabel": "بيع تذاكر",
+      "retailShortcutsHint": "اختصارات: 1-5 لإضافة صنف (Shift للإنقاص)، Enter لإتمام البيع، Esc لمسح الطلب"
     },
     "finance": {
       "title": "المالية",
