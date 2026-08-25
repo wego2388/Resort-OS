@@ -92,6 +92,8 @@ services:
     environment:
       RATE_LIMIT_TRUSTED_PROXY_HOPS: "2"
     ports: ["127.0.0.1:8005:8005"]
+    volumes:
+      - resort_uploads:/app/uploads
     depends_on:
       db_postgres:
         condition: service_healthy
@@ -226,3 +228,9 @@ volumes:
   resort_redisdata:
   certbot_www:
   certbot_certs:
+  # 2026-08-25: صور قائمة الطعام المرفوعة (app.main's /uploads mount،
+  # dining.api.router's upload endpoint) كانت بتتكتب في /app/uploads بدون
+  # أي volume دائم — أي ملف مرفوع كان بيضيع مع أي إعادة بناء/استبدال
+  # للحاوية (كل نشر). Named volume دلوقتي يخلّي الملفات تعيش برّه دورة حياة
+  # الحاوية نفسها.
+  resort_uploads:
