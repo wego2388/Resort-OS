@@ -384,6 +384,8 @@ async def checkin(
             id_number=body.id_number if body else None,
             payment_method=body.payment_method if body else None,
         )
+    except services.BookingConflictError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
     await pms_rooms_manager.broadcast(str(booking.branch_id), {"type": "rooms_changed"})
@@ -407,6 +409,8 @@ async def checkout(
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {
             "code": "FINANCIAL_CONFIGURATION_ERROR", "message": str(exc),
         })
+    except services.BookingConflictError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
     await pms_rooms_manager.broadcast(str(booking.branch_id), {"type": "rooms_changed"})
@@ -420,6 +424,8 @@ async def cancel_booking(booking_id: int, db: DbDep, user=Depends(get_pms_user))
     _booking_for_access(db, user, booking_id, "إلغاء حجز")
     try:
         booking = services.cancel_booking(db, booking_id, cancelled_by=user.id)
+    except services.BookingConflictError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
     await pms_rooms_manager.broadcast(str(booking.branch_id), {"type": "rooms_changed"})
@@ -448,6 +454,8 @@ def request_early_late(
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {
             "code": "FINANCIAL_CONFIGURATION_ERROR", "message": str(exc),
         })
+    except services.BookingConflictError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 

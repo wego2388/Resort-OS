@@ -53,13 +53,21 @@ router = APIRouter(tags=["hr"])
 @router.get("/hr/employees", response_model=PaginatedResponse)
 def list_employees(
     db: DbDep,
-    _=Depends(get_hr_reader_user),
+    user=Depends(get_hr_reader_user),
     branch_id: int = Query(...),
     status_filter: Optional[str] = Query(None, alias="status"),
     search: Optional[str] = Query(None, max_length=100),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
 ):
+    """⚠️ باج حقيقي كان هنا (2026-08-28، تدقيق ما قبل الإطلاق): مفيش أي فحص
+    عزل فرع على قائمة الموظفين — عكس get_employee المفردة المجاورة اللي
+    عندها الفحص من الأساس (نفس فئة IDOR §13). قائمة كاملة بأرقام قومية
+    ورواتب لأي فرع كانت متاحة بمجرد تمرير branch_id مختلف."""
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "عرض قائمة الموظفين")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     items, total = crud.list_employees(db, branch_id, status_filter, search,
                                         skip=(page - 1) * size, limit=size)
     return PaginatedResponse(total=total, page=page, size=size,
@@ -203,7 +211,7 @@ def link_employee_user(
 def get_payslip(
     employee_id: int,
     db: DbDep,
-    _=Depends(get_hr_reader_user),
+    user=Depends(get_hr_reader_user),
     period_year:  int = Query(..., ge=2020),
     period_month: int = Query(..., ge=1, le=12),
     penalty_days: int = Query(0, ge=0),
@@ -211,7 +219,17 @@ def get_payslip(
     overtime_amount: float = Query(0.0, ge=0),
     late_penalty_amount: float = Query(0.0, ge=0),
 ):
+    """⚠️ باج حقيقي كان هنا (2026-08-28، تدقيق ما قبل الإطلاق): حساب راتب حي
+    (صافي/ضريبة/تأمين) لأي employee_id من غير أي فحص عزل فرع — نفس فئة
+    get_employee's IDOR الموثّق §13."""
     from decimal import Decimal  # noqa: PLC0415
+    employee = crud.get_employee(db, employee_id)
+    if not employee:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"الموظف {employee_id} غير موجود")
+    try:
+        core_services.assert_branch_access(db, user, employee.branch_id, "حساب راتب موظف")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     try:
         return services.calculate_employee_payroll(
             db, employee_id, period_year, period_month,
@@ -229,9 +247,18 @@ def get_payslip(
 
 @router.get("/hr/employees/{employee_id}/allowances", response_model=list[AllowanceRead])
 def list_employee_allowances(
-    employee_id: int, db: DbDep, _=Depends(get_hr_reader_user),
+    employee_id: int, db: DbDep, user=Depends(get_hr_reader_user),
     active_only: bool = Query(True),
 ):
+    """⚠️ باج حقيقي كان هنا (2026-08-28): مفيش فحص عزل فرع خالص — نفس فئة
+    IDOR §13، راجع create_employee_allowance المجاورة اللي عندها الفحص."""
+    employee = crud.get_employee(db, employee_id)
+    if not employee:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"الموظف {employee_id} غير موجود")
+    try:
+        core_services.assert_branch_access(db, user, employee.branch_id, "عرض بدلات موظف")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     return [AllowanceRead.model_validate(a)
             for a in crud.list_allowances_for_employee(db, employee_id, active_only)]
 
@@ -312,11 +339,28 @@ def create_salary_advance(data: SalaryAdvanceCreate, db: DbDep, user=Depends(get
 
 @router.get("/hr/salary-advances", response_model=list[SalaryAdvanceRead])
 def list_salary_advances(
-    db: DbDep, _=Depends(get_hr_reader_user),
+    db: DbDep, user=Depends(get_hr_reader_user),
     employee_id: Optional[int] = Query(None),
     branch_id: Optional[int] = Query(None),
     status_filter: Optional[str] = Query(None, alias="status"),
 ):
+    """⚠️ باج حقيقي كان هنا (2026-08-28): تسريب سلف/مبالغ كل الفروع لو
+    الفلترين اتسابوا فاضيين — نفس فئة IDOR §13. لازم employee_id أو
+    branch_id عشان نقدر نتحقق من عزل الفرع (الفرونت إند بيبعت employee_id
+    دايمًا فعليًا)."""
+    try:
+        if employee_id is not None:
+            employee = services.get_employee_or_404(db, employee_id)
+            core_services.assert_branch_access(db, user, employee.branch_id, "عرض سلف موظف")
+        elif branch_id is not None:
+            core_services.assert_branch_access(db, user, branch_id, "عرض سلف فرع")
+        else:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                                 "لازم تحدّد employee_id أو branch_id")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
     return [SalaryAdvanceRead.model_validate(a)
             for a in crud.list_salary_advances(db, employee_id, branch_id, status_filter)]
 
@@ -374,11 +418,26 @@ def create_advance_payment(data: AdvancePaymentCreate, db: DbDep, user=Depends(g
 
 @router.get("/hr/advance-payments", response_model=list[AdvancePaymentRead])
 def list_advance_payments(
-    db: DbDep, _=Depends(get_hr_reader_user),
+    db: DbDep, user=Depends(get_hr_reader_user),
     employee_id: Optional[int] = Query(None),
     branch_id: Optional[int] = Query(None),
     deducted: Optional[bool] = Query(None),
 ):
+    """⚠️ باج حقيقي كان هنا (2026-08-28) — نفس فئة list_salary_advances
+    المجاورة بالظبط، راجع تعليقها."""
+    try:
+        if employee_id is not None:
+            employee = services.get_employee_or_404(db, employee_id)
+            core_services.assert_branch_access(db, user, employee.branch_id, "عرض دفعات سلفة موظف")
+        elif branch_id is not None:
+            core_services.assert_branch_access(db, user, branch_id, "عرض دفعات سلفة فرع")
+        else:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                                 "لازم تحدّد employee_id أو branch_id")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
     return [AdvancePaymentRead.model_validate(p)
             for p in crud.list_advance_payments(db, employee_id, branch_id, deducted)]
 
@@ -389,10 +448,18 @@ def list_advance_payments(
 
 @router.get("/hr/leave-balance-monthly", response_model=list[LeaveBalanceMonthlyRead])
 def list_leave_balance_monthly(
-    db: DbDep, _=Depends(get_hr_reader_user),
+    db: DbDep, user=Depends(get_hr_reader_user),
     employee_id: int = Query(...),
     limit: int = Query(24, ge=1, le=60),
 ):
+    """⚠️ باج حقيقي كان هنا (2026-08-28) — مفيش فحص عزل فرع، نفس فئة IDOR §13."""
+    try:
+        employee = services.get_employee_or_404(db, employee_id)
+        core_services.assert_branch_access(db, user, employee.branch_id, "عرض رصيد إجازات موظف")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
     return [LeaveBalanceMonthlyRead.model_validate(r)
             for r in crud.list_leave_balance_monthly(db, employee_id, limit)]
 
@@ -401,12 +468,17 @@ def list_leave_balance_monthly(
 
 @router.get("/hr/leaderboard", response_model=list[LeaderboardEntry])
 def sales_leaderboard(
-    db: DbDep, _=Depends(get_hr_reader_user),
+    db: DbDep, user=Depends(get_hr_reader_user),
     branch_id: int = Query(...),
     date_from: date = Query(...),
     date_to: date = Query(...),
 ):
-    """ترتيب الموظفين حسب إجمالي المبيعات الحقيقية (مطعم/كافيه/شاطئ) خلال المدى."""
+    """ترتيب الموظفين حسب إجمالي المبيعات الحقيقية (مطعم/كافيه/شاطئ) خلال المدى.
+    ⚠️ باج حقيقي كان هنا (2026-08-28): مفيش فحص عزل فرع."""
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "عرض لوحة الصدارة")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     return services.get_sales_leaderboard(db, branch_id, date_from, date_to)
 
 
@@ -414,11 +486,17 @@ def sales_leaderboard(
 
 @router.get("/hr/payroll-runs", response_model=PaginatedResponse)
 def list_payroll_runs(
-    db: DbDep, _=Depends(get_hr_reader_user),
+    db: DbDep, user=Depends(get_hr_reader_user),
     branch_id: int = Query(...),
     page: int = Query(1, ge=1),
     size: int = Query(24, ge=1, le=60),
 ):
+    """⚠️ باج حقيقي كان هنا (2026-08-28): مفيش فحص عزل فرع — إجمالي رواتب
+    فرع تاني كان متاح بمجرد تمرير branch_id مختلف."""
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "عرض مسيرات رواتب")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     items, total = crud.list_payroll_runs(db, branch_id, (page - 1) * size, size)
     return PaginatedResponse(total=total, page=page, size=size,
                              items=[PayrollRunRead.model_validate(r) for r in items])
@@ -429,12 +507,12 @@ def list_payroll_runs(
 # بيرجّع نفس البيانات بدل ما يرجّع 404 حقيقي.
 @router.get("/hr/payroll/runs", response_model=PaginatedResponse)
 def list_payroll_runs_alias(
-    db: DbDep, _=Depends(get_hr_reader_user),
+    db: DbDep, user=Depends(get_hr_reader_user),
     branch_id: int = Query(...),
     page: int = Query(1, ge=1),
     size: int = Query(24, ge=1, le=60),
 ):
-    return list_payroll_runs(db, _, branch_id, page, size)
+    return list_payroll_runs(db, user, branch_id, page, size)
 
 
 @router.post("/hr/payroll-runs", response_model=PayrollRunRead,
@@ -539,7 +617,7 @@ def update_attendance(record_id: int, data: AttendanceRecordUpdate, db: DbDep, u
 
 @router.get("/hr/attendance", response_model=PaginatedResponse)
 def list_attendance(
-    db: DbDep, _=Depends(get_hr_reader_user),
+    db: DbDep, user=Depends(get_hr_reader_user),
     employee_id: Optional[int] = Query(None),
     branch_id:   Optional[int] = Query(None),
     date_from:   Optional[date] = Query(None),
@@ -547,6 +625,21 @@ def list_attendance(
     page: int = Query(1, ge=1),
     size: int = Query(50, ge=1, le=200),
 ):
+    """⚠️ باج حقيقي كان هنا (2026-08-28): تسريب سجلات حضور كل الفروع لو
+    الفلترين اتسابوا فاضيين — نفس فئة IDOR §13."""
+    try:
+        if employee_id is not None:
+            employee = services.get_employee_or_404(db, employee_id)
+            core_services.assert_branch_access(db, user, employee.branch_id, "عرض حضور موظف")
+        elif branch_id is not None:
+            core_services.assert_branch_access(db, user, branch_id, "عرض حضور فرع")
+        else:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                                 "لازم تحدّد employee_id أو branch_id")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
     items, total = crud.list_attendance(db, employee_id, branch_id, date_from, date_to,
                                         (page - 1) * size, size)
     return PaginatedResponse(total=total, page=page, size=size,
@@ -679,13 +772,18 @@ def create_leave_request(data: LeaveRequestCreate, db: DbDep, _=Depends(get_hr_r
 
 @router.get("/hr/leave-requests", response_model=PaginatedResponse)
 def list_leave_requests(
-    db: DbDep, _=Depends(get_hr_reader_user),
+    db: DbDep, user=Depends(get_hr_reader_user),
     branch_id:   int = Query(...),
     employee_id: Optional[int] = Query(None),
     status_filter: Optional[str] = Query(None, alias="status"),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
 ):
+    """⚠️ باج حقيقي كان هنا (2026-08-28): مفيش فحص عزل فرع."""
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "عرض طلبات إجازة")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     items, total = crud.list_leave_requests(
         db, branch_id, employee_id, status_filter, (page - 1) * size, size
     )
@@ -756,14 +854,14 @@ def reject_leave_request(
 
 @router.get("/hr/leaves", response_model=PaginatedResponse)
 def list_leaves_alias(
-    db: DbDep, _=Depends(get_hr_reader_user),
+    db: DbDep, user=Depends(get_hr_reader_user),
     branch_id:   int = Query(...),
     employee_id: Optional[int] = Query(None),
     status_filter: Optional[str] = Query(None, alias="status"),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
 ):
-    return list_leave_requests(db, _, branch_id, employee_id, status_filter, page, size)
+    return list_leave_requests(db, user, branch_id, employee_id, status_filter, page, size)
 
 
 @router.patch("/hr/leaves/{request_id}", response_model=LeaveRequestRead)
@@ -986,11 +1084,16 @@ def create_penalty(data: EmployeePenaltyCreate, db: DbDep, user=Depends(get_hr_r
 
 @router.get("/hr/penalties", response_model=list[EmployeePenaltyRead])
 def list_penalties(
-    db: DbDep, _=Depends(get_hr_reader_user),
+    db: DbDep, user=Depends(get_hr_reader_user),
     branch_id:   int = Query(...),
     employee_id: Optional[int] = Query(None),
     month:       Optional[str] = Query(None, description="YYYY-MM"),
 ):
+    """⚠️ باج حقيقي كان هنا (2026-08-28): مفيش فحص عزل فرع."""
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "عرض جزاءات فرع")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     items = crud.list_penalties(db, branch_id, employee_id, month)
     return [EmployeePenaltyRead.model_validate(p) for p in items]
 
@@ -1001,11 +1104,16 @@ def list_penalties(
 
 @router.get("/hr/rota/templates", response_model=list[RotaTemplateRead])
 def list_rota_templates(
-    db: DbDep, _=Depends(get_hr_reader_user),
+    db: DbDep, user=Depends(get_hr_reader_user),
     branch_id: int = Query(...),
     department_id: Optional[int] = Query(None),
     is_active: Optional[bool] = Query(None),
 ):
+    """⚠️ باج حقيقي كان هنا (2026-08-28): مفيش فحص عزل فرع."""
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "عرض قوالب جدول فرع")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     items = crud.list_rota_templates(db, branch_id, department_id, is_active)
     return [RotaTemplateRead.model_validate(t) for t in items]
 

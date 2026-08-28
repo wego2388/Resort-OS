@@ -1989,14 +1989,14 @@ def void_order_item(
     Gate 4 (جولة مراجعة Codex الأولى): قفل الطلب + إعادة فحص الحالة تحت
     القفل — عشان إلغاء صنف مايتسابقش مع دفع نفس الطلب."""
     order = _lock_order_or_conflict(db, order_id)
-    if order.status in ("paid", "cancelled"):
+    if order.status in ("paid", "cancelled", "refunded"):
         raise ValueError(f"لا يمكن إلغاء صنف من طلب '{order.status}' — استخدم مرتجع بعد الدفع")
 
     item = crud.get_order_item(db, order_id, item_id)
     if not item:
         raise ValueError(f"الصنف {item_id} غير موجود في هذا الطلب")
-    if item.status == "cancelled":
-        raise ValueError("الصنف ده ملغي بالفعل")
+    if item.status in ("cancelled", "refunded"):
+        raise ValueError("الصنف ده ملغي أو مرتجع بالفعل")
 
     from app.modules.core import policy_engine  # noqa: PLC0415
 
@@ -2032,7 +2032,7 @@ def transfer_order_table(db: Session, order_id: int, table_id: int) -> DiningOrd
     (blocking) + إعادة فحص الحالة تحت القفل — عشان نقل الطاولة مايتسابقش مع
     دفع الطلب، ولا مع نقل/فتح طلب تاني على نفس الطاولة الوجهة."""
     order = _lock_order_or_conflict(db, order_id)
-    if order.status in ("paid", "cancelled"):
+    if order.status in ("paid", "cancelled", "refunded"):
         raise ValueError(f"لا يمكن نقل طلب بحالة '{order.status}'")
 
     new_table = crud.get_table(db, table_id)
@@ -2986,7 +2986,7 @@ def apply_order_discount(
     القفل — عشان تطبيق الخصم مايتسابقش مع دفع نفس الطلب."""
     order = _lock_order_or_conflict(db, order_id)
 
-    if order.status in ("paid", "cancelled"):
+    if order.status in ("paid", "cancelled", "refunded"):
         raise ValueError("لا يمكن تطبيق خصم على طلب مغلق")
 
     from app.modules.core import policy_engine  # noqa: PLC0415

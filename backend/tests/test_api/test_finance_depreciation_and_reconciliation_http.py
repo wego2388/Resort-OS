@@ -31,6 +31,21 @@ def make_branch_committed(db):
     return b
 
 
+def manager_headers_for_branch(db, branch):
+    """2026-08-28 (تدقيق ما قبل الإطلاق): بعد إضافة assert_branch_access
+    لـ list_depreciation_entries/list_bank_accounts (كانوا من غير أي فحص
+    عزل فرع خالص)، manager_headers العالمية (مالهاش أي عضوية فرع) بقت
+    تفشل بـ403 على الفرع اللي بيتعمله make_branch_committed هنا — نفس
+    نمط role_headers_for_branch في test_hr_http.py بالظبط لنفس السبب."""
+    from tests.conftest import _create_test_user, _make_token, assign_test_user_to_branch
+
+    email = f"finance-manager-{uuid.uuid4().hex[:8]}@test.local"
+    user_id = _create_test_user(email, "manager")
+    assign_test_user_to_branch(db, user_id, branch.id)
+    db.commit()
+    return {"Authorization": f"Bearer {_make_token(email, branch_id=branch.id)}"}
+
+
 def make_asset_committed(db, branch, *, purchase_cost=None, salvage_value=Decimal("0"),
                           useful_life_years=None, depreciation_start_date=None, code=None):
     from app.modules.maintenance.models import Asset
@@ -194,6 +209,7 @@ class TestDepreciationRunHTTP:
 class TestDepreciationEntriesListHTTP:
     def test_list_depreciation_entries_via_http(self, client: TestClient, db, manager_headers):
         branch = make_branch_committed(db)
+        headers = manager_headers_for_branch(db, branch)
         make_asset_committed(
             db, branch, purchase_cost=Decimal("2400.00"), useful_life_years=1,
             depreciation_start_date=date(2026, 1, 1),
@@ -201,14 +217,14 @@ class TestDepreciationEntriesListHTTP:
         run_resp = client.post(
             "/api/v1/finance/depreciation/run",
             json={"branch_id": branch.id, "year": 2026, "month": 1},
-            headers=manager_headers,
+            headers=headers,
         )
         assert run_resp.status_code == 200, run_resp.text
 
         list_resp = client.get(
             "/api/v1/finance/depreciation/entries",
             params={"branch_id": branch.id},
-            headers=manager_headers,
+            headers=headers,
         )
         assert list_resp.status_code == 200, list_resp.text
         body = list_resp.json()
@@ -411,18 +427,19 @@ class TestBankReconciliationHTTP:
 
     def test_list_bank_accounts_via_http(self, client: TestClient, db, manager_headers):
         branch = make_branch_committed(db)
+        headers = manager_headers_for_branch(db, branch)
         create_resp = client.post(
             "/api/v1/finance/bank-accounts",
             json={
                 "branch_id": branch.id, "bank_name": "بنك مصر", "account_name": "حساب القائمة",
                 "account_number": f"ACC-{uuid.uuid4().hex[:8]}",
             },
-            headers=manager_headers,
+            headers=headers,
         )
         bank_account_id = create_resp.json()["id"]
 
         list_resp = client.get(
-            "/api/v1/finance/bank-accounts", params={"branch_id": branch.id}, headers=manager_headers,
+            "/api/v1/finance/bank-accounts", params={"branch_id": branch.id}, headers=headers,
         )
         assert list_resp.status_code == 200, list_resp.text
         assert any(a["id"] == bank_account_id for a in list_resp.json())

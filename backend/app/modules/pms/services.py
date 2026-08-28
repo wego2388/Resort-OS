@@ -32,6 +32,23 @@ def get_booking_or_404(db: Session, booking_id: int) -> Booking:
     return b
 
 
+def _lock_booking_or_conflict(db: Session, booking_id: int) -> Booking:
+    """يقفل صف الحجز (SELECT FOR UPDATE NOWAIT) قبل أي انتقال حالة —
+    نفس نمط dining._lock_order_or_conflict. راجع lock_booking_for_update
+    للسبب (باج حقيقي: check-in/checkout/cancel/early-late كانوا بيقروا
+    الحجز غير مقفول)."""
+    try:
+        booking = crud.lock_booking_for_update(db, booking_id)
+    except OperationalError as exc:
+        db.rollback()
+        raise BookingConflictError(
+            f"الحجز #{booking_id} مشغول الآن بعملية أخرى — حاول تاني خلال لحظات"
+        ) from exc
+    if not booking:
+        raise ValueError(f"الحجز {booking_id} غير موجود")
+    return booking
+
+
 def _resolve_rate_plan(db: Session, data: BookingCreate, nights: int) -> Optional["RatePlan"]:
     """يتحقق من صلاحية خطة الأسعار المطلوبة (لو اتبعتت) قبل أي قفل غرف —
     مفيش داعي نقفل حاجة لو الخطة نفسها مش سارية. باج "الموديل موجود، الـ
@@ -366,7 +383,7 @@ def checkin_booking(
     id_number: Optional[str] = None,
     payment_method: Optional[str] = None,
 ) -> Booking:
-    booking = get_booking_or_404(db, booking_id)
+    booking = _lock_booking_or_conflict(db, booking_id)
     if booking.status != "confirmed":
         raise ValueError(f"لا يمكن تسجيل الدخول لحجز بحالة '{booking.status}'")
 
@@ -436,7 +453,7 @@ def find_active_folio_for_room(db: Session, branch_id: int, room_id: int) -> Opt
 
 
 def checkout_booking(db: Session, booking_id: int) -> Booking:
-    booking = get_booking_or_404(db, booking_id)
+    booking = _lock_booking_or_conflict(db, booking_id)
     if booking.status != "checked_in":
         raise ValueError(f"لا يمكن تسجيل الخروج — الحجز يجب أن يكون checked_in (الحالة الحالية: '{booking.status}')")
 
@@ -596,7 +613,7 @@ def request_early_late(db: Session, booking_id: int, data: "EarlyLateRequest") -
       حتى تُحاسَب مع باقي مصاريف إقامته وقت الـ checkout
     - بيسمح بالاستدعاء أكثر من مرة (update) — آخر قيمة تفوز
     """
-    booking = get_booking_or_404(db, booking_id)
+    booking = _lock_booking_or_conflict(db, booking_id)
     if booking.status not in ("confirmed", "checked_in"):
         raise ValueError(f"لا يمكن تعديل مواعيد حجز بحالة '{booking.status}'")
 
@@ -692,7 +709,7 @@ def request_early_late(db: Session, booking_id: int, data: "EarlyLateRequest") -
 
 
 def cancel_booking(db: Session, booking_id: int, cancelled_by: int) -> Booking:
-    booking = get_booking_or_404(db, booking_id)
+    booking = _lock_booking_or_conflict(db, booking_id)
     if booking.status in ("checked_out", "cancelled"):
         raise ValueError(f"لا يمكن إلغاء حجز بحالة '{booking.status}'")
 

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from datetime import date, timedelta
 from decimal import Decimal
 
@@ -64,11 +65,18 @@ def _today() -> date:
     return business_today(settings.TIMEZONE)
 
 
+logger = logging.getLogger(__name__)
+
+
 def _safe_query(func, *args, **kwargs):
-    """يُشغّل query ويُرجع None إذا فشل الـ import (module لم يُبنَ)."""
+    """يُشغّل query ويُرجع None إذا فشل. باج حقيقي سابق (راجع §19 CLAUDE.md):
+    الابتلاع الصامت هنا كان مخفّي فعليًا خطأ حقيقي (BeachTransaction بحقول
+    غلط) لفترة طويلة قبل ما حد يلاحظه — لوج تحذير صريح دايمًا قبل الابتلاع،
+    عشان أي كسر مستقبلي مشابه يبان في اللوج مش يختفي بصمت في تقرير فاضي."""
     try:
         return func(*args, **kwargs)
-    except (ImportError, Exception):
+    except Exception:
+        logger.warning("analytics _safe_query فشل في %r", getattr(func, "__name__", func), exc_info=True)
         return None
 
 
@@ -426,6 +434,7 @@ def _compute_live_kpis(branch_id: int) -> dict:
                 "occupancy_pct": round(100 * occupied / total_rooms, 1) if total_rooms else 0,
             }
         except Exception:
+            logger.warning("live KPIs: قسم pms فشل — branch_id=%s", branch_id, exc_info=True)
             result["pms"] = None
 
         try:
@@ -446,6 +455,7 @@ def _compute_live_kpis(branch_id: int) -> dict:
                 "towels_used":    int(inv.towels_used)      if inv else 0,
             }
         except Exception:
+            logger.warning("live KPIs: قسم beach فشل — branch_id=%s", branch_id, exc_info=True)
             result["beach"] = None
 
         try:
@@ -456,6 +466,7 @@ def _compute_live_kpis(branch_id: int) -> dict:
             ).count()
             result["maintenance"] = {"open_work_orders": open_wos}
         except Exception:
+            logger.warning("live KPIs: قسم maintenance فشل — branch_id=%s", branch_id, exc_info=True)
             result["maintenance"] = None
 
         return result
@@ -594,6 +605,7 @@ def full_dashboard(
                 LeasePayment.paid_at >= range_start, LeasePayment.paid_at <= range_end,
             ).all())
         except Exception:
+            logger.warning("revenue summary: قسم leasing فشل — branch_id=%s", bid, exc_info=True)
             lease_rev = Decimal(0)
         try:
             from app.modules.timeshare.models import (
@@ -604,6 +616,7 @@ def full_dashboard(
                 TimeshareInstallment.paid_at >= range_start, TimeshareInstallment.paid_at <= range_end,
             ).all())
         except Exception:
+            logger.warning("revenue summary: قسم timeshare فشل — branch_id=%s", bid, exc_info=True)
             ts_rev = Decimal(0)
         total = rest + cafe + pms_rev + beach_rev + lease_rev + ts_rev
         return {

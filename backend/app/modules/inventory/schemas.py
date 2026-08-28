@@ -210,9 +210,21 @@ class SupplierRead(BaseModel):
     created_at: datetime; updated_at: datetime
 
 
+class ReceiveItemLine(BaseModel):
+    item_id: int
+    received_qty: Decimal = Field(..., gt=0)
+
+
 class ReceiveItemsRequest(BaseModel):
-    """استلام جزئي أو كامل لأمر الشراء."""
-    items: list[dict]  # [{"item_id": int, "received_qty": Decimal}]
+    """استلام جزئي أو كامل لأمر الشراء.
+
+    ⚠️ باج حقيقي كان هنا (تدقيق ما قبل الإطلاق 2026-08-28): `items` كانت
+    `list[dict]` خام من غير أي تحقق — كمية استلام سالبة أو صفرية كانت
+    تعدّي، ومفيش حد أعلى (استلام أكتر من الكمية المطلوبة أصلاً). الآن
+    `received_qty` لازم تكون > 0 على مستوى الـschema، والحد الأعلى
+    (المتبقي الفعلي من الكمية المطلوبة) بيتحقق في services.receive_
+    purchase_order (نفس نمط pay_purchase_order's remaining check)."""
+    items: list[ReceiveItemLine]
     warehouse_id: int
     received_at: date
 

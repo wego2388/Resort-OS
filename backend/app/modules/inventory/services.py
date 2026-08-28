@@ -512,9 +512,26 @@ def receive_purchase_order(
     po = get_po_or_404(db, po_id)
     if po.status in ("received", "cancelled"):
         raise ValueError(f"أمر الشراء في حالة '{po.status}' ولا يمكن استلامه")
+
+    # ⚠️ باج حقيقي كان هنا: مفيش حد أعلى لكمية الاستلام — استلام أكتر من
+    # المتبقي فعليًا كان يعدّي (كمية مخزون منتفخة + قيمة قيد محاسبي أكبر
+    # من المستحق فعليًا). نفس نمط pay_purchase_order's remaining check.
+    po_items_by_id = {item.id: item for item in po.items}
+    for line in req.items:
+        po_item = po_items_by_id.get(line.item_id)
+        if not po_item:
+            raise ValueError(f"الصنف {line.item_id} غير موجود في أمر الشراء ده")
+        remaining = po_item.ordered_qty - po_item.received_qty
+        if line.received_qty > remaining + Decimal("0.0001"):
+            raise ValueError(
+                f"كمية الاستلام ({line.received_qty}) للصنف {line.item_id} "
+                f"أكبر من المتبقي فعليًا ({remaining})"
+            )
+
     try:
         po, received_value, receipt_movement_id = crud.receive_purchase_order(
-            db, po, req.items, req.warehouse_id, req.received_at, received_by,
+            db, po, [item.model_dump() for item in req.items],
+            req.warehouse_id, req.received_at, received_by,
         )
         _post_purchase_receipt_journal(
             db, po, received_value, receipt_movement_id, received_by,

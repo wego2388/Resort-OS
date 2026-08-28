@@ -5,7 +5,7 @@ import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import QRCode from 'qrcode'
 import { api, ENDPOINTS, useAuthStore } from '@resort-os/core'
-import { useToast } from '@resort-os/ui'
+import { useToast, useConfirm } from '@resort-os/ui'
 import { resolvePublicSiteUrl } from '@/config/publicSite'
 
 interface Table {
@@ -28,6 +28,7 @@ interface LocationToken {
 const route = useRoute()
 const auth = useAuthStore()
 const toast = useToast()
+const { confirm } = useConfirm()
 const { locale, t } = useI18n()
 
 const branchId = computed(() => auth.branchId)
@@ -100,7 +101,10 @@ async function loadData() {
 
 async function mintOrRotate(table: Table, rotate = false) {
   if (!branchId.value || mutatingId.value !== null) return
-  if (rotate && !window.confirm(t('backoffice.qrGenerator.rotateConfirm', { number: table.table_number }))) return
+  if (rotate && !await confirm({
+    message: t('backoffice.qrGenerator.rotateConfirm', { number: table.table_number }),
+    danger: true,
+  })) return
   mutatingId.value = table.id
   try {
     const { data } = await api.post('/api/v1/service-location-tokens', {

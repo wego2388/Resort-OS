@@ -146,6 +146,23 @@ def get_booking(db: Session, booking_id: int) -> Optional[Booking]:
     return db.query(Booking).filter(Booking.id == booking_id).first()
 
 
+def lock_booking_for_update(db: Session, booking_id: int) -> Optional[Booking]:
+    """SELECT ... FOR UPDATE NOWAIT — يقفل صف الحجز، نفس نمط
+    lock_room_for_booking بالظبط. ⚠️ باج حقيقي كان هنا (تدقيق ما قبل
+    الإطلاق 2026-08-28): checkin/checkout/cancel/request_early_late كانوا
+    كلهم بيقروا الحجز غير مقفول (get_booking_or_404 عادية) — طلبين
+    check-in متزامنين لنفس الحجز كانوا يقدروا يعدّوا فحص الحالة الاتنين
+    قبل أي commit، فيتعمل Folio مزدوج ويتوه واحد منهم صامتًا. NOWAIT عمدًا
+    (409 فوري مش انتظار)."""
+    return (
+        db.query(Booking)
+        .filter(Booking.id == booking_id)
+        .populate_existing()
+        .with_for_update(nowait=True)
+        .first()
+    )
+
+
 def get_booking_by_number(db: Session, number: str) -> Optional[Booking]:
     return db.query(Booking).filter(Booking.booking_number == number).first()
 
