@@ -9,8 +9,30 @@
 #  see that file for the port map. Drop this override (and just run
 #  `docker compose -f docker-compose.prod.yml up -d`) once a real domain is
 #  ready and DEPLOYMENT.md §7's certbot flow is done — nothing else changes.
+#
+#  ⚠️ Also swaps each app's baked-in security-headers.conf for the IP-only
+#  variant (frontend/Dockerfile's SECURITY_HEADERS_FILE build-arg) — the
+#  normal one sends `upgrade-insecure-requests`, which force-upgrades every
+#  asset request to HTTPS even though the page itself loaded over HTTP; with
+#  no TLS listener on these ports that fails every request outright (a real
+#  blank-page bug found + fixed 2026-08-29 testing this exact override).
 # ─────────────────────────────────────────────────────────────────────────────
 services:
+  el_kheima:
+    build:
+      args:
+        SECURITY_HEADERS_FILE: security-headers-ip-only.conf
+
+  owner:
+    build:
+      args:
+        SECURITY_HEADERS_FILE: security-headers-ip-only.conf
+
+  marketing_site:
+    build:
+      args:
+        CSP_UPGRADE_INSECURE: "off"
+
   nginx:
     ports:
       - "80:80"
