@@ -116,6 +116,17 @@ def _link_shared_users_to_branch(db, branch_id: int) -> None:
     db.commit()
 
 
+def super_admin_headers_for_branch(branch) -> dict[str, str]:
+    """super_admin@test.local عمدًا مش مربوط بأي فرع (راجع تعليق
+    _link_shared_users_to_branch فوق — super_admin بيتخطى _can_enter_branch
+    بس لسه لازم acting_branch_id/bid claim فعلي، زي ما assert_branch_access
+    بتوثّق صراحةً). أي endpoint بقى بيفرض عزل فرع (مراجعة Codex 2026-08-30،
+    C-01) محتاج توكن بـbid صريح، مش super_admin_headers العادي."""
+    from tests.conftest import _make_token
+
+    return {"Authorization": f"Bearer {_make_token('super_admin@test.local', branch_id=branch.id)}"}
+
+
 def make_account_committed(db, branch, code, name, account_type):
     from app.modules.finance.models import Account
     existing = db.query(Account).filter_by(branch_id=branch.id, code=code).first()
@@ -307,6 +318,20 @@ class TestTrialBalanceHTTP:
             "/api/v1/finance/reports/trial-balance/pdf",
             params={"branch_id": branch.id, "as_of": str(date.today())},
             headers=cashier_headers,
+        )
+        assert resp.status_code == 403
+
+    def test_cross_branch_manager_cannot_view_trial_balance(self, client: TestClient, db, manager_headers):
+        """مراجعة Codex 2026-08-30 (C-01): كل تقارير Finance الرئيسية (ميزان
+        مراجعة/قائمة دخل/ميزانية/أعمار ديون + نسخ PDF/Excel بتاعتهم — كلهم
+        بيستخدموا _assert_report_branch المشتركة) كانت من غير أي فحص عزل
+        فرع — تمثيلي للـ10 endpoints دي كلها."""
+        branch_a = make_branch_committed(db)
+        make_branch_committed(db)  # ينقل manager_headers لفرع تاني (B)
+        resp = client.get(
+            "/api/v1/finance/reports/trial-balance",
+            params={"branch_id": branch_a.id, "as_of": str(date.today())},
+            headers=manager_headers,
         )
         assert resp.status_code == 403
 
@@ -1754,6 +1779,7 @@ class TestCloseShiftVarianceOverrideHTTP:
 class TestDiscountHTTPFlow:
     def test_create_list_update_delete_discount(self, client: TestClient, db, manager_headers, super_admin_headers):
         branch = make_branch_committed(db)
+        admin_headers = super_admin_headers_for_branch(branch)
         create_resp = client.post(
             "/api/v1/finance/discounts",
             json={
@@ -1762,7 +1788,7 @@ class TestDiscountHTTPFlow:
                 "valid_from": str(date.today() - timedelta(days=1)),
                 "valid_until": str(date.today() + timedelta(days=30)),
             },
-            headers=super_admin_headers,
+            headers=admin_headers,
         )
         assert create_resp.status_code == 201, create_resp.text
         discount_id = create_resp.json()["id"]
@@ -1776,16 +1802,16 @@ class TestDiscountHTTPFlow:
         update_resp = client.patch(
             f"/api/v1/finance/discounts/{discount_id}",
             json={"discount_value": "15"},
-            headers=super_admin_headers,
+            headers=admin_headers,
         )
         assert update_resp.status_code == 200
         assert Decimal(update_resp.json()["discount_value"]) == Decimal("15")
 
-        delete_resp = client.delete(f"/api/v1/finance/discounts/{discount_id}", headers=super_admin_headers)
+        delete_resp = client.delete(f"/api/v1/finance/discounts/{discount_id}", headers=admin_headers)
         assert delete_resp.status_code == 204
 
         # اتحذف فعلاً — تحديثه تاني لازم يرجّع 404
-        redelete_resp = client.delete(f"/api/v1/finance/discounts/{discount_id}", headers=super_admin_headers)
+        redelete_resp = client.delete(f"/api/v1/finance/discounts/{discount_id}", headers=admin_headers)
         assert redelete_resp.status_code == 404
 
     def test_create_discount_invalid_date_range_400(self, client: TestClient, db, super_admin_headers):
@@ -2089,6 +2115,102 @@ class TestJournalEntryHTTPFlow:
         resp = client.get("/api/v1/finance/journal-entries/999999", headers=manager_headers)
         assert resp.status_code == 404
 
+    def test_cross_branch_manager_cannot_post_journal_entry(self, client: TestClient, db, manager_headers):
+        """مراجعة Codex 2026-08-30 (C-01): POST /finance/journal-entries كان
+        من غير أي فحص عزل فرع خالص — مدير مربوط بفرع A كان يقدر يرحّل قيد
+        على فرع B بمجرد تمرير branch_id مختلف."""
+        branch_a = make_branch_committed(db)
+        cash = make_account_committed(db, branch_a, "1100", "Cash", "asset")
+        revenue = make_account_committed(db, branch_a, "4100", "Revenue", "revenue")
+        make_branch_committed(db)  # ينقل manager_headers لفرع تاني (B)
+        resp = client.post(
+            "/api/v1/finance/journal-entries",
+            json={
+                "branch_id": branch_a.id, "entry_date": str(date.today()),
+                "reference": "JE-XBRANCH", "description": "should be rejected",
+                "lines": [
+                    {"account_id": cash.id, "debit": "100.00", "credit": "0"},
+                    {"account_id": revenue.id, "debit": "0", "credit": "100.00"},
+                ],
+            },
+            headers=manager_headers,
+        )
+        assert resp.status_code == 403
+
+    def test_cross_branch_manager_cannot_get_journal_entry(self, client: TestClient, db, manager_headers):
+        """مراجعة Codex 2026-08-30 (C-01): GET /finance/journal-entries/{id}
+        كان من غير أي فحص عزل فرع — مدير مربوط بفرع B كان يقدر يقرا قيد فرع A
+        بمجرد تخمين entry_id."""
+        branch_a = make_branch_committed(db)
+        cash = make_account_committed(db, branch_a, "1100", "Cash", "asset")
+        revenue = make_account_committed(db, branch_a, "4100", "Revenue", "revenue")
+        create_resp = client.post(
+            "/api/v1/finance/journal-entries",
+            json={
+                "branch_id": branch_a.id, "entry_date": str(date.today()),
+                "reference": "JE-A", "description": "in branch A",
+                "lines": [
+                    {"account_id": cash.id, "debit": "100.00", "credit": "0"},
+                    {"account_id": revenue.id, "debit": "0", "credit": "100.00"},
+                ],
+            },
+            headers=manager_headers,
+        )
+        entry_id = create_resp.json()["id"]
+        make_branch_committed(db)  # ينقل manager_headers لفرع تاني (B)
+        resp = client.get(f"/api/v1/finance/journal-entries/{entry_id}", headers=manager_headers)
+        assert resp.status_code == 403
+
+    def test_journal_entry_rejects_account_from_different_branch(self, client: TestClient, db, manager_headers):
+        """مراجعة Codex 2026-08-30 (C-01): حتى مع صلاحية فرع القيد نفسه، لازم
+        نتحقق إن كل account_id فعلاً بيتبع نفس الفرع — وإلا قيد فرع A يقدر
+        يستخدم حساب فرع B فيلوّث أرصدة الفرعين مع بعض."""
+        branch_b = make_branch_committed(db)
+        foreign_cash = make_account_committed(db, branch_b, "1100-FB", "Cash B", "asset")
+        branch_a = make_branch_committed(db)  # manager_headers بقى مربوط بـA (آخر فرع)
+        revenue_a = make_account_committed(db, branch_a, "4100-FA", "Revenue A", "revenue")
+        resp = client.post(
+            "/api/v1/finance/journal-entries",
+            json={
+                "branch_id": branch_a.id, "entry_date": str(date.today()),
+                "reference": "JE-FOREIGN-ACCOUNT", "description": "should be rejected",
+                "lines": [
+                    {"account_id": foreign_cash.id, "debit": "100.00", "credit": "0"},
+                    {"account_id": revenue_a.id, "debit": "0", "credit": "100.00"},
+                ],
+            },
+            headers=manager_headers,
+        )
+        assert resp.status_code == 400, resp.text
+        assert "الحساب" in resp.json()["detail"]
+
+    def test_journal_entry_rejects_cost_center_from_different_branch(self, client: TestClient, db, manager_headers):
+        """نفس test_journal_entry_rejects_account_from_different_branch بس
+        لمركز التكلفة (cost_center_id) بدل الحساب."""
+        from app.modules.finance.models import CostCenter
+
+        branch_b = make_branch_committed(db)
+        foreign_cc = CostCenter(branch_id=branch_b.id, code="FCC", name="Foreign CC")
+        db.add(foreign_cc)
+        db.commit()
+        branch_a = make_branch_committed(db)  # manager_headers بقى مربوط بـA (آخر فرع)
+        cash_a = make_account_committed(db, branch_a, "1100-CC", "Cash A", "asset")
+        revenue_a = make_account_committed(db, branch_a, "4100-CC", "Revenue A", "revenue")
+        resp = client.post(
+            "/api/v1/finance/journal-entries",
+            json={
+                "branch_id": branch_a.id, "entry_date": str(date.today()),
+                "reference": "JE-FOREIGN-CC", "description": "should be rejected",
+                "lines": [
+                    {"account_id": cash_a.id, "debit": "100.00", "credit": "0", "cost_center_id": foreign_cc.id},
+                    {"account_id": revenue_a.id, "debit": "0", "credit": "100.00"},
+                ],
+            },
+            headers=manager_headers,
+        )
+        assert resp.status_code == 400, resp.text
+        assert "مركز التكلفة" in resp.json()["detail"]
+
 
 class TestAccountingPeriodHTTPFlow:
     def test_list_and_close_period(self, client: TestClient, db, manager_headers):
@@ -2144,6 +2266,7 @@ class TestAccountingPeriodHTTPFlow:
         """2026-08-19 (طلب Mohamed — إقفال سنة محاسبية) — min_role_level=80،
         manager (60) مايكفيش، محتاج admin+ (raج التستات التالية)."""
         branch = make_branch_committed(db)
+        admin_headers = super_admin_headers_for_branch(branch)
         cash = make_account_committed(db, branch, "1100-YC", "Cash", "asset")
         revenue = make_account_committed(db, branch, "4100-YC", "Revenue", "revenue")
         # الحساب لازم يكون بالكود "3200" بالظبط (services.close_accounting_
@@ -2160,20 +2283,20 @@ class TestAccountingPeriodHTTPFlow:
                     {"account_id": revenue.id, "debit": "0", "credit": "1000.00"},
                 ],
             },
-            headers=super_admin_headers,
+            headers=admin_headers,
         )
         for month in range(1, 13):
             close_resp = client.post(
                 f"/api/v1/finance/periods/2025/{month}/close",
                 json={"branch_id": branch.id},
-                headers=super_admin_headers,
+                headers=admin_headers,
             )
             assert close_resp.status_code == 200, close_resp.text
 
         year_resp = client.post(
             "/api/v1/finance/periods/2025/close-year",
             params={"branch_id": branch.id},
-            headers=super_admin_headers,
+            headers=admin_headers,
         )
         assert year_resp.status_code == 200, year_resp.text
         body = year_resp.json()
@@ -2183,7 +2306,7 @@ class TestAccountingPeriodHTTPFlow:
         second = client.post(
             "/api/v1/finance/periods/2025/close-year",
             params={"branch_id": branch.id},
-            headers=super_admin_headers,
+            headers=admin_headers,
         )
         assert second.status_code == 400
         assert "مقفولة بالفعل" in second.json()["detail"]
@@ -2545,7 +2668,7 @@ class TestCostCenterHTTPFlow:
         create_resp = client.post(
             "/api/v1/finance/cost-centers",
             json={"branch_id": branch.id, "code": "TESTCC", "name": "Test Center"},
-            headers=super_admin_headers,
+            headers=super_admin_headers_for_branch(branch),
         )
         assert create_resp.status_code == 201, create_resp.text
 
@@ -2554,6 +2677,20 @@ class TestCostCenterHTTPFlow:
         )
         assert list_resp.status_code == 200
         assert any(c["code"] == "TESTCC" for c in list_resp.json())
+
+    def test_cross_branch_admin_cannot_create_cost_center(self, client: TestClient, db, super_admin_headers):
+        """مراجعة Codex 2026-08-30 (C-01): POST /finance/cost-centers كان من
+        غير فحص عزل فرع — super_admin_headers_for_branch(branch_a) هنا توكن
+        بـbid=branch_a صريح، فمحاولة إنشاء مركز تكلفة لـbranch_b (فرع مختلف
+        عن الـbid) لازم تترفض حتى لو الدور super_admin."""
+        branch_a = make_branch_committed(db)
+        branch_b = make_branch_committed(db)
+        resp = client.post(
+            "/api/v1/finance/cost-centers",
+            json={"branch_id": branch_b.id, "code": "XBRANCHCC", "name": "Cross-branch CC"},
+            headers=super_admin_headers_for_branch(branch_a),
+        )
+        assert resp.status_code == 403
 
     def test_cost_center_report(self, client: TestClient, db, manager_headers):
         branch = make_branch_committed(db)

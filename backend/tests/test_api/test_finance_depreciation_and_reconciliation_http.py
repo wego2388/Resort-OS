@@ -90,6 +90,7 @@ def make_payment_committed(db, branch, folio, amount, posted_at):
 class TestDepreciationRunHTTP:
     def test_run_depreciation_posts_balanced_journal_entry(self, client: TestClient, db, manager_headers):
         branch = make_branch_committed(db)
+        headers = manager_headers_for_branch(db, branch)
         # 12,000 EGP، عمر إنتاجي سنتين (24 شهر)، بدون قيمة متبقية => 500.00/شهر بالظبط
         asset = make_asset_committed(
             db, branch, purchase_cost=Decimal("12000.00"), useful_life_years=2,
@@ -99,7 +100,7 @@ class TestDepreciationRunHTTP:
         resp = client.post(
             "/api/v1/finance/depreciation/run",
             json={"branch_id": branch.id, "year": 2026, "month": 6},
-            headers=manager_headers,
+            headers=headers,
         )
         assert resp.status_code == 200, resp.text
         body = resp.json()
@@ -110,7 +111,7 @@ class TestDepreciationRunHTTP:
 
         je_resp = client.get(
             f"/api/v1/finance/journal-entries/{body['journal_entry_id']}",
-            headers=manager_headers,
+            headers=headers,
         )
         assert je_resp.status_code == 200, je_resp.text
         je = je_resp.json()
@@ -120,6 +121,7 @@ class TestDepreciationRunHTTP:
 
     def test_run_depreciation_is_idempotent_per_period(self, client: TestClient, db, manager_headers):
         branch = make_branch_committed(db)
+        headers = manager_headers_for_branch(db, branch)
         make_asset_committed(
             db, branch, purchase_cost=Decimal("6000.00"), useful_life_years=1,
             depreciation_start_date=date(2026, 1, 1),
@@ -128,7 +130,7 @@ class TestDepreciationRunHTTP:
         first = client.post(
             "/api/v1/finance/depreciation/run",
             json={"branch_id": branch.id, "year": 2026, "month": 3},
-            headers=manager_headers,
+            headers=headers,
         )
         assert first.status_code == 200, first.text
         assert len(first.json()["entries"]) == 1
@@ -136,7 +138,7 @@ class TestDepreciationRunHTTP:
         second = client.post(
             "/api/v1/finance/depreciation/run",
             json={"branch_id": branch.id, "year": 2026, "month": 3},
-            headers=manager_headers,
+            headers=headers,
         )
         assert second.status_code == 200, second.text
         body = second.json()
@@ -148,6 +150,7 @@ class TestDepreciationRunHTTP:
         """أصل بقيمة 1000ج، عمر إنتاجي شهر واحد بس — أول شهر بياخد الـ 1000ج
         كاملة، تاني شهر لازم يتخطّى (مُهلَك بالكامل) مش يكمل يهلك تحت الصفر."""
         branch = make_branch_committed(db)
+        headers = manager_headers_for_branch(db, branch)
         make_asset_committed(
             db, branch, purchase_cost=Decimal("1000.00"), useful_life_years=1,
             # useful_life_years يتحسب * 12 شهر داخليًا، فهنا 12 شهر عمر افتراضي —
@@ -157,7 +160,7 @@ class TestDepreciationRunHTTP:
         skipped_resp = client.post(
             "/api/v1/finance/depreciation/run",
             json={"branch_id": branch.id, "year": 2026, "month": 1},
-            headers=manager_headers,
+            headers=headers,
         )
         assert skipped_resp.status_code == 200
         assert len(skipped_resp.json()["entries"]) == 1  # أهّل فعلاً (12 شهر عمر)
@@ -173,32 +176,34 @@ class TestDepreciationRunHTTP:
 
     def test_run_depreciation_rejected_when_period_closed(self, client: TestClient, db, manager_headers):
         branch = make_branch_committed(db)
+        headers = manager_headers_for_branch(db, branch)
         make_asset_committed(
             db, branch, purchase_cost=Decimal("2400.00"), useful_life_years=1,
         )
         close_resp = client.post(
             "/api/v1/finance/periods/2026/2/close",
             json={"branch_id": branch.id},
-            headers=manager_headers,
+            headers=headers,
         )
         assert close_resp.status_code == 200, close_resp.text
 
         run_resp = client.post(
             "/api/v1/finance/depreciation/run",
             json={"branch_id": branch.id, "year": 2026, "month": 2},
-            headers=manager_headers,
+            headers=headers,
         )
         assert run_resp.status_code == 400
         assert "مقفولة" in run_resp.json()["detail"]
 
     def test_asset_with_no_cost_basis_is_skipped_not_errored(self, client: TestClient, db, manager_headers):
         branch = make_branch_committed(db)
+        headers = manager_headers_for_branch(db, branch)
         make_asset_committed(db, branch)  # مفيش purchase_cost ولا useful_life_years
 
         resp = client.post(
             "/api/v1/finance/depreciation/run",
             json={"branch_id": branch.id, "year": 2026, "month": 1},
-            headers=manager_headers,
+            headers=headers,
         )
         assert resp.status_code == 200, resp.text
         body = resp.json()
@@ -247,6 +252,7 @@ class TestBankReconciliationHTTP:
 
     def test_import_and_auto_match_statement_line_against_payment(self, client: TestClient, db, manager_headers):
         branch = make_branch_committed(db)
+        headers = manager_headers_for_branch(db, branch)
         folio = make_folio_committed(db, branch)
         payment = make_payment_committed(db, branch, folio, Decimal("1500.00"), datetime(2026, 6, 10, 12, 0))
 
@@ -256,7 +262,7 @@ class TestBankReconciliationHTTP:
                 "branch_id": branch.id, "bank_name": "بنك مصر", "account_name": "الخيمة بيتش",
                 "account_number": f"ACC-{uuid.uuid4().hex[:8]}", "opening_balance": "0",
             },
-            headers=manager_headers,
+            headers=headers,
         )
         assert create_resp.status_code == 201, create_resp.text
         bank_account_id = create_resp.json()["id"]
@@ -266,7 +272,7 @@ class TestBankReconciliationHTTP:
             json={"lines": [
                 {"line_date": "2026-06-10", "description": "Incoming transfer", "amount": "1500.00"},
             ]},
-            headers=manager_headers,
+            headers=headers,
         )
         assert import_resp.status_code == 201, import_resp.text
         line = import_resp.json()[0]
@@ -274,7 +280,7 @@ class TestBankReconciliationHTTP:
 
         match_resp = client.post(
             f"/api/v1/finance/bank-accounts/{bank_account_id}/statement-lines/auto-match",
-            headers=manager_headers,
+            headers=headers,
         )
         assert match_resp.status_code == 200, match_resp.text
         assert match_resp.json()["matched_count"] == 1
@@ -282,7 +288,7 @@ class TestBankReconciliationHTTP:
         lines_resp = client.get(
             f"/api/v1/finance/bank-accounts/{bank_account_id}/statement-lines",
             params={"status": "matched"},
-            headers=manager_headers,
+            headers=headers,
         )
         assert lines_resp.status_code == 200
         matched_items = lines_resp.json()["items"]
@@ -292,7 +298,7 @@ class TestBankReconciliationHTTP:
         summary_resp = client.get(
             f"/api/v1/finance/bank-accounts/{bank_account_id}/reconciliation-summary",
             params={"as_of": "2026-06-30"},
-            headers=manager_headers,
+            headers=headers,
         )
         assert summary_resp.status_code == 200, summary_resp.text
         summary = summary_resp.json()
@@ -306,6 +312,7 @@ class TestBankReconciliationHTTP:
         """لو فيه أكتر من دفعة بنفس المبلغ والتاريخ القريب، المطابقة الأوتوماتيكية
         لازم تتردد (تسيبها unmatched) بدل ما تخمّن وتربط الغلط بالغلط."""
         branch = make_branch_committed(db)
+        headers = manager_headers_for_branch(db, branch)
         folio = make_folio_committed(db, branch)
         make_payment_committed(db, branch, folio, Decimal("800.00"), datetime(2026, 6, 5, 9, 0))
         make_payment_committed(db, branch, folio, Decimal("800.00"), datetime(2026, 6, 6, 9, 0))
@@ -316,24 +323,25 @@ class TestBankReconciliationHTTP:
                 "branch_id": branch.id, "bank_name": "بنك مصر", "account_name": "حساب رئيسي",
                 "account_number": f"ACC-{uuid.uuid4().hex[:8]}",
             },
-            headers=manager_headers,
+            headers=headers,
         )
         bank_account_id = create_resp.json()["id"]
 
         client.post(
             f"/api/v1/finance/bank-accounts/{bank_account_id}/statement-lines",
             json={"lines": [{"line_date": "2026-06-05", "description": "Transfer", "amount": "800.00"}]},
-            headers=manager_headers,
+            headers=headers,
         )
 
         match_resp = client.post(
             f"/api/v1/finance/bank-accounts/{bank_account_id}/statement-lines/auto-match",
-            headers=manager_headers,
+            headers=headers,
         )
         assert match_resp.json()["matched_count"] == 0
 
     def test_manual_match_and_unmatch_cycle(self, client: TestClient, db, manager_headers):
         branch = make_branch_committed(db)
+        headers = manager_headers_for_branch(db, branch)
         folio = make_folio_committed(db, branch)
         payment = make_payment_committed(db, branch, folio, Decimal("300.00"), datetime(2026, 6, 1, 10, 0))
 
@@ -343,20 +351,20 @@ class TestBankReconciliationHTTP:
                 "branch_id": branch.id, "bank_name": "بنك مصر", "account_name": "حساب رئيسي",
                 "account_number": f"ACC-{uuid.uuid4().hex[:8]}",
             },
-            headers=manager_headers,
+            headers=headers,
         )
         bank_account_id = create_resp.json()["id"]
         import_resp = client.post(
             f"/api/v1/finance/bank-accounts/{bank_account_id}/statement-lines",
             json={"lines": [{"line_date": "2026-06-01", "description": "Transfer", "amount": "300.00"}]},
-            headers=manager_headers,
+            headers=headers,
         )
         line_id = import_resp.json()[0]["id"]
 
         match_resp = client.post(
             f"/api/v1/finance/bank-accounts/{bank_account_id}/statement-lines/{line_id}/match",
             json={"payment_id": payment.id},
-            headers=manager_headers,
+            headers=headers,
         )
         assert match_resp.status_code == 200, match_resp.text
         assert match_resp.json()["status"] == "matched"
@@ -365,19 +373,20 @@ class TestBankReconciliationHTTP:
         rematch_resp = client.post(
             f"/api/v1/finance/bank-accounts/{bank_account_id}/statement-lines/{line_id}/match",
             json={"payment_id": payment.id},
-            headers=manager_headers,
+            headers=headers,
         )
         assert rematch_resp.status_code == 400
 
         unmatch_resp = client.post(
             f"/api/v1/finance/bank-accounts/{bank_account_id}/statement-lines/{line_id}/unmatch",
-            headers=manager_headers,
+            headers=headers,
         )
         assert unmatch_resp.status_code == 200
         assert unmatch_resp.json()["status"] == "unmatched"
 
     def test_match_rejects_voided_payment(self, client: TestClient, db, manager_headers):
         branch = make_branch_committed(db)
+        headers = manager_headers_for_branch(db, branch)
         folio = make_folio_committed(db, branch)
         payment = make_payment_committed(db, branch, folio, Decimal("450.00"), datetime(2026, 6, 1, 10, 0))
         payment.voided_at = datetime.utcnow()
@@ -389,39 +398,40 @@ class TestBankReconciliationHTTP:
                 "branch_id": branch.id, "bank_name": "بنك مصر", "account_name": "حساب رئيسي",
                 "account_number": f"ACC-{uuid.uuid4().hex[:8]}",
             },
-            headers=manager_headers,
+            headers=headers,
         )
         bank_account_id = create_resp.json()["id"]
         import_resp = client.post(
             f"/api/v1/finance/bank-accounts/{bank_account_id}/statement-lines",
             json={"lines": [{"line_date": "2026-06-01", "description": "Transfer", "amount": "450.00"}]},
-            headers=manager_headers,
+            headers=headers,
         )
         line_id = import_resp.json()[0]["id"]
 
         match_resp = client.post(
             f"/api/v1/finance/bank-accounts/{bank_account_id}/statement-lines/{line_id}/match",
             json={"payment_id": payment.id},
-            headers=manager_headers,
+            headers=headers,
         )
         assert match_resp.status_code == 400
         assert "ملغاة" in match_resp.json()["detail"]
 
     def test_import_statement_line_zero_amount_rejected_422(self, client: TestClient, db, manager_headers):
         branch = make_branch_committed(db)
+        headers = manager_headers_for_branch(db, branch)
         create_resp = client.post(
             "/api/v1/finance/bank-accounts",
             json={
                 "branch_id": branch.id, "bank_name": "بنك مصر", "account_name": "حساب رئيسي",
                 "account_number": f"ACC-{uuid.uuid4().hex[:8]}",
             },
-            headers=manager_headers,
+            headers=headers,
         )
         bank_account_id = create_resp.json()["id"]
         resp = client.post(
             f"/api/v1/finance/bank-accounts/{bank_account_id}/statement-lines",
             json={"lines": [{"line_date": "2026-06-01", "description": "Zero", "amount": "0"}]},
-            headers=manager_headers,
+            headers=headers,
         )
         assert resp.status_code == 422
 
@@ -444,35 +454,63 @@ class TestBankReconciliationHTTP:
         assert list_resp.status_code == 200, list_resp.text
         assert any(a["id"] == bank_account_id for a in list_resp.json())
 
+    def test_cross_branch_manager_cannot_access_bank_account(self, client: TestClient, db, manager_headers):
+        """مراجعة Codex 2026-08-30 (C-01): كل عمليات الحسابات البنكية وكشوف
+        الحساب/المطابقة (6 endpoints بتستخدم _assert_bank_account_branch
+        المشتركة) كانت من غير أي فحص عزل فرع — مدير فرع B كان يقدر يعدّل/
+        يستورد كشف حساب/يطابق فرع A بمجرد تخمين bank_account_id."""
+        branch_a = make_branch_committed(db)
+        headers_a = manager_headers_for_branch(db, branch_a)
+        create_resp = client.post(
+            "/api/v1/finance/bank-accounts",
+            json={
+                "branch_id": branch_a.id, "bank_name": "بنك مصر", "account_name": "حساب فرع A",
+                "account_number": f"ACC-{uuid.uuid4().hex[:8]}",
+            },
+            headers=headers_a,
+        )
+        bank_account_id = create_resp.json()["id"]
+
+        branch_b = make_branch_committed(db)
+        headers_b = manager_headers_for_branch(db, branch_b)
+        resp = client.patch(
+            f"/api/v1/finance/bank-accounts/{bank_account_id}",
+            json={"account_name": "should be rejected"},
+            headers=headers_b,
+        )
+        assert resp.status_code == 403
+
     def test_create_duplicate_bank_account_number_400(self, client: TestClient, db, manager_headers):
         """UniqueConstraint(branch_id, account_number) — نفس الرقم مرتين في نفس
         الفرع لازم يترفض 400 (يمسكه الـ except Exception العام في create_bank_account)."""
         branch = make_branch_committed(db)
+        headers = manager_headers_for_branch(db, branch)
         payload = {
             "branch_id": branch.id, "bank_name": "بنك مصر", "account_name": "حساب مكرر",
             "account_number": "DUP-0001",
         }
-        first = client.post("/api/v1/finance/bank-accounts", json=payload, headers=manager_headers)
+        first = client.post("/api/v1/finance/bank-accounts", json=payload, headers=headers)
         assert first.status_code == 201, first.text
-        second = client.post("/api/v1/finance/bank-accounts", json=payload, headers=manager_headers)
+        second = client.post("/api/v1/finance/bank-accounts", json=payload, headers=headers)
         assert second.status_code == 400
 
     def test_update_bank_account_via_http(self, client: TestClient, db, manager_headers):
         branch = make_branch_committed(db)
+        headers = manager_headers_for_branch(db, branch)
         create_resp = client.post(
             "/api/v1/finance/bank-accounts",
             json={
                 "branch_id": branch.id, "bank_name": "بنك مصر", "account_name": "قبل التحديث",
                 "account_number": f"ACC-{uuid.uuid4().hex[:8]}",
             },
-            headers=manager_headers,
+            headers=headers,
         )
         bank_account_id = create_resp.json()["id"]
 
         update_resp = client.patch(
             f"/api/v1/finance/bank-accounts/{bank_account_id}",
             json={"account_name": "بعد التحديث"},
-            headers=manager_headers,
+            headers=headers,
         )
         assert update_resp.status_code == 200, update_resp.text
         assert update_resp.json()["account_name"] == "بعد التحديث"
@@ -499,25 +537,26 @@ class TestBankReconciliationHTTP:
 
     def test_unmatch_already_unmatched_line_400(self, client: TestClient, db, manager_headers):
         branch = make_branch_committed(db)
+        headers = manager_headers_for_branch(db, branch)
         create_resp = client.post(
             "/api/v1/finance/bank-accounts",
             json={
                 "branch_id": branch.id, "bank_name": "بنك مصر", "account_name": "حساب رئيسي",
                 "account_number": f"ACC-{uuid.uuid4().hex[:8]}",
             },
-            headers=manager_headers,
+            headers=headers,
         )
         bank_account_id = create_resp.json()["id"]
         import_resp = client.post(
             f"/api/v1/finance/bank-accounts/{bank_account_id}/statement-lines",
             json={"lines": [{"line_date": "2026-06-01", "description": "Transfer", "amount": "100.00"}]},
-            headers=manager_headers,
+            headers=headers,
         )
         line_id = import_resp.json()[0]["id"]
 
         resp = client.post(
             f"/api/v1/finance/bank-accounts/{bank_account_id}/statement-lines/{line_id}/unmatch",
-            headers=manager_headers,
+            headers=headers,
         )
         assert resp.status_code == 400
         assert "مش متطابق" in resp.json()["detail"]

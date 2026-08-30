@@ -1262,6 +1262,21 @@ def post_journal_entry(db: Session, data: JournalEntryCreate, user_id: int) -> J
     total_credit = sum((ln.credit for ln in data.lines), Decimal("0"))
     if abs(total_debit - total_credit) > Decimal("0.01"):
         raise ValueError(f"القيد غير متوازن: مدين={total_debit}, دائن={total_credit}")
+    # ⚠️ باج حقيقي كان هنا (مراجعة Codex المستقلة قبل الإطلاق، 2026-08-30،
+    # C-01): مفيش أي تحقق إن account_id/cost_center_id في كل سطر فعلاً
+    # بيتبعوا نفس فرع القيد — قيد على فرع A كان يقدر يستخدم حساب أو مركز
+    # تكلفة فرع B، فيلوّث أرصدة الفرعين مع بعض. هذه الدالة هي المسار الوحيد
+    # اللي بيقبل account_id من المستخدم مباشرة (post_simple_revenue_journal
+    # بتبني حساباتها هي بنفسها بـget_account_by_code(branch_id, code) —
+    # آمنة بالبناء، مش محتاجة نفس التحقق).
+    for line in data.lines:
+        account = crud.get_account(db, line.account_id)
+        if not account or account.branch_id != data.branch_id:
+            raise ValueError(f"الحساب {line.account_id} غير موجود في فرع القيد")
+        if line.cost_center_id is not None:
+            cost_center = crud.get_cost_center(db, line.cost_center_id)
+            if not cost_center or cost_center.branch_id != data.branch_id:
+                raise ValueError(f"مركز التكلفة {line.cost_center_id} غير موجود في فرع القيد")
     entry = crud.create_journal_entry(db, data, user_id)
     db.commit()
     db.refresh(entry)
