@@ -709,9 +709,19 @@ def request_early_late(db: Session, booking_id: int, data: "EarlyLateRequest") -
 
 
 def cancel_booking(db: Session, booking_id: int, cancelled_by: int) -> Booking:
+    """⚠️ باج حقيقي كان هنا (مراجعة Codex 2026-08-30، H-06): الحارس كان
+    denylist (يرفض checked_out/cancelled بس) بدل allowlist — يعني حجز
+    checked_in (ضيف نازل فعليًا وعنده Folio مفتوح) كان يقدر يتلغى من
+    نفس المسار العادي، وده كان بيرجّع الغرفة (occupied) لـavailable وهي
+    لسه فيها ضيف مقيم — حجز مزدوج حقيقي، والفوليو بيفضل مفتوح من غير أي
+    تسوية. المسار الصح لإنهاء إقامة بدأت فعليًا هو checkout_booking، مش
+    الإلغاء العادي (ده لحجوزات لسه ما وصلتش: confirmed/no_show بس)."""
     booking = _lock_booking_or_conflict(db, booking_id)
-    if booking.status in ("checked_out", "cancelled"):
-        raise ValueError(f"لا يمكن إلغاء حجز بحالة '{booking.status}'")
+    if booking.status not in ("confirmed", "no_show"):
+        raise ValueError(
+            f"لا يمكن إلغاء حجز بحالة '{booking.status}' — الحجوزات النازلة "
+            "(checked_in) تحتاج تسجيل خروج (checkout) بدل الإلغاء"
+        )
 
     booking = crud.update_booking_status(db, booking, "cancelled", cancelled_by=cancelled_by)
 

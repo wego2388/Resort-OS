@@ -509,26 +509,42 @@ def receive_purchase_order(
     req: ReceiveItemsRequest,
     received_by: int,
 ) -> PurchaseOrder:
-    po = get_po_or_404(db, po_id)
-    if po.status in ("received", "cancelled"):
-        raise ValueError(f"أمر الشراء في حالة '{po.status}' ولا يمكن استلامه")
+    """⚠️ 2 باجات حقيقيين اتصلحوا هنا (مراجعة Codex 2026-08-30، H-03):
+    1. أمر الشراء كان بيتقرا من غير أي قفل — استلامين متزامنين لنفس
+       الأمر كل واحد كان يقرا نفس `received_qty` القديم ويتحقق منه
+       بمفرده، فمجموعهم يقدر يتخطى الكمية المطلوبة فعليًا رغم إن كل
+       تحقق منفرد نجح. دلوقتي أمر الشراء بيتقفل الأول (نفس نمط
+       lock_product_for_update)، فأي استلام تاني لنفس الأمر بيستنى/
+       يترفض لحد ما ده يخلص.
+    2. مفيش تجميع لتكرار نفس item_id في نفس الطلب — طلب فيه سطرين
+       بنفس الصنف كان كل سطر يتحقق لوحده من `remaining` (نفس القيمة
+       القديمة الاتنين)، فمجموعهم يقدر يتخطاها رغم إن كل سطر فرادى
+       يبان صحيح. دلوقتي بيتجمّعوا بـitem_id قبل أي تحقق."""
+    try:
+        po = crud.lock_purchase_order_for_update(db, po_id)
+        if not po:
+            raise ValueError(f"أمر الشراء {po_id} غير موجود")
+        if po.status in ("received", "cancelled"):
+            raise ValueError(f"أمر الشراء في حالة '{po.status}' ولا يمكن استلامه")
 
-    # ⚠️ باج حقيقي كان هنا: مفيش حد أعلى لكمية الاستلام — استلام أكتر من
-    # المتبقي فعليًا كان يعدّي (كمية مخزون منتفخة + قيمة قيد محاسبي أكبر
-    # من المستحق فعليًا). نفس نمط pay_purchase_order's remaining check.
-    po_items_by_id = {item.id: item for item in po.items}
-    for line in req.items:
-        po_item = po_items_by_id.get(line.item_id)
-        if not po_item:
-            raise ValueError(f"الصنف {line.item_id} غير موجود في أمر الشراء ده")
-        remaining = po_item.ordered_qty - po_item.received_qty
-        if line.received_qty > remaining + Decimal("0.0001"):
-            raise ValueError(
-                f"كمية الاستلام ({line.received_qty}) للصنف {line.item_id} "
-                f"أكبر من المتبقي فعليًا ({remaining})"
+        requested_by_item: dict[int, Decimal] = {}
+        for line in req.items:
+            requested_by_item[line.item_id] = (
+                requested_by_item.get(line.item_id, Decimal("0")) + line.received_qty
             )
 
-    try:
+        po_items_by_id = {item.id: item for item in po.items}
+        for item_id, total_requested in requested_by_item.items():
+            po_item = po_items_by_id.get(item_id)
+            if not po_item:
+                raise ValueError(f"الصنف {item_id} غير موجود في أمر الشراء ده")
+            remaining = po_item.ordered_qty - po_item.received_qty
+            if total_requested > remaining + Decimal("0.0001"):
+                raise ValueError(
+                    f"كمية الاستلام ({total_requested}) للصنف {item_id} "
+                    f"أكبر من المتبقي فعليًا ({remaining})"
+                )
+
         po, received_value, receipt_movement_id = crud.receive_purchase_order(
             db, po, [item.model_dump() for item in req.items],
             req.warehouse_id, req.received_at, received_by,
@@ -544,7 +560,7 @@ def receive_purchase_order(
         if not is_lock_not_available(exc):
             raise
         raise InventoryConcurrencyError(
-            "أحد الأصناف في أمر الشراء ده مشغول الآن بعملية مخزون أخرى — حاول تاني خلال لحظات"
+            "أمر الشراء ده مشغول الآن بعملية استلام أخرى — حاول تاني خلال لحظات"
         ) from exc
     except Exception:
         db.rollback()

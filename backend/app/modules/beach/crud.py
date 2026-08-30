@@ -263,6 +263,23 @@ def get_b2b_contract(db: Session, contract_id: int) -> Optional[B2BContract]:
     return db.query(B2BContract).filter(B2BContract.id == contract_id).first()
 
 
+def lock_b2b_contract_for_update(db: Session, contract_id: int) -> Optional[B2BContract]:
+    """SELECT ... FOR UPDATE NOWAIT — يقفل صف العقد طوال التسوية (مراجعة
+    Codex 2026-08-30، H-04) عشان يمنع تسويتين متزامنتين لنفس العقد (double
+    settlement: القيدين اتنين بيترحّلوا، وآخر تحديث لـ`last_settled_at`
+    بيكسب بصمت). نفس نمط lock_contract_day_for_update/
+    lock_inventory_for_update بالظبط، بما فيها `.populate_existing()`
+    لنفس السبب (قراءة سابقة غير مقفولة قبل القفل ممكن تسيب قيمة قديمة في
+    identity map الـ Session)."""
+    return (
+        db.query(B2BContract)
+        .filter(B2BContract.id == contract_id)
+        .populate_existing()
+        .with_for_update(nowait=True)
+        .first()
+    )
+
+
 def list_b2b_contracts(
     db: Session, branch_id: int, active_only: bool = True
 ) -> list[B2BContract]:
@@ -433,15 +450,22 @@ def create_b2b_contract_month(
 # ── B2B credit / dunning ──────────────────────────────────────────────
 
 def get_b2b_outstanding_balance(
-    db: Session, contract_id: int, since: Optional[date] = None
+    db: Session, contract_id: int, since: Optional[date] = None, through: Optional[date] = None,
 ) -> Decimal:
     """مجموع B2BContractMonth.amount لكل شهر اتُرحّل بعد آخر تسوية
     (``since`` = contract.last_settled_at) — الرصيد المستحق الحالي على
     الفندق الشريك. ``since=None`` يعني لسه مفيش تسوية من بداية العقد، فكل
-    الشهور المُرحَّلة تدخل في الحساب."""
+    الشهور المُرحَّلة تدخل في الحساب.
+
+    ``through`` (مراجعة Codex 2026-08-30، H-04): كان غايب تمامًا قبل كده —
+    يعني تسوية جزئية/بتاريخ سابق (settled_through أقدم من النهاردة) كانت
+    بتجمع كل الشهور المُرحَّلة **حتى المستقبلية** بدل ما تقف عند التاريخ
+    المطلوب فعليًا، فتحصيل شهر واحد كان ممكن "يبلع" شهور تالية معاه بالغلط."""
     q = db.query(B2BContractMonth).filter(B2BContractMonth.contract_id == contract_id)
     if since:
         q = q.filter(B2BContractMonth.period_month > since)
+    if through:
+        q = q.filter(B2BContractMonth.period_month <= through)
     return sum((row.amount for row in q.all()), Decimal("0"))
 
 

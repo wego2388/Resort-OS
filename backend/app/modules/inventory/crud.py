@@ -257,6 +257,22 @@ def get_purchase_order(db: Session, po_id: int) -> Optional[PurchaseOrder]:
     return db.query(PurchaseOrder).filter(PurchaseOrder.id == po_id).first()
 
 
+def lock_purchase_order_for_update(db: Session, po_id: int) -> Optional[PurchaseOrder]:
+    """SELECT ... FOR UPDATE NOWAIT — يقفل صف أمر الشراء طوال عملية الاستلام
+    (مراجعة Codex 2026-08-30، H-03). قبل كده كان بيتقرا من غير قفل، وكل
+    سطر استلام بيتحقق من `remaining` بقراءة غير مقفولة — استلامين متزامنين
+    (أو صفين بنفس item_id في نفس الطلب) كل واحد كان يقدر يعدّي التحقق
+    بمفرده بينما مجموعهم يتخطى الكمية المطلوبة فعليًا. نفس نمط
+    lock_product_for_update بالضبط."""
+    return (
+        db.query(PurchaseOrder)
+        .filter(PurchaseOrder.id == po_id)
+        .populate_existing()
+        .with_for_update(nowait=True)
+        .first()
+    )
+
+
 # ── Supplier Payments (2026-08-16) ───────────────────────────────────────
 
 def create_supplier_payment(

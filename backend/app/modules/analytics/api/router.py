@@ -68,6 +68,17 @@ def _today() -> date:
 logger = logging.getLogger(__name__)
 
 
+def _assert_analytics_branch(db, user, branch_id: int, action_desc: str) -> None:
+    """⚠️ باج حقيقي كان هنا (مراجعة Codex 2026-08-30، H-02): كل endpoints
+    التحليلات تقريبًا كانت على get_manager_user بس (فحص دور، مش فرع) —
+    مدير فرع A كان يقدر يشوف مؤشرات/إيراد/تنبيهات مخزون فرع B بمجرد
+    تغيير branch_id في الرابط. نفس نمط _assert_report_branch في finance."""
+    try:
+        core_services.assert_branch_access(db, user, branch_id, action_desc)
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+
+
 def _safe_query(func, *args, **kwargs):
     """يُشغّل query ويُرجع None إذا فشل. باج حقيقي سابق (راجع §19 CLAUDE.md):
     الابتلاع الصامت هنا كان مخفّي فعليًا خطأ حقيقي (BeachTransaction بحقول
@@ -85,11 +96,12 @@ def _safe_query(func, *args, **kwargs):
 @router.get("/analytics/revenue", response_model=RevenueSummary)
 def revenue_summary(
     db: DbDep,
-    _=Depends(get_manager_user),
+    user=Depends(get_manager_user),
     branch_id: int = Query(...),
     date_from: date = Query(default_factory=lambda: _today() - timedelta(days=30)),
     date_to: date = Query(default_factory=_today),
 ):
+    _assert_analytics_branch(db, user, branch_id, "عرض إيراد فرع")
     # created_at (restaurant/cafe) مخزّن UTC — لازم نحوّل مدى التاريخ المحلي
     # (settings.TIMEZONE) لـ UTC، وإلا الفلترة بتفشل لمدة ~3 ساعات كل يوم.
     range_start, _ = local_date_to_utc_range(date_from, settings.TIMEZONE)
@@ -177,11 +189,12 @@ def revenue_summary(
 @router.get("/analytics/occupancy", response_model=OccupancySummary)
 def occupancy_summary(
     db: DbDep,
-    _=Depends(get_manager_user),
+    user=Depends(get_manager_user),
     branch_id: int = Query(...),
     month: int | None = Query(None),
     year:  int | None = Query(None),
 ):
+    _assert_analytics_branch(db, user, branch_id, "عرض إشغال فرع")
     today = _today()
     target_month = month or today.month
     target_year  = year or today.year
@@ -213,9 +226,10 @@ def occupancy_summary(
 @router.get("/analytics/hr", response_model=HRSummary)
 def hr_summary(
     db: DbDep,
-    _=Depends(get_manager_user),
+    user=Depends(get_manager_user),
     branch_id: int = Query(...),
 ):
+    _assert_analytics_branch(db, user, branch_id, "عرض ملخص موارد بشرية")
     def _hr(db: Session):
         from app.modules.hr.models import Employee, PayrollRun
         active_employees = db.query(Employee).filter(
@@ -242,9 +256,10 @@ def hr_summary(
 @router.get("/analytics/maintenance", response_model=MaintenanceSummary)
 def maintenance_summary(
     db: DbDep,
-    _=Depends(get_manager_user),
+    user=Depends(get_manager_user),
     branch_id: int = Query(...),
 ):
+    _assert_analytics_branch(db, user, branch_id, "عرض ملخص صيانة")
     def _maint(db: Session):
         from app.modules.maintenance.models import WorkOrder
         open_wos = db.query(WorkOrder).filter(
@@ -266,9 +281,10 @@ def maintenance_summary(
 @router.get("/analytics/crm", response_model=CRMSummary)
 def crm_summary(
     db: DbDep,
-    _=Depends(get_manager_user),
+    user=Depends(get_manager_user),
     branch_id: int = Query(...),
 ):
+    _assert_analytics_branch(db, user, branch_id, "عرض ملخص CRM")
     def _crm(db: Session):
         from sqlalchemy import func
 
@@ -303,9 +319,10 @@ def crm_summary(
 @router.get("/analytics/inventory", response_model=InventoryAlerts)
 def inventory_alerts(
     db: DbDep,
-    _=Depends(get_manager_user),
+    user=Depends(get_manager_user),
     branch_id: int = Query(...),
 ):
+    _assert_analytics_branch(db, user, branch_id, "عرض تنبيهات مخزون")
     def _inv(db: Session):
         from app.modules.inventory.models import Product
         low_stock = db.query(Product).filter(
@@ -328,10 +345,11 @@ def inventory_alerts(
 @router.get("/analytics/daily-stats", response_model=DailyStatsRead)
 def get_daily_stats(
     db: DbDep,
-    _=Depends(get_manager_user),
+    user=Depends(get_manager_user),
     branch_id: int = Query(...),
     stat_date: date = Query(default_factory=_today),
 ):
+    _assert_analytics_branch(db, user, branch_id, "عرض إحصاءات يومية")
     from app.modules.analytics.models import DailyStats
     row = db.query(DailyStats).filter(
         DailyStats.branch_id == branch_id,
@@ -363,50 +381,55 @@ def get_daily_stats(
 @router.post("/analytics/utilities", response_model=UtilityReadingRead,
              status_code=status.HTTP_201_CREATED)
 def create_utility_reading(data: UtilityReadingCreate, db: DbDep, user=Depends(get_manager_user)):
+    _assert_analytics_branch(db, user, data.branch_id, "تسجيل قراءة مرفق")
     return services.record_utility_reading(db, data, recorded_by=user.id)
 
 
 @router.get("/analytics/utilities", response_model=list[UtilityReadingRead])
 def list_utility_readings(
-    db: DbDep, _=Depends(get_manager_user),
+    db: DbDep, user=Depends(get_manager_user),
     branch_id: int = Query(...),
     utility_type: str | None = Query(None),
     period: str | None = Query(None, description="YYYY-MM"),
 ):
+    _assert_analytics_branch(db, user, branch_id, "عرض قراءات مرافق")
     return services.list_utility_readings(db, branch_id, utility_type, period)
 
 
 @router.get("/analytics/energy", response_model=EnergyKPIs)
 def energy_kpis(
-    db: DbDep, _=Depends(get_manager_user),
+    db: DbDep, user=Depends(get_manager_user),
     branch_id: int = Query(...),
     period: str = Query(..., description="YYYY-MM"),
 ):
     """مؤشر الطاقة (تكلفة كيلوواط/نزيل) — من قايمة KPIs الأساسية في السبيك
     اللي مكنش ليها أي endpoint خالص."""
+    _assert_analytics_branch(db, user, branch_id, "عرض مؤشر طاقة")
     return services.get_energy_kpis(db, branch_id, period)
 
 
 @router.get("/analytics/energy/trend", response_model=EnergyTrendResponse)
 def energy_trend(
-    db: DbDep, _=Depends(get_manager_user),
+    db: DbDep, user=Depends(get_manager_user),
     branch_id: int = Query(...),
     end_period: str = Query(default_factory=lambda: business_today(settings.TIMEZONE).strftime("%Y-%m"), description="YYYY-MM"),
     months: int = Query(24, ge=1, le=60),
 ):
     """اتجاه تكلفة المرافق الشهري + مقارنة سنة بسنة (wagdy.md #18) — 24 شهر
     افتراضيًا (سنة حالية + سابقة) عشان الفرونت إند يقارن من نفس الرد."""
+    _assert_analytics_branch(db, user, branch_id, "عرض اتجاه تكلفة مرافق")
     return services.get_energy_trend(db, branch_id, end_period, months)
 
 
 @router.get("/analytics/energy/trend/export", response_model=None)
 def download_energy_trend_excel(
-    db: DbDep, _=Depends(get_manager_user),
+    db: DbDep, user=Depends(get_manager_user),
     branch_id: int = Query(...),
     end_period: str = Query(default_factory=lambda: business_today(settings.TIMEZONE).strftime("%Y-%m"), description="YYYY-MM"),
     months: int = Query(24, ge=1, le=60),
 ):
     """تصدير Excel لاتجاه تكلفة المرافق (wagdy.md #18)."""
+    _assert_analytics_branch(db, user, branch_id, "تحميل اتجاه تكلفة مرافق Excel")
     xlsx = services.generate_energy_trend_excel(db, branch_id, end_period, months)
     return Response(
         content=xlsx,
@@ -509,7 +532,7 @@ async def kpi_websocket(websocket: WebSocket, branch_id: int, db: DbDep):
 @router.get("/analytics/reviews", response_model=GuestReviewListResponse)
 def list_reviews(
     db: DbDep,
-    _=Depends(get_manager_user),
+    user=Depends(get_manager_user),
     branch_id: int = Query(...),
     source: str | None = Query(None),
     booking_id: int | None = Query(None),
@@ -517,6 +540,7 @@ def list_reviews(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
 ):
+    _assert_analytics_branch(db, user, branch_id, "عرض تقييمات ضيوف")
     from app.modules.analytics.models import GuestReview
     q = db.query(GuestReview).filter(GuestReview.branch_id == branch_id)
     if booking_id or timeshare_visit_id:
@@ -552,10 +576,11 @@ def list_reviews(
 
 
 @router.get("/analytics/reviews/insights", response_model=ReviewCategoryInsights)
-def review_category_insights(db: DbDep, _=Depends(get_manager_user), branch_id: int = Query(...)):
+def review_category_insights(db: DbDep, user=Depends(get_manager_user), branch_id: int = Query(...)):
     """Task B audit: ReviewCategory كان بيتسجّل فعلاً مع كل تقييم (submit_review)
     بس مفيش أي مكان بيقراه أو يجمّعه — السبيك بيطلب 'GSS score + per-category
     insights' صراحة."""
+    _assert_analytics_branch(db, user, branch_id, "عرض تحليل فئات تقييم")
     return services.get_review_category_insights(db, branch_id)
 
 
@@ -564,10 +589,11 @@ def review_category_insights(db: DbDep, _=Depends(get_manager_user), branch_id: 
 @router.get("/analytics/dashboard", response_model=FullDashboard)
 def full_dashboard(
     db: DbDep,
-    _=Depends(get_manager_user),
+    user=Depends(get_manager_user),
     branch_id: int = Query(...),
 ):
     """لوحة القيادة الشاملة — كل المؤشرات في طلب واحد."""
+    _assert_analytics_branch(db, user, branch_id, "عرض لوحة القيادة الشاملة")
     today = _today()
     date_from_30 = today - timedelta(days=30)
 
@@ -695,10 +721,16 @@ async def submit_guest_review(
     ref_type = payload.get("ref_type", "booking")  # توكنات قديمة بدون ref_type = حجز فندقي دايمًا
 
     review_data = data.model_dump()
-    if ref_type == "timeshare_visit":
-        review = submit_review(db, branch_id, booking_id=None, data=review_data, timeshare_visit_id=ref_id)
-    else:
-        review = submit_review(db, branch_id, booking_id=ref_id, data=review_data)
+    try:
+        if ref_type == "timeshare_visit":
+            review = submit_review(db, branch_id, booking_id=None, data=review_data, timeshare_visit_id=ref_id)
+        else:
+            review = submit_review(db, branch_id, booking_id=ref_id, data=review_data)
+    except ValueError as exc:
+        # ⚠️ مراجعة Codex 2026-08-30 (M-03): تكرار إرسال نفس رابط الاستبيان
+        # (booking_id/timeshare_visit_id له تقييم مسجّل بالفعل) — 409 مش
+        # 400، الطلب نفسه صحيح شكليًا لكن يتعارض مع حالة موجودة.
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
     return {"id": review.id, "overall_rating": review.overall_rating}
 
 
@@ -717,7 +749,14 @@ async def get_survey_token(
     محتوى الـtoken بالكامل. من غير التحقق ده هنا، أي مستخدم مسجّل دخول
     (حتى بأقل صلاحية) كان يقدر يولّد token صحيح لحجز مش بتاع الفرع اللي
     مررّه، فيلوّث إحصائيات تقييمات فرع تاني. نفس النمط اللي send_timeshare_survey
-    تحت طبّقه بالفعل — هنا كان ناقص."""
+    تحت طبّقه بالفعل — هنا كان ناقص.
+
+    ⚠️ فجوة تانية مرتبطة اتصلحت هنا (مراجعة Codex 2026-08-30، H-02): التحقق
+    فوق بيتأكد إن booking.branch_id == branch_id (تناسق المورد)، لكن مفيش
+    أي تحقق إن current_user نفسه له وصول لـbranch_id ده أصلاً — أي مستخدم
+    نشط في فرع A كان يقدر يولّد token صحيح لحجز فرع B لو عرف الـIDs
+    الصحيحة."""
+    _assert_analytics_branch(db, current_user, branch_id, "إصدار رابط استبيان حجز")
     from app.modules.pms.models import Booking
     booking = db.query(Booking).filter(
         Booking.id == booking_id, Booking.branch_id == branch_id,
@@ -740,7 +779,8 @@ async def get_timeshare_survey_token(
     """يُولِّد survey token لزيارة ملكية جزئية — نفس شكل استجابة الحجز الفندقي
     بالظبط، endpoint موازٍ مش تعديل على القديم (الحجز الفندقي والملكية الجزئية
     مصدرين مختلفين تمامًا، مش نفس الجدول). نفس تحقق الملكية اللي فوق —
-    راجع تعليق get_survey_token."""
+    راجع تعليق get_survey_token (بما فيه فحص عزل الفرع، H-02)."""
+    _assert_analytics_branch(db, current_user, branch_id, "إصدار رابط استبيان زيارة")
     from app.modules.timeshare.models import TimeshareVisit
     visit = db.query(TimeshareVisit).filter(
         TimeshareVisit.id == visit_id, TimeshareVisit.branch_id == branch_id,
@@ -769,7 +809,10 @@ async def send_timeshare_survey(
 
     قبل الـ endpoint ده، get_timeshare_survey_token فوق كان بيولّد الـ token
     بس من غير أي طريقة حقيقية توصّله للضيف — يعني الاستبيان (رغم إن الباك
-    إند والفرونت إند شغالين بالكامل) كان عمليًا غير قابل للاستخدام."""
+    إند والفرونت إند شغالين بالكامل) كان عمليًا غير قابل للاستخدام.
+
+    ⚠️ فحص عزل فرع اتضاف هنا كمان (مراجعة Codex 2026-08-30، H-02)."""
+    _assert_analytics_branch(db, current_user, branch_id, "إرسال رابط استبيان زيارة")
     from app.modules.timeshare.models import TimeshareVisit
     visit = db.query(TimeshareVisit).filter(
         TimeshareVisit.id == visit_id, TimeshareVisit.branch_id == branch_id,

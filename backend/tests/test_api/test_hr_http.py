@@ -307,6 +307,7 @@ class TestHRValidation:
 
     def test_leaves_alias_rejects_invalid_status(self, client: TestClient, db, manager_headers):
         branch = make_branch_committed(db)
+        headers = role_headers_for_branch(db, branch)
         employee = make_employee_committed(db, branch)
         leave_type = make_leave_type_committed(db, branch)
         req = client.post(
@@ -316,11 +317,11 @@ class TestHRValidation:
                 "start_date": str(date.today() + timedelta(days=1)),
                 "end_date": str(date.today() + timedelta(days=1)),
             },
-            headers=manager_headers,
+            headers=headers,
         ).json()
 
         resp = client.patch(
-            f"/api/v1/hr/leaves/{req['id']}", json={"status": "maybe_later"}, headers=manager_headers,
+            f"/api/v1/hr/leaves/{req['id']}", json={"status": "maybe_later"}, headers=headers,
         )
         assert resp.status_code == 422
 
@@ -587,6 +588,58 @@ class TestEmployeeCrudHttp:
         )
         assert resp.status_code == 400
         assert "مستخدم مسبقاً" in resp.text
+
+    def test_create_employee_rejects_insurance_base_above_basic_salary(
+        self, client: TestClient, db, super_admin_headers,
+    ):
+        """مراجعة Codex 2026-08-30 (H-07): basic=1000 وinsurance_base=14000
+        كان بيعدّي — وعاء تأمين أكبر من الراتب الأساسي ينتج اشتراك تأمين
+        (employee_si) أكبر من إجمالي المستحق فعليًا."""
+        branch = make_branch_committed(db)
+        headers = super_admin_headers_for_branch(branch)
+        resp = client.post(
+            "/api/v1/hr/employees",
+            json={
+                "branch_id": branch.id, "employee_code": f"EMP-{uuid.uuid4().hex[:6].upper()}",
+                "full_name": "موظف اختبار", "position": "Waiter",
+                "basic_salary": "1000.00", "insurance_base_salary": "14000.00",
+                "hire_date": str(date.today()),
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 400
+        assert "وعاء التأمين" in resp.text
+
+    def test_update_employee_rejects_lowering_basic_salary_below_existing_insurance_base(
+        self, client: TestClient, db, super_admin_headers,
+    ):
+        """نفس التحقق بس عند تخفيض الراتب الأساسي لأقل من وعاء تأمين مضبوط
+        بالفعل على الموظف (partial update — لازم يقارن بالقيمة الفعلية
+        الحالية المخزّنة في الداتابيز، مش بس القيم المبعوتة في نفس الطلب)."""
+        branch = make_branch_committed(db)
+        headers = super_admin_headers_for_branch(branch)
+        create_resp = client.post(
+            "/api/v1/hr/employees",
+            json={
+                "branch_id": branch.id, "employee_code": f"EMP-{uuid.uuid4().hex[:6].upper()}",
+                "full_name": "موظف اختبار 2", "position": "Waiter",
+                "basic_salary": "4000.00", "insurance_base_salary": "3000.00",
+                "hire_date": str(date.today()),
+            },
+            headers=headers,
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        employee_id = create_resp.json()["id"]
+
+        # الطلب هنا بيبعت basic_salary بس — insurance_base_salary (3000)
+        # لازم يتقرا من الموظف الحالي في الداتابيز، مش من الـpayload.
+        resp = client.patch(
+            f"/api/v1/hr/employees/{employee_id}",
+            json={"basic_salary": "500.00"},
+            headers=headers,
+        )
+        assert resp.status_code == 400, resp.text
+        assert "وعاء التأمين" in resp.text
 
     def test_create_employee_cannot_bypass_account_control_plane(
         self, client: TestClient, db, super_admin_headers,
@@ -943,35 +996,58 @@ class TestAttendanceHttp:
 class TestDepartmentHttp:
     def test_create_and_list_departments(self, client: TestClient, db, manager_headers):
         branch = make_branch_committed(db)
+        headers = role_headers_for_branch(db, branch)
         create_resp = client.post(
             "/api/v1/hr/departments",
             json={"branch_id": branch.id, "name": "Kitchen", "name_ar": "مطبخ"},
-            headers=manager_headers,
+            headers=headers,
         )
         assert create_resp.status_code == 201, create_resp.text
 
         list_resp = client.get(
-            "/api/v1/hr/departments", params={"branch_id": branch.id}, headers=manager_headers,
+            "/api/v1/hr/departments", params={"branch_id": branch.id}, headers=headers,
         )
         assert list_resp.status_code == 200, list_resp.text
         assert any(d["name"] == "Kitchen" for d in list_resp.json())
+
+    def test_cross_branch_manager_cannot_list_or_create_departments(self, client: TestClient, db):
+        """مراجعة Codex 2026-08-30 (H-01): departments/shifts/attendance-
+        policy/penalty-types/rota-templates كانوا من غير أي فحص عزل فرع
+        خالص — تمثيلي للدفعة كلها (نفس core_services.assert_branch_access
+        المستخدمة في كل الـendpoints دي)."""
+        branch_a = make_branch_committed(db)
+        headers_a = role_headers_for_branch(db, branch_a)
+        branch_b = make_branch_committed(db)
+
+        resp = client.get(
+            "/api/v1/hr/departments", params={"branch_id": branch_b.id}, headers=headers_a,
+        )
+        assert resp.status_code == 403
+
+        create_resp = client.post(
+            "/api/v1/hr/departments",
+            json={"branch_id": branch_b.id, "name": "Cross-branch dept"},
+            headers=headers_a,
+        )
+        assert create_resp.status_code == 403
 
 
 class TestShiftHttp:
     def test_create_and_list_shifts(self, client: TestClient, db, manager_headers):
         branch = make_branch_committed(db)
+        headers = role_headers_for_branch(db, branch)
         create_resp = client.post(
             "/api/v1/hr/shifts",
             json={
                 "branch_id": branch.id, "name": "Evening", "name_ar": "مسائي",
                 "start_time": "16:00", "end_time": "23:00", "duration_hours": "7.00",
             },
-            headers=manager_headers,
+            headers=headers,
         )
         assert create_resp.status_code == 201, create_resp.text
 
         list_resp = client.get(
-            "/api/v1/hr/shifts", params={"branch_id": branch.id}, headers=manager_headers,
+            "/api/v1/hr/shifts", params={"branch_id": branch.id}, headers=headers,
         )
         assert list_resp.status_code == 200, list_resp.text
         assert any(s["name"] == "Evening" for s in list_resp.json())
@@ -1058,10 +1134,11 @@ class TestRotaTemplateHttp:
 class TestLeaveTypeHttp:
     def test_create_leave_type(self, client: TestClient, db, manager_headers):
         branch = make_branch_committed(db)
+        headers = role_headers_for_branch(db, branch)
         resp = client.post(
             "/api/v1/hr/leave-types",
             json={"branch_id": branch.id, "name": "Sick", "name_ar": "مرضية", "max_days_per_year": 15},
-            headers=manager_headers,
+            headers=headers,
         )
         assert resp.status_code == 201, resp.text
         assert resp.json()["name"] == "Sick"
@@ -1070,6 +1147,7 @@ class TestLeaveTypeHttp:
 class TestLeaveRequestValidationAndRejectHttp:
     def test_create_leave_request_invalid_dates_returns_400(self, client: TestClient, db, manager_headers):
         branch = make_branch_committed(db)
+        headers = role_headers_for_branch(db, branch)
         employee = make_employee_committed(db, branch)
         leave_type = make_leave_type_committed(db, branch)
         resp = client.post(
@@ -1079,7 +1157,7 @@ class TestLeaveRequestValidationAndRejectHttp:
                 "start_date": str(date.today() + timedelta(days=5)),
                 "end_date": str(date.today() + timedelta(days=1)),  # نهاية قبل البداية
             },
-            headers=manager_headers,
+            headers=headers,
         )
         assert resp.status_code == 400
 
@@ -1315,10 +1393,11 @@ class TestPenaltyTypeHttp:
 
     def test_create_and_list_penalty_types(self, client: TestClient, db, manager_headers, waiter_headers):
         branch = make_branch_committed(db)
+        headers = role_headers_for_branch(db, branch)
         create_resp = client.post(
             "/api/v1/hr/penalty-types",
             json={"branch_id": branch.id, "name": "تأخير", "name_ar": "تأخير", "penalty_days": 1},
-            headers=manager_headers,
+            headers=headers,
         )
         assert create_resp.status_code == 201, create_resp.text
 
@@ -1464,11 +1543,13 @@ class TestAttendancePolicyEndpoints:
 
     def test_get_404_when_not_configured(self, client: TestClient, db, manager_headers):
         branch = make_branch_committed(db)
-        resp = client.get("/api/v1/hr/attendance-policy", params={"branch_id": branch.id}, headers=manager_headers)
+        headers = role_headers_for_branch(db, branch)
+        resp = client.get("/api/v1/hr/attendance-policy", params={"branch_id": branch.id}, headers=headers)
         assert resp.status_code == 404
 
     def test_put_creates_then_get_returns_it(self, client: TestClient, db, manager_headers):
         branch = make_branch_committed(db)
+        headers = role_headers_for_branch(db, branch)
         body = {
             "late_grace_minutes": 15,
             "early_leave_grace_minutes": 5,
@@ -1479,7 +1560,7 @@ class TestAttendancePolicyEndpoints:
             "is_active": True,
         }
         put_resp = client.put(
-            "/api/v1/hr/attendance-policy", params={"branch_id": branch.id}, json=body, headers=manager_headers,
+            "/api/v1/hr/attendance-policy", params={"branch_id": branch.id}, json=body, headers=headers,
         )
         assert put_resp.status_code == 200, put_resp.text
         data = put_resp.json()
@@ -1487,7 +1568,7 @@ class TestAttendancePolicyEndpoints:
         assert data["standard_shift_start"] == "08:00"
         assert Decimal(str(data["overtime_rate_multiplier"])) == Decimal("2.00")
 
-        get_resp = client.get("/api/v1/hr/attendance-policy", params={"branch_id": branch.id}, headers=manager_headers)
+        get_resp = client.get("/api/v1/hr/attendance-policy", params={"branch_id": branch.id}, headers=headers)
         assert get_resp.status_code == 200
         assert get_resp.json()["late_grace_minutes"] == 15
 
@@ -1496,10 +1577,11 @@ class TestAttendancePolicyEndpoints:
         from app.modules.hr.models import AttendancePolicy
 
         branch = make_branch_committed(db)
+        headers = role_headers_for_branch(db, branch)
         body = {"late_grace_minutes": 10, "standard_shift_start": "09:00", "standard_shift_end": "17:00"}
-        client.put("/api/v1/hr/attendance-policy", params={"branch_id": branch.id}, json=body, headers=manager_headers)
+        client.put("/api/v1/hr/attendance-policy", params={"branch_id": branch.id}, json=body, headers=headers)
         body["late_grace_minutes"] = 20
-        client.put("/api/v1/hr/attendance-policy", params={"branch_id": branch.id}, json=body, headers=manager_headers)
+        client.put("/api/v1/hr/attendance-policy", params={"branch_id": branch.id}, json=body, headers=headers)
 
         rows = db.query(AttendancePolicy).filter(AttendancePolicy.branch_id == branch.id).all()
         assert len(rows) == 1

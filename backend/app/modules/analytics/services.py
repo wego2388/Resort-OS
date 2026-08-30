@@ -97,7 +97,17 @@ def submit_review(
 ) -> GuestReview:
     """يُسجّل تقييم الضيف + ينشئ Activity(complaint) لو avg ≤ 2. يُربط إما
     بحجز فندقي (booking_id) أو بزيارة ملكية جزئية (timeshare_visit_id) — الاثنين
-    اختياريان ومستقلان (مش نفس الجدول، وحدات الملكية الجزئية مبنى منفصل)."""
+    اختياريان ومستقلان (مش نفس الجدول، وحدات الملكية الجزئية مبنى منفصل).
+
+    ⚠️ باج حقيقي كان هنا (مراجعة Codex 2026-08-30، M-03): رابط الاستبيان
+    (survey token) صالح 7 أيام ومفيش أي تتبع "تم استهلاكه" — نفس اللينك
+    كان يقدر يتبعت هنا عدد غير محدود من المرات، كل مرة بتنشئ صف تقييم
+    جديد (ولو التقييم ≤2، شكوى CRM جديدة كل مرة كمان). migration
+    6449668eb81a أضافت partial unique index على booking_id/
+    timeshare_visit_id — هنا بنمسك IntegrityError ونرفعها كـValueError
+    واضح بدل خطأ DB خام."""
+    from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+
     from app.modules.analytics.models import GuestReview, ReviewCategory
 
     overall = data.get("overall_rating", 3)
@@ -114,7 +124,11 @@ def submit_review(
         timeshare_visit_id=timeshare_visit_id,
     )
     db.add(review)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError as exc:
+        db.rollback()
+        raise ValueError("تم تسجيل تقييم لهذا الحجز/الزيارة من قبل — الرابط استُخدم مسبقاً") from exc
 
     # Add category ratings
     for cat_data in data.get("categories", []):

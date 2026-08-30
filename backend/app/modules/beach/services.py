@@ -1177,25 +1177,45 @@ def settle_b2b_contract(
     ✅ فجوة حقيقية اتصلحت هنا (2026-08-20): قبل كده التسوية كانت مجرد
     تصفير رصيد بدون أي أثر محاسبي — رصيد 1165 (ذمم فنادق شريكة) كان
     هيفضل متضخّم للأبد حتى بعد ما الفندق يدفع فعليًا. مفيش قيد لو الرصيد
-    المستحق صفر أصلاً (عقد جديد لسه ما اتحاسبش عليه شهر، أو اتسوّى بالفعل)."""
-    contract = crud.get_b2b_contract(db, contract_id)
+    المستحق صفر أصلاً (عقد جديد لسه ما اتحاسبش عليه شهر، أو اتسوّى بالفعل).
+
+    ⚠️ 3 باجات حقيقية اتصلحوا هنا (مراجعة Codex 2026-08-30، H-04):
+    1. العقد كان بيتقرا من غير قفل — تسويتان متزامنتان لنفس العقد كان
+       ممكن الاتنين يرحّلوا قيد تحصيل، وآخر واحد يكتب last_settled_at
+       بيكسب بصمت (تحصيل مزدوج فعلي في الدفاتر).
+    2. مفيش حد أعلى (`through`) على حساب الرصيد المستحق — تسوية بتاريخ
+       معيّن كانت بتجمع كل الشهور المُرحَّلة **حتى المستقبلية**، مش تقف
+       عند `settled_through` فعليًا.
+    3. القيد كان بيترحّل عبر post_journal_entry (بتعمل commit داخلي)
+       قبل تحديث last_settled_at بـcommit منفصل — فشل بينهم (كراش، خطأ
+       شبكة) كان يسيب قيد تحصيل مُرحَّل فعليًا من غير أي علامة تسوية
+       مقابلة، فالمرة الجاية outstanding يحسبه تاني ويرحّل قيد إضافي.
+       دلوقتي عملية واحدة ذرية: القيد بيتبني بـflush بس (مش commit)،
+       وlast_settled_at بيتحدّث في نفس الـtransaction، وcommit واحد
+       بس في الآخر — إما الاتنين يحصلوا مع بعض أو ولا واحد."""
+    from app.modules.finance import crud as finance_crud  # noqa: PLC0415
+    from app.modules.finance.schemas import JournalEntryCreate, JournalLineCreate  # noqa: PLC0415
+    from app.modules.finance.services import validate_period_open  # noqa: PLC0415
+
+    contract = crud.lock_b2b_contract_for_update(db, contract_id)
     if not contract:
         raise ValueError(f"العقد {contract_id} غير موجود")
     settled_through = settled_through or _business_today()
+    if settled_through > _business_today():
+        raise ValueError("تاريخ التسوية لا يمكن أن يكون في المستقبل")
     if contract.last_settled_at and settled_through < contract.last_settled_at:
         raise ValueError("تاريخ التسوية لا يمكن أن يكون قبل آخر تسوية مسجّلة")
 
-    outstanding = crud.get_b2b_outstanding_balance(db, contract_id, contract.last_settled_at)
+    outstanding = crud.get_b2b_outstanding_balance(
+        db, contract_id, contract.last_settled_at, through=settled_through,
+    )
     if outstanding > 0:
-        from app.modules.finance import crud as finance_crud  # noqa: PLC0415
-        from app.modules.finance.schemas import JournalEntryCreate, JournalLineCreate  # noqa: PLC0415
-        from app.modules.finance.services import post_journal_entry  # noqa: PLC0415
-
         settlement_account = finance_crud.get_account_by_code(db, contract.branch_id, settlement_account_code)
         receivable_account = finance_crud.get_account_by_code(db, contract.branch_id, "1165")
         if not settlement_account or not receivable_account:
             raise ValueError("حسابات التسوية أو ذمم الفنادق الشريكة غير معرّفة في دليل الحسابات")
-        post_journal_entry(
+        validate_period_open(db, contract.branch_id, settled_through)
+        finance_crud.create_journal_entry(
             db,
             JournalEntryCreate(
                 branch_id=contract.branch_id, entry_date=settled_through,

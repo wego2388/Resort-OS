@@ -1206,15 +1206,34 @@ def pin_switch(data: PinSwitchRequest, db: DbDep, _user=Depends(get_waiter_user)
 
 
 @router.get("/pins/{user_id}", response_model=PinCredentialRead)
-def get_user_pin_status(user_id: int, db: DbDep, _user=Depends(get_manager_user)):
+def get_user_pin_status(user_id: int, db: DbDep, user=Depends(get_manager_user)):
     """مدير بيشوف حالة PIN موظف تاني (موجود/مقفول) — للتأكد قبل تعيين
-    مهمة أو لتشخيص لو موظف بيشتكي إن الـ PIN بتاعه بيترفض دايمًا."""
+    مهمة أو لتشخيص لو موظف بيشتكي إن الـ PIN بتاعه بيترفض دايمًا.
+
+    ⚠️ باج حقيقي كان هنا (مراجعة Codex 2026-08-30، M-02): مفيش تحقق فرع
+    ولا مستوى نسبي على الهدف."""
+    try:
+        services.assert_can_manage_target_pin(db, user, user_id, "عرض حالة PIN")
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     return _pin_status_response(user_id, services.get_pin_status(db, user_id))
 
 
 @router.post("/pins/{user_id}", response_model=PinCredentialRead, status_code=status.HTTP_201_CREATED)
 def set_user_pin(user_id: int, data: PinSetRequest, db: DbDep, user=Depends(get_manager_user)):
     """مدير يضبط/يجدّد PIN موظف تاني — أونبوردنج كاشير جديد، أو استعادة
-    بعد نسيان/قفل. created_by بيسجّل مين المدير اللي عمل كده."""
+    بعد نسيان/قفل. created_by بيسجّل مين المدير اللي عمل كده.
+
+    ⚠️ باج حقيقي كان هنا (مراجعة Codex 2026-08-30، M-02): مفيش تحقق فرع
+    ولا مستوى نسبي على الهدف — مدير كان يقدر يعيد ضبط PIN مدير نظير أو
+    أعلى في فرع تاني تمامًا."""
+    try:
+        services.assert_can_manage_target_pin(db, user, user_id, "ضبط PIN")
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     cred = services.set_pin(db, user_id, data.pin, created_by=user.id)
     return _pin_status_response(user_id, cred)

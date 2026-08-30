@@ -263,15 +263,25 @@ def pay_installment(
        يعني كل تحصيلات الأقساط (اللي هي معظم إيراد الملكية الجزئية على مدار سنين
        العقد) كانت غايبة تمامًا عن الدفاتر المحاسبية — مخالفة مباشرة لـ
        "Finance First" (§5.2 في CLAUDE.md بيذكر أقساط الملكية الجزئية بالاسم صراحةً).
-    """
+
+    4. ⚠️ مراجعة Codex 2026-08-30 (H-05): ترتيب الأقفال كان معكوس مقارنة
+       بـcancel_contract (بتقفل العقد الأول). هنا كان بيتقفل القسط الأول
+       والعقد بيتقرا من غير قفل — ترتيب أقفال غير ثابت بين المسارين ده
+       بالظبط اللي بيسمح بحالة سباق: دفع وإلغاء متزامنين ممكن الاتنين
+       يعدّوا من غير ما أي واحد يشوف تأثير التاني، فيتلزّموا مع بعض
+       (دفعة على عقد اتلغى، أو رد مبلغ محسوب من غير آخر تحصيل). دلوقتي
+       العقد بيتقفل الأول دايمًا (نفس ترتيب cancel_contract بالظبط)."""
+    inst_lookup = crud.get_installment(db, inst_id)
+    if not inst_lookup:
+        raise ValueError(f"القسط {inst_id} غير موجود")
+    contract = crud.lock_contract_for_update(db, inst_lookup.contract_id)
+    if not contract:
+        raise ValueError(f"العقد المرتبط بالقسط {inst_id} غير موجود")
     inst = _lock_installment_or_raise(db, inst_id)
     try:
         if inst.status == "paid":
             raise ValueError("القسط مدفوع بالكامل مسبقاً")
 
-        contract = crud.get_contract(db, inst.contract_id)
-        if not contract:
-            raise ValueError(f"العقد المرتبط بالقسط {inst_id} غير موجود")
         if contract.status == "cancelled":
             raise ValueError(f"العقد {contract.contract_number} ملغي — لا يمكن تحصيل أقساط عليه")
         if contract.status == "expired":
@@ -437,15 +447,21 @@ def pay_maintenance_due(
 ) -> TimeshareMaintenanceDue:
     """تحصيل مستحق صيانة سنوي — مرآة كاملة لـ pay_installment (نفس تسلسل
     التحقق بالضبط: موجود؟ مدفوع بالفعل؟ العقد ملغي/منتهي؟ المبلغ زيادة عن
-    المتبقي؟) بس على TimeshareMaintenanceDue بدل TimeshareInstallment."""
+    المتبقي؟) بس على TimeshareMaintenanceDue بدل TimeshareInstallment.
+
+    ⚠️ مراجعة Codex 2026-08-30 (H-05): نفس إصلاح ترتيب الأقفال بتاع
+    pay_installment بالظبط — العقد بيتقفل الأول دايمًا (راجع تعليقها)."""
+    due_lookup = crud.get_maintenance_due(db, due_id)
+    if not due_lookup:
+        raise ValueError(f"مستحق الصيانة {due_id} غير موجود")
+    contract = crud.lock_contract_for_update(db, due_lookup.contract_id)
+    if not contract:
+        raise ValueError(f"العقد المرتبط بمستحق الصيانة {due_id} غير موجود")
     due = _lock_maintenance_due_or_raise(db, due_id)
     try:
         if due.status == "paid":
             raise ValueError("مستحق الصيانة مدفوع بالكامل مسبقاً")
 
-        contract = crud.get_contract(db, due.contract_id)
-        if not contract:
-            raise ValueError(f"العقد المرتبط بمستحق الصيانة {due_id} غير موجود")
         if contract.status == "cancelled":
             raise ValueError(f"العقد {contract.contract_number} ملغي — لا يمكن تحصيل صيانة عليه")
         if contract.status == "expired":

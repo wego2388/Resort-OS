@@ -69,6 +69,28 @@ class TestTimeshareContract:
         assert contract.contract_number.startswith("TS-")
         assert len(contract.installments_list) == 12
 
+    def test_cancelled_contract_excluded_from_collection_reports(self, db, branch, contract):
+        """مراجعة Codex 2026-08-30 (M-01): REL-22 منعت أقساط عقد ملغي من
+        "التحول" لـoverdue لأول مرة بعد الإلغاء، لكن قسط كان overdue بالفعل
+        *قبل* الإلغاء (أو لسه pending) كان يفضل محسوب للأبد في تقارير
+        التحصيل (installments_summary/overall_collection) كأنه لسه مستحق
+        تحصيل فعليًا رغم إلغاء العقد."""
+        inst = contract.installments_list[0]
+        inst.status = "overdue"  # يحاكي قسط اتعلّم overdue قبل الإلغاء
+        db.commit()
+
+        before = crud.installments_summary(db, branch.id)
+        assert before["overdue_total"] >= inst.amount
+
+        services.cancel_contract(db, contract.id, Decimal("0"), cancelled_by=1)
+
+        after = crud.installments_summary(db, branch.id)
+        assert after["overdue_total"] == Decimal("0")
+
+        collection = crud.overall_collection(db, branch.id)
+        assert collection["overdue"] == Decimal("0")
+        assert collection["pending"] == Decimal("0")
+
     def test_update_contract_records_actor_and_before_after_values(self, db, contract):
         import json
         from app.modules.core.models import AuditLog

@@ -963,6 +963,49 @@ class TestB2BCredit:
         with pytest.raises(ValueError):
             services.settle_b2b_contract(db, 9999)
 
+    def test_settle_through_date_does_not_sweep_future_months(self, db):
+        """مراجعة Codex 2026-08-30 (H-04): مفيش حد أعلى (through) على حساب
+        الرصيد المستحق — تسوية عن شهر معيّن كانت بتجمع أي شهر تاني اتّرحّل
+        بعده كمان، حتى لو المفروض يفضل مستحق."""
+        branch = make_branch(db)
+        contract = make_contract(db, branch)
+        this_month_start = date.today().replace(day=1)
+        prev_month_start = (this_month_start - timedelta(days=1)).replace(day=1)
+
+        bill_month(db, prev_month_start)
+        bill_month(db, this_month_start)
+
+        settle_through = this_month_start - timedelta(days=1)  # آخر يوم في الشهر اللي فات بس
+        settled = services.settle_b2b_contract(db, contract.id, settle_through)
+        assert settled.last_settled_at == settle_through
+
+        remaining = crud.get_b2b_outstanding_balance(db, contract.id, settled.last_settled_at)
+        assert remaining == contract.monthly_fee  # شهر النهاردة لسه مستحق، مش صفر
+
+    def test_settle_rejects_future_date(self, db):
+        """مراجعة Codex 2026-08-30 (H-04): كان مفيش رفض لتاريخ تسوية
+        مستقبلي — بيخفي مطالبات مستقبلية لسه ما استحقتش أصلاً."""
+        branch = make_branch(db)
+        contract = make_contract(db, branch)
+        with pytest.raises(ValueError, match="المستقبل"):
+            services.settle_b2b_contract(db, contract.id, date.today() + timedelta(days=1))
+
+    def test_settle_twice_in_a_row_posts_journal_only_once(self, db):
+        """مراجعة Codex 2026-08-30 (H-04): بعد قفل العقد وتحديث last_settled_at
+        في نفس الـtransaction، تسوية تانية فورية لنفس التاريخ لازم تلاقي
+        الرصيد المستحق صفر بالفعل (مش تكرر نفس القيد)."""
+        from app.modules.finance import crud as finance_crud
+
+        branch = make_branch(db)
+        contract = make_contract(db, branch)
+        bill_month(db, date.today())
+
+        services.settle_b2b_contract(db, contract.id, date.today())
+        services.settle_b2b_contract(db, contract.id, date.today())
+
+        _, total = finance_crud.list_journal_entries(db, branch.id, source="beach_b2b_settlement")
+        assert total == 1
+
     def test_mark_overdue_flags_old_unsettled_balance(self, db):
         """``changed`` مش بالضرورة 1 بالظبط هنا: crud.list_active_b2b_
         contracts (زي mark_b2b_contracts_overdue/post_b2b_monthly_fees

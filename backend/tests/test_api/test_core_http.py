@@ -478,17 +478,81 @@ class TestPinCredentials:
         resp = client.post("/api/v1/pins/me", json={"pin": "1234"}, headers=headers)
         assert resp.status_code == 403
 
-    def test_manager_can_set_another_users_pin(self, client: TestClient, manager_headers, waiter_headers):
+    def test_manager_can_set_another_users_pin(self, client: TestClient, db, manager_headers, waiter_headers):
         """أونبوردنج كاشير جديد — المدير هو اللي بيضبط الـ PIN، مش الموظف
-        نفسه بالضرورة."""
-        from tests.conftest import _create_test_user
-        target_id = _create_test_user("core-pin-target@test.local", "cashier")
+        نفسه بالضرورة.
 
-        resp = client.post(f"/api/v1/pins/{target_id}", json={"pin": "5678"}, headers=manager_headers)
+        ⚠️ مراجعة Codex 2026-08-30 (M-02) أضافت assert_can_manage_target_pin
+        (نفس الفرع النشط + target أقل مستوى من الفاعل) — manager_headers
+        العالمية والمستخدم الجديد مالهمش أي عضوية فرع مشتركة، فلازم fixture
+        محلي (نفس نمط role_headers_for_branch في ملفات تانية) يربطهم بنفس
+        الفرع صراحةً."""
+        import uuid
+        from app.modules.core.models import Branch
+        from tests.conftest import _create_test_user, _make_token, assign_test_user_to_branch
+
+        branch = Branch(name="PIN Mgmt Branch", name_ar="فرع اختبار PIN",
+                        code=f"PINM-{uuid.uuid4().hex[:8].upper()}")
+        db.add(branch); db.commit()
+
+        manager_email = f"pin-manager-{uuid.uuid4().hex[:8]}@test.local"
+        manager_id = _create_test_user(manager_email, "manager")
+        assign_test_user_to_branch(db, manager_id, branch.id)
+        target_id = _create_test_user("core-pin-target@test.local", "cashier")
+        assign_test_user_to_branch(db, target_id, branch.id)
+        db.commit()
+        scoped_manager_headers = {
+            "Authorization": f"Bearer {_make_token(manager_email, branch_id=branch.id)}"
+        }
+
+        resp = client.post(f"/api/v1/pins/{target_id}", json={"pin": "5678"}, headers=scoped_manager_headers)
         assert resp.status_code == 201, resp.text
 
-        status_resp = client.get(f"/api/v1/pins/{target_id}", headers=manager_headers)
+        status_resp = client.get(f"/api/v1/pins/{target_id}", headers=scoped_manager_headers)
         assert status_resp.json()["has_pin"] is True
+
+    def test_cross_branch_manager_cannot_set_pin(self, client: TestClient, db):
+        """مراجعة Codex 2026-08-30 (M-02): مدير فرع A مايقدرش يضبط PIN
+        مستخدم فرع B."""
+        import uuid
+        from app.modules.core.models import Branch
+        from tests.conftest import _create_test_user, _make_token, assign_test_user_to_branch
+
+        branch_a = Branch(name="PIN A", name_ar="أ", code=f"PINA-{uuid.uuid4().hex[:8].upper()}")
+        branch_b = Branch(name="PIN B", name_ar="ب", code=f"PINB-{uuid.uuid4().hex[:8].upper()}")
+        db.add_all([branch_a, branch_b]); db.commit()
+
+        manager_email = f"pin-manager-xb-{uuid.uuid4().hex[:8]}@test.local"
+        manager_id = _create_test_user(manager_email, "manager")
+        assign_test_user_to_branch(db, manager_id, branch_a.id)
+        target_id = _create_test_user("core-pin-target-xb@test.local", "cashier")
+        assign_test_user_to_branch(db, target_id, branch_b.id)
+        db.commit()
+        headers = {"Authorization": f"Bearer {_make_token(manager_email, branch_id=branch_a.id)}"}
+
+        resp = client.post(f"/api/v1/pins/{target_id}", json={"pin": "5678"}, headers=headers)
+        assert resp.status_code == 403
+
+    def test_manager_cannot_set_pin_for_peer_or_higher_level(self, client: TestClient, db):
+        """مراجعة Codex 2026-08-30 (M-02): مدير مايقدرش يضبط PIN مدير نظير
+        (نفس المستوى) حتى لو في نفس الفرع."""
+        import uuid
+        from app.modules.core.models import Branch
+        from tests.conftest import _create_test_user, _make_token, assign_test_user_to_branch
+
+        branch = Branch(name="PIN Peer", name_ar="فرع", code=f"PINP-{uuid.uuid4().hex[:8].upper()}")
+        db.add(branch); db.commit()
+
+        manager_email = f"pin-manager-peer-{uuid.uuid4().hex[:8]}@test.local"
+        manager_id = _create_test_user(manager_email, "manager")
+        assign_test_user_to_branch(db, manager_id, branch.id)
+        peer_id = _create_test_user(f"pin-peer-{uuid.uuid4().hex[:8]}@test.local", "manager")
+        assign_test_user_to_branch(db, peer_id, branch.id)
+        db.commit()
+        headers = {"Authorization": f"Bearer {_make_token(manager_email, branch_id=branch.id)}"}
+
+        resp = client.post(f"/api/v1/pins/{peer_id}", json={"pin": "5678"}, headers=headers)
+        assert resp.status_code == 403
 
     def test_waiter_cannot_set_another_users_pin(self, client: TestClient, waiter_headers):
         from tests.conftest import _create_test_user

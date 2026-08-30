@@ -1593,7 +1593,14 @@ async function loadExchangeRates() {
     // مربوطة بفرع) ولا limit (بس size، حد أقصى 200) — كانا بيتجاهَلوا بصمت
     // وبيرجّع الـdefault الحالي (page=1/size=50) دايمًا، اللي طابق الغرض هنا
     // بالصدفة بس لسه drift حقيقي عن الـcontract (OPS-DATA-02 §6.3).
-    const { data } = await api.get('/finance/exchange-rates', {
+    //
+    // ⚠️ باج حقيقي كان هنا (مراجعة Codex 2026-08-30، M-04): المسار كان
+    // '/finance/exchange-rates' من غير بادئة '/api/v1' (باقي الاستدعاءات
+    // في الملف ده بتستخدم ENDPOINTS.* اللي فيها البادئة دايمًا). axios
+    // baseURL فاضي، وnginx بيوجّه /api/ بس للباك إند — فالمسار الناقص كان
+    // بيقع في SPA fallback ويرجّع HTML بدل JSON، يعني الشاشة كانت معطّلة
+    // تمامًا في الإنتاج رغم نجاح build/type-check.
+    const { data } = await api.get(ENDPOINTS.finance.exchangeRates, {
       params: { page: 1, size: 100 },
     })
     exchangeRates.value = data.items ?? data ?? []
@@ -1608,7 +1615,7 @@ async function saveExchangeRate() {
   if (!fxNewRate.value || !fxNewDate.value) return
   fxSaving.value = true
   try {
-    await api.post('/finance/exchange-rates', {
+    await api.post(ENDPOINTS.finance.exchangeRates, {
       from_currency: fxNewFrom.value,
       to_currency:   fxNewTo.value,
       rate:          fxNewRate.value,

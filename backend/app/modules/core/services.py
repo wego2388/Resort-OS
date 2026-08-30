@@ -201,6 +201,47 @@ PIN_MAX_ATTEMPTS = 3       # 3 محاولات غلط = قفل
 PIN_LOCKOUT_SECONDS = 60   # دقيقة واحدة
 
 
+def assert_can_manage_target_pin(db: Session, actor, target_user_id: int, action_desc: str) -> None:
+    """⚠️ باج حقيقي كان هنا (مراجعة Codex 2026-08-30، M-02): أي مدير كان
+    يقدر يقرا أو يعيد ضبط PIN أي user_id — بدون تحقق من وجود الهدف، فرعه،
+    أو مستواه النسبي. النتيجة: مدير يقدر يعيد ضبط PIN مدير نظير (أو حتى
+    أعلى) في فرع تاني تمامًا، بعدها ينتحل هويته على أي terminal مؤهّل أو
+    يزوّر attribution موافقة PIN — نفس فئة الخطر (مصادقة بديلة موازية
+    للـJWT، راجع resolve_pin_approval) لازم تتحمي بنفس الجدية.
+
+    القاعدة: نفس الفرع النشط للفاعل + target أدنى من الفاعل صراحةً (يمنع
+    peers/higher تمامًا) — مطبّقة حتى على super_admin (100) عشان تفضل
+    متسقة مع فلسفة assert_branch_access (سياق فرع نشط حقيقي، مش تجاوز
+    مطلق) ومع القاعدة نفسها بتمنع مدير يعيد ضبط PIN مدير تاني بنفس
+    مستواه بالظبط."""
+    from app.core.deps import user_level as _user_level  # noqa: PLC0415
+    from app.core.kernel.models.user import User  # noqa: PLC0415
+
+    target = db.query(User).filter(User.id == target_user_id).first()
+    if not target:
+        raise ValueError(f"المستخدم {target_user_id} غير موجود")
+
+    actor_branch_id = get_user_branch_id(db, actor)
+    if actor_branch_id is None:
+        raise BranchContextRequiredError(f"اختر فرعًا نشطًا قبل {action_desc}")
+
+    target_in_branch = (
+        db.query(UserBranchMembership.id)
+        .filter(
+            UserBranchMembership.user_id == target.id,
+            UserBranchMembership.branch_id == actor_branch_id,
+            UserBranchMembership.is_active.is_(True),
+        )
+        .first()
+        is not None
+    )
+    if not target_in_branch:
+        raise BranchAccessDeniedError(f"لا يمكنك {action_desc} لمستخدم خارج فرعك الحالي")
+
+    if _user_level(target) >= _user_level(actor):
+        raise PermissionError(f"لا يمكنك {action_desc} لمستخدم بنفس مستواك أو أعلى")
+
+
 def set_pin(db: Session, user_id: int, pin: str, created_by: int) -> PinCredential:
     """ضبط/تجديد PIN — الـ Field(pattern=r"^\\d{4,6}$") في PinSetRequest هو
     الحارس الوحيد على الشكل؛ هنا بس hashing + تخزين. commit صريح — دي

@@ -56,6 +56,7 @@ def create_employee(
 ) -> Employee:
     if crud.get_employee_by_code(db, data.employee_code):
         raise ValueError(f"كود الموظف '{data.employee_code}' مستخدم مسبقاً")
+    _validate_insurance_base_salary(data.insurance_base_salary, data.basic_salary)
     emp = crud.create_employee(db, data)
     db.flush()
 
@@ -83,9 +84,29 @@ def create_employee(
     return emp
 
 
+def _validate_insurance_base_salary(insurance_base_salary, basic_salary) -> None:
+    """⚠️ باج حقيقي كان هنا (مراجعة Codex 2026-08-30، H-07): مفيش تحقق إن
+    وعاء التأمين الاجتماعي (insurance_base_salary) أقل من أو يساوي الراتب
+    الأساسي — مثلًا basic=1000 وinsurance_base=14000 ينتج اشتراك تأمين
+    (employee_si) أكبر من إجمالي المستحق، وهي المدخلات اللي hr_engine.
+    calculate_payroll مصممة أصلًا تتعامل معاها بافتراض إن الوعاء التأميني
+    منطقي بالنسبة للراتب (حالة مسموحة فعليًا هي وعاء *أقل*، مش أكبر —
+    راجع تعليق EmployeeCreate.insurance_base_salary)."""
+    if insurance_base_salary is not None and basic_salary is not None and insurance_base_salary > basic_salary:
+        raise ValueError(
+            "وعاء التأمين الاجتماعي لا يمكن أن يكون أكبر من الراتب الأساسي"
+        )
+
+
 def update_employee(db: Session, employee_id: int, data: EmployeeUpdate, updated_by: Optional[int] = None) -> Employee:
     emp = get_employee_or_404(db, employee_id)
     changes = data.model_dump(exclude_unset=True)
+
+    effective_basic_salary = changes.get("basic_salary", emp.basic_salary)
+    effective_insurance_base_salary = (
+        changes["insurance_base_salary"] if "insurance_base_salary" in changes else emp.insurance_base_salary
+    )
+    _validate_insurance_base_salary(effective_insurance_base_salary, effective_basic_salary)
 
     # الراتب الأساسي تغيير حساس — لازم أثر واضح لمين غيّره وإمتى ومن كام لكام
     if "basic_salary" in changes and changes["basic_salary"] != emp.basic_salary:
@@ -748,8 +769,9 @@ def _post_payroll_journal(db: Session, run: "PayrollRun", user_id: int) -> None:
        create_advance_payment تحت اللي بيرحّلوا الطرف التاني (Dr 1180 وقت
        الصرف الفعلي)."""
     try:
-        from app.modules.finance.crud import get_account_by_code, create_journal_entry  # noqa: PLC0415
+        from app.modules.finance.crud import get_account_by_code  # noqa: PLC0415
         from app.modules.finance.schemas import JournalEntryCreate, JournalLineCreate  # noqa: PLC0415
+        from app.modules.finance.services import post_journal_entry  # noqa: PLC0415
     except ImportError:
         return  # Finance module not available
 
@@ -860,7 +882,15 @@ def _post_payroll_journal(db: Session, run: "PayrollRun", user_id: int) -> None:
     # استثناء هنا سيُفقد التغييرات (run.status = "approved") تلقائيًا.
     # لو الحسابات غير مهيّأة للفرع: FinancialConfigurationError → ValueError
     # في approve_payroll_run → 400 للواجهة (لا commit، لا approved run).
-    create_journal_entry(db, entry_data, user_id)
+    #
+    # ⚠️ مراجعة Codex 2026-08-30 (H-07): كان بينادي crud.create_journal_entry
+    # مباشرة (بلا فحص توازن) بدل services.post_journal_entry — القيد هنا
+    # **مش** متوازن بالبناء زي post_simple_revenue_journal (مبني من أعمدة
+    # run-level منفصلة: gross/tax/si/advance/net)، فحافة حقيقية زي صافي
+    # موظف اتصفّر بالحد الأدنى (net floor في hr_engine.calculate_payroll،
+    # REL-22) ممكن تكسر توازن المدين/الدائن بصمت. post_journal_entry
+    # بترفض بـValueError واضح بدل ما ترحّل قيد غير متوازن للدفاتر.
+    post_journal_entry(db, entry_data, user_id)
 
 
 # ── SalaryAdvance (wagdy.md H-01) ────────────────────────────────────────

@@ -147,6 +147,11 @@ _LIMITED_ROUTES: dict[tuple[str, str], tuple[str, int, int]] = {
     ("POST", "/api/v1/public/alerts"): ("public", 20, 60),
     ("POST", "/api/v1/public/guest-requests"): ("public", 20, 60),
     ("POST", "/api/v1/public/guest-sessions"): ("public", 30, 60),
+    # تقييم ضيف (survey link) — عام بدون auth (JWT token بس). مراجعة Codex
+    # 2026-08-30 (M-03): كان بدون أي حد أقصى خالص — أضيق من التصفح العادي
+    # (20 مش 30) لأنه إجراء كتابة (مش قراءة قائمة)، ونفس نطاق "public" زي
+    # /public/alerts.
+    ("POST", "/api/v1/analytics/reviews/submit"): ("public", 20, 60),
     ("GET",  "/api/v1/public/service-location"): ("public", 30, 60),
     ("GET",  "/api/v1/dining/public/service-menu"): ("public", 60, 60),
     # الشات بوت — أضيق من التصفح العادي (20 مش 30) لأنه نداء AI حقيقي بتكلفة

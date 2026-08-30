@@ -372,6 +372,43 @@ class TestPurchaseOrder:
         with pytest.raises(ValueError):
             services.receive_purchase_order(db, po.id, req, received_by=1)
 
+    def test_duplicate_item_id_in_same_request_is_aggregated_not_bypassed(
+        self, db, branch, product, warehouse,
+    ):
+        """مراجعة Codex 2026-08-30 (H-03): كل سطر كان بيتحقق من `remaining`
+        بمفرده — طلب فيه سطرين بنفس item_id (60+60 لصنف متبقيه 100 بس)
+        كان كل سطر يعدّي التحقق لوحده رغم إن مجموعهم (120) بيتخطى المطلوب
+        فعليًا. دلوقتي الكميات بتتجمّع بـitem_id قبل أي تحقق."""
+        from app.modules.inventory.schemas import (
+            PurchaseOrderCreate, PurchaseOrderItemCreate, ReceiveItemsRequest,
+        )
+        _seed_purchase_accounts(db, branch)
+
+        po_data = PurchaseOrderCreate(
+            branch_id=branch.id, supplier_name="مورد",
+            ordered_at=date.today(),
+            items=[PurchaseOrderItemCreate(
+                product_id=product.id, ordered_qty=Decimal("100"), unit_cost=Decimal("18"),
+            )],
+        )
+        po = services.create_purchase_order(db, po_data)
+
+        req = ReceiveItemsRequest(
+            items=[
+                {"item_id": po.items[0].id, "received_qty": 60},
+                {"item_id": po.items[0].id, "received_qty": 60},
+            ],
+            warehouse_id=warehouse.id, received_at=date.today(),
+        )
+        with pytest.raises(ValueError, match="أكبر من المتبقي"):
+            services.receive_purchase_order(db, po.id, req, received_by=1)
+
+        # مفيش أي أثر جزئي — الرفض كان قبل أي تعديل على المخزون فعليًا
+        db.refresh(product)
+        assert product.current_stock == Decimal("0")
+        db.refresh(po)
+        assert po.items[0].received_qty == Decimal("0")
+
 
 class TestSupplierPayment:
     """2026-08-16 — سداد فعلي لمورد يقفل حلقة الذمم الدائنة (2200) اللي
