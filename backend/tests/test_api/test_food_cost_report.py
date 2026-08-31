@@ -412,7 +412,7 @@ class TestFoodCostReportHTTP:
         )
         assert resp.status_code == 403
 
-    def test_manager_gets_report_with_defaults(self, client: TestClient, db, manager_headers, waiter_headers):
+    def test_manager_gets_report_with_defaults(self, client: TestClient, db, manager_headers):
         branch = make_branch_committed(db)
         outlet = make_outlet_committed(db, branch)
         ensure_finance_accounts(db, branch)
@@ -423,7 +423,7 @@ class TestFoodCostReportHTTP:
             f"/api/v1/dining/outlets/{outlet.id}/orders",
             json={"outlet_id": outlet.id, "order_type": "takeaway", "guests_count": 1,
                   "items": [{"item_id": item.id, "quantity": 2}]},
-            headers=waiter_headers,
+            headers=manager_linked,
         ).json()
         paid = client.patch(
             f"/api/v1/dining/orders/{order['id']}/status",
@@ -456,20 +456,21 @@ class TestFoodCostReportHTTP:
         )
         assert resp.status_code == 400
 
-    def test_export_returns_valid_excel_for_manager(self, client: TestClient, db, manager_headers, waiter_headers):
+    def test_export_returns_valid_excel_for_manager(self, client: TestClient, db, manager_headers):
         """wagdy.md #16: تصدير Excel لتقرير تكلفة الطعام."""
         branch = make_branch_committed(db)
         outlet = make_outlet_committed(db, branch)
         item = make_item_committed(db, branch, outlet)
+        manager_linked = make_branch_linked_headers(db, branch)
         order = client.post(
             f"/api/v1/dining/outlets/{outlet.id}/orders",
             json={"outlet_id": outlet.id, "order_type": "takeaway", "guests_count": 1,
                   "items": [{"item_id": item.id, "quantity": 1}]},
-            headers=waiter_headers,
+            headers=manager_linked,
         ).json()
         client.patch(
             f"/api/v1/dining/orders/{order['id']}/status",
-            json={"status": "paid"}, headers=manager_headers,
+            json={"status": "paid"}, headers=manager_linked,
         )
 
         resp = client.get(
@@ -501,7 +502,7 @@ class TestFoodCostReportHTTP:
         )
         assert resp.status_code == 403
 
-    def test_cafe_outlet_manager_gets_report(self, client: TestClient, db, manager_headers, waiter_headers):
+    def test_cafe_outlet_manager_gets_report(self, client: TestClient, db, manager_headers):
         branch = make_branch_committed(db)
         outlet = make_outlet_committed(db, branch, outlet_type="cafe", revenue_account_code="4400")
         ensure_finance_accounts(db, branch, revenue_code="4400")
@@ -512,7 +513,7 @@ class TestFoodCostReportHTTP:
             f"/api/v1/dining/outlets/{outlet.id}/orders",
             json={"outlet_id": outlet.id, "order_type": "takeaway",
                   "items": [{"item_id": item.id, "quantity": 2}]},
-            headers=waiter_headers,
+            headers=manager_linked,
         ).json()
         paid = client.patch(
             f"/api/v1/dining/orders/{order['id']}/status",

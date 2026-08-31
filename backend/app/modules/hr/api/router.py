@@ -665,9 +665,21 @@ async def import_attendance_excel(
 ):
     """wagdy.md H-07 — رفع ملف حضور Excel (عمود موظف أول + عمود لكل يوم في
     الشهر، قيمة الخلية كود حالة زي p/v/u) وتحويله لسجلات AttendanceRecord
-    حقيقية دفعة واحدة. نفس نمط POST /timeshare/contracts/import-excel."""
+    حقيقية دفعة واحدة. نفس نمط POST /timeshare/contracts/import-excel.
+
+    مراجعة Codex 2026-08-31 (SEC-10): services.import_attendance_excel كان
+    عنده أصلاً حد 5 ميجا (zip bomb protection) — بس بعد قراءة الملف كامل في
+    الذاكرة، ومن غير أي فحص نوع محتوى قبلها. فحص content-type هنا (نفس نمط
+    dining.upload_item_image) بيرفض الملفات الغلط برسالة واضحة قبل ما تتقرأ
+    أصلاً، بدل استثناء openpyxl مبهم."""
     try:
         core_services.assert_branch_access(db, user, branch_id, "استيراد حضور من Excel")
+        ALLOWED_EXCEL_TYPES = {
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/octet-stream",  # بعض المتصفحات/الأدوات بتبعت النوع العام ده لملفات xlsx
+        }
+        if file.content_type not in ALLOWED_EXCEL_TYPES or not (file.filename or "").lower().endswith(".xlsx"):
+            raise ValueError("الملف لازم يكون Excel (.xlsx) صحيح")
         content = await file.read()
         return services.import_attendance_excel(db, branch_id, period_year, period_month, content)
     except PermissionError as exc:

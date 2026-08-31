@@ -912,6 +912,11 @@ class TestDiscount:
         item = make_item(db, branch, outlet, price=Decimal("50.00"))
         order = make_order(db, branch, outlet, item, quantity=1)
 
+        # SEC-07: المعتمِد لازم يكون عضو فعليًا في فرع الطلب.
+        from tests.conftest import assign_test_user_to_branch
+        assign_test_user_to_branch(db, manager.id, branch.id)
+        db.commit()
+
         updated = services.apply_order_discount(
             db, order.id, applied_by=1, acting_user_level=40,
             approver_user_id=manager.id, approver_pin="9876",

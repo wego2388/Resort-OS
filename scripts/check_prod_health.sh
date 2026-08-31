@@ -3,11 +3,22 @@
 # Intended for resort-os-healthcheck.service; safe to run manually.
 set -uo pipefail
 
-RESORT_PUBLIC_IP="${RESORT_PUBLIC_IP:-191.218.161.133}"
-RESORT_STAFF_URL="${RESORT_STAFF_URL:-https://${RESORT_PUBLIC_IP}/}"
-RESORT_MARKETING_URL="${RESORT_MARKETING_URL:-https://${RESORT_PUBLIC_IP}:8443/}"
+# مراجعة Codex 2026-08-31 (SEC-08): الافتراضي كان IP السيرفر القديم
+# (191.218.161.133) — الإنتاج الحقيقي دلوقتي domain-based (elkheima.com،
+# راجع docs/agent-workflow/handoffs/2026-08-30_REL-23-REL-24_production-
+# deploy_claude_handoff.md). RESORT_PUBLIC_IP يفضل قابل للتمرير لو محتاج
+# فحص IP-only bootstrap مؤقت قبل أي شهادة.
+RESORT_PUBLIC_IP="${RESORT_PUBLIC_IP:-}"
+if [[ -n "$RESORT_PUBLIC_IP" ]]; then
+  RESORT_STAFF_URL="${RESORT_STAFF_URL:-https://${RESORT_PUBLIC_IP}/}"
+  RESORT_MARKETING_URL="${RESORT_MARKETING_URL:-https://${RESORT_PUBLIC_IP}:8443/}"
+  RESORT_TLS_HOST="${RESORT_TLS_HOST:-$RESORT_PUBLIC_IP}"
+else
+  RESORT_STAFF_URL="${RESORT_STAFF_URL:-https://app.elkheima.com/}"
+  RESORT_MARKETING_URL="${RESORT_MARKETING_URL:-https://elkheima.com/}"
+  RESORT_TLS_HOST="${RESORT_TLS_HOST:-elkheima.com}"
+fi
 RESORT_OWNER_URL="${RESORT_OWNER_URL:-https://owner.elkheima.com/}"
-RESORT_TLS_HOST="${RESORT_TLS_HOST:-$RESORT_PUBLIC_IP}"
 RESORT_TLS_PORT="${RESORT_TLS_PORT:-443}"
 RESORT_BACKUP_DIR="${RESORT_BACKUP_DIR:-/var/backups/resort-os}"
 RESORT_BACKUP_MAX_AGE_MINUTES="${RESORT_BACKUP_MAX_AGE_MINUTES:-1560}"

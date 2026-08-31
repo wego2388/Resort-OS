@@ -42,7 +42,7 @@
 - Codex يقود التنفيذ والمراجعة النهائية.
 - الإنتاج domain-based: `elkheima.com` و`www.elkheima.com` للموقع،
   و`app.elkheima.com` للموظفين و`owner.elkheima.com` للمالك، على VPS
-  `191.218.161.133`.
+  `31.97.193.77` (راجع DEPLOYMENT.md لأي تفاصيل نشر).
 - Resort release الفعال `6f1f6e1` وMarketing release المحفوظ `088cab4`؛
   أي نشر لاحق يحتاج backup وrollback وhealth evidence جديدًا.
 - البيانات synthetic المعتمدة للعرض موجودة عبر importer محكوم وموسومة؛

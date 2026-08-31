@@ -31,7 +31,7 @@
 | المسار المحلي | `/home/wego/projects/resort-os/` |
 | الفرع الحالي | `claude/CX-02C-frontend-auth-bootstrap` |
 | آخر commit منشور | `fd105f6` (REL-09) |
-| الإنتاج | `https://app.elkheima.com` / VPS `191.218.161.133` |
+| الإنتاج | `https://app.elkheima.com` / VPS `31.97.193.77` |
 | SSH alias | `resort-os-vps` |
 | قائد التنفيذ | **Codex** — المراجع النهائي |
 | المالك | **Mohamed** — القرارات التجارية والـ Go/No-Go |

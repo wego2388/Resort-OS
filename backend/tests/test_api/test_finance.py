@@ -1555,6 +1555,9 @@ class TestCashMovement:
 
         manager = self._make_user(db, "cash-mgr@test.local", role="manager")
         core_services.set_pin(db, manager.id, "1122", created_by=manager.id)
+        # SEC-07: المعتمِد لازم يكون عضو فعليًا في فرع الوردية.
+        from tests.conftest import assign_test_user_to_branch
+        assign_test_user_to_branch(db, manager.id, branch.id)
         db.commit()
         cashier = self._make_user(db, "cash-mv-c3@test.local")
 
@@ -2490,6 +2493,9 @@ class TestExpense:
                            full_name="Expense Admin", role="admin", is_active=True)
         db.add(admin_user); db.commit()
         core_services.set_pin(db, admin_user.id, "1234", created_by=admin_user.id)
+        # SEC-07: المعتمِد لازم يكون عضو فعليًا في نفس الفرع.
+        from tests.conftest import assign_test_user_to_branch
+        assign_test_user_to_branch(db, admin_user.id, branch.id)
         db.commit()
 
         expense = services.record_expense(db, branch.id, ExpenseCreate(

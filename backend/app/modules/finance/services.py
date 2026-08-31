@@ -598,6 +598,7 @@ def record_cash_movement(
         db, "cash_movement",
         acting_user_level=acting_user_level,
         approver_user_id=data.approver_user_id, approver_pin=data.approver_pin,
+        target_branch_id=shift.branch_id,
     )
 
     movement = crud.create_cash_movement(
@@ -968,7 +969,7 @@ def close_shift(
         from app.modules.core.services import resolve_pin_approval  # noqa: PLC0415
         other_close_approved_by = resolve_pin_approval(
             db, acting_user_level, data.approver_user_id, data.approver_pin,
-            min_approver_level=60,
+            min_approver_level=60, target_branch_id=shift.branch_id,
         )
 
     # نحسب الكاش المتوقع (expected_cash) الأول — قبل أي تعديل فعلي على
@@ -1171,6 +1172,7 @@ def list_shift_invoices(
         db, "view_other_cashier_shift_invoices",
         acting_user_level=acting_level,
         approver_user_id=approver_user_id, approver_pin=approver_pin,
+        target_branch_id=shift.branch_id,
     )
 
     payments = crud.list_shift_payments_with_folio(db, shift_id)
@@ -1308,6 +1310,7 @@ def record_expense(
             db, "record_expense",
             acting_user_level=acting_user_level,
             approver_user_id=data.approver_user_id, approver_pin=data.approver_pin,
+            target_branch_id=branch_id,
         )
 
     validate_period_open(db, branch_id, data.expense_date)

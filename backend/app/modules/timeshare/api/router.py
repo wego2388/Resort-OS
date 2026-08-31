@@ -691,6 +691,16 @@ async def import_contracts_excel(
 ):
     _assert_timeshare_branch(db, user, branch_id, "استيراد عقود من Excel")
     try:
+        # مراجعة Codex 2026-08-31 (SEC-10): نفس فحص content-type المضاف لـ
+        # hr.import_attendance_excel — services.import_contracts_excel كان
+        # عنده أصلاً حد 5 ميجا (zip bomb protection) بس بعد قراءة الملف
+        # كامل ومن غير فحص نوع محتوى.
+        ALLOWED_EXCEL_TYPES = {
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/octet-stream",
+        }
+        if file.content_type not in ALLOWED_EXCEL_TYPES or not (file.filename or "").lower().endswith(".xlsx"):
+            raise ValueError("الملف لازم يكون Excel (.xlsx) صحيح")
         content = await file.read()
         return services.import_contracts_excel(db, branch_id, content, signed_by=user.id)
     except ValueError as exc:

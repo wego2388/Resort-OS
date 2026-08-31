@@ -186,7 +186,7 @@ class TestDiningRefundAfterPayment:
             f"/api/v1/dining/outlets/{outlet.id}/orders",
             json={"outlet_id": outlet.id, "order_type": "takeaway", "guests_count": 1,
                   "items": [{"item_id": item.id, "quantity": qty}]},
-            headers=headers_waiter,
+            headers=linked_waiter,
         ).json()
         client.patch(f"/api/v1/dining/orders/{order['id']}/status",
                      json={"status": "in_kitchen"}, headers=linked_waiter)
@@ -310,15 +310,16 @@ class TestDiningRefundAfterPayment:
         )
         assert resp.status_code == 403, resp.text
 
-    def test_refund_rejected_for_unpaid_order(self, client: TestClient, db, waiter_headers, manager_headers):
+    def test_refund_rejected_for_unpaid_order(self, client: TestClient, db):
         branch = make_branch_committed(db)
         outlet = make_outlet_committed(db, branch)
         item = make_item_committed(db, branch, outlet)
+        linked_waiter = make_branch_linked_headers(db, branch, "waiter")
         order = client.post(
             f"/api/v1/dining/outlets/{outlet.id}/orders",
             json={"outlet_id": outlet.id, "order_type": "takeaway", "guests_count": 1,
                   "items": [{"item_id": item.id, "quantity": 1}]},
-            headers=waiter_headers,
+            headers=linked_waiter,
         ).json()
         item_id = order["items"][0]["id"]
 
@@ -459,7 +460,7 @@ class TestDiningRefundAfterPayment:
         )
         assert reversal.shift_id == cashier_shift.id
 
-    def test_refund_reduces_room_folio_charge(self, client: TestClient, db, waiter_headers, cashier_headers, manager_headers):
+    def test_refund_reduces_room_folio_charge(self, client: TestClient, db):
         branch = make_branch_committed(db)
         outlet = make_outlet_committed(db, branch)
         make_finance_accounts(db, branch)
@@ -472,7 +473,7 @@ class TestDiningRefundAfterPayment:
             f"/api/v1/dining/outlets/{outlet.id}/orders",
             json={"outlet_id": outlet.id, "order_type": "takeaway", "guests_count": 1,
                   "items": [{"item_id": item.id, "quantity": 1}]},
-            headers=waiter_headers,
+            headers=linked_waiter,
         ).json()
         client.patch(f"/api/v1/dining/orders/{order['id']}/status",
                      json={"status": "in_kitchen"}, headers=linked_waiter)
@@ -497,9 +498,7 @@ class TestDiningRefundAfterPayment:
         db.refresh(folio)
         assert folio.total == Decimal("0.00")
 
-    def test_refund_does_not_touch_a_different_folio_charge_with_same_ref_order_id(
-        self, client: TestClient, db, waiter_headers, cashier_headers, manager_headers,
-    ):
+    def test_refund_does_not_touch_a_different_folio_charge_with_same_ref_order_id(self, client: TestClient, db):
         """Regression: _reduce_folio_charge_for_refund كانت بتفلتر بـ
         ref_order_id بس (في restaurant الأصلي) — رقم PK جدول Order، مش
         فريد عبر الموديولات (نفس الرقم ممكن يتكرر كـ ref_order_id على
@@ -511,13 +510,14 @@ class TestDiningRefundAfterPayment:
         make_finance_accounts(db, branch)
         room, folio = make_room_and_folio(db, branch)
         item = make_item_committed(db, branch, outlet)
+        linked_waiter = make_branch_linked_headers(db, branch, "waiter")
         linked_cashier = make_branch_linked_headers(db, branch, "cashier")
 
         order = client.post(
             f"/api/v1/dining/outlets/{outlet.id}/orders",
             json={"outlet_id": outlet.id, "order_type": "takeaway", "guests_count": 1,
                   "items": [{"item_id": item.id, "quantity": 1}]},
-            headers=waiter_headers,
+            headers=linked_waiter,
         ).json()
 
         # فوليو/شحنة تانية تمامًا بنفس ref_order_id بالظبط عمدًا، ومتعمولة
@@ -585,7 +585,7 @@ class TestDiningRefundAfterPayment:
             f"/api/v1/dining/outlets/{outlet.id}/orders",
             json={"outlet_id": outlet.id, "order_type": "dine_in", "guests_count": 1,
                   "items": [{"item_id": item.id, "quantity": 1}]},
-            headers=waiter_headers,
+            headers=linked_waiter,
         ).json()
         client.patch(f"/api/v1/dining/orders/{order['id']}/status",
                      json={"status": "in_kitchen"}, headers=linked_waiter)
@@ -655,7 +655,7 @@ class TestDiningRefundAfterPayment:
             f"/api/v1/dining/outlets/{outlet.id}/orders",
             json={"outlet_id": outlet.id, "order_type": "takeaway", "guests_count": 1,
                   "items": [{"item_id": item.id, "quantity": 1}]},
-            headers=waiter_headers,
+            headers=linked_waiter,
         ).json()
         client.patch(f"/api/v1/dining/orders/{order['id']}/status",
                      json={"status": "in_kitchen"}, headers=linked_waiter)
@@ -699,7 +699,7 @@ class TestDiningRefundAfterPayment:
             f"/api/v1/dining/outlets/{outlet.id}/orders",
             json={"outlet_id": outlet.id, "order_type": "dine_in", "guests_count": 1,
                   "items": [{"item_id": item.id, "quantity": 1}]},
-            headers=waiter_headers,
+            headers=linked_waiter,
         ).json()
         client.patch(f"/api/v1/dining/orders/{order['id']}/status",
                      json={"status": "in_kitchen"}, headers=linked_waiter)

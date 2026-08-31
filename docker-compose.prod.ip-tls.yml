@@ -1,5 +1,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
-#  Publicly trusted short-lived TLS for 191.218.161.133.
+#  Publicly trusted short-lived TLS for the VPS's public IP (bootstrap mode,
+#  before a real domain is pointed at the box — production now uses
+#  docker-compose.prod.domain.yml with elkheima.com instead).
 #
 #  This override is paired with deploy/systemd/resort-os-certbot-renew.* and
 #  the deploy hook under deploy/certbot/. Staff is served on 443; the

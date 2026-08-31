@@ -637,7 +637,14 @@ class AuthService(BaseService):
                 },
             )
         if "password" in data and data["password"]:
-            data["password_hash"] = get_password_hash(data.pop("password"))
+            # SEC-09 (2026-08-31): نفس بوابة validate_password_strength
+            # المستخدمة في كل نقاط تغيير الباسورد التانية — دفاع إضافي حتى
+            # لو المسار ده مالوش caller مؤكد حاليًا (راجع docstring فوق).
+            password = data.pop("password")
+            valid, msg = validate_password_strength(password)
+            if not valid:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, msg)
+            data["password_hash"] = get_password_hash(password)
         return self.repo.update(user_id, data)
 
     # ── Refresh tokens ────────────────────────────────────────────────────

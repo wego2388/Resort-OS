@@ -1,6 +1,25 @@
 # حالة المشروع الحالية — El Kheima Beach Resort OS
 
-**آخر تحديث:** 2026-08-30 — **نشر REL-23 + REL-24 على الإنتاج** (commit
+**آخر تحديث:** 2026-08-31 — **SEC-01→SEC-12: 11 finding من جولة مراجعة
+Codex الثانية** (بعد تحقق شخصي بـ4 وكلاء معزولين متوازيين قبل أي تنفيذ).
+أهمها: تسريب سجل التدقيق عبر الفروع (Core)، مدير فرع A كان يقدر PIN بتاعه
+يوافق على إجراءات في فرع B (`resolve_pin_approval` بلا تحقق فرع خالص —
+أثّر على 7 نقاط: خصم/إلغاء دايننج، حركة كاش، قفل وردية، سند مصروفات)،
+إنشاء طلبات دايننج عبر الفروع بدون تحقق، CVE حرجة في python-jose (JWT
+algorithm confusion) + ترقية fastapi/starlette/cryptography/python-
+multipart، تفعيل حقيقي لـbackup/health timers على السيرفر (كانا موثّقين
+بس غير مثبّتين — نفس فجوة certbot المكتشفة يوم 30 أغسطس)، باسورد عربي
+حقيقي كان بيكسر التسجيل (bcrypt 72-byte crash)، ومراجع IP سيرفر قديم في
+سكربتات وظيفية ووثائق حية. **مؤجَّل عمدًا لآخر الدفعة (بطلب Mohamed
+الصريح)**: تفعيل قناة تنبيهات حقيقية (رقم 2 الأصلي — WhatsApp/Sentry/
+Email fail-open حاليًا). **بوابة تحقق كاملة**: pytest الكامل صفر فشل،
+16 ملف Postgres concurrency (56 عدّوا/9 فشلوا pre-existing مؤكَّد بـgit
+blame، غير مرتبطين بالدفعة دي)، frontend type-check+build+106 اختبار
+نظيفين، pip-audit وpnpm audit جديدين. Backup/restore drill حي حقيقي على
+السيرفر. تفاصيل كاملة:
+`docs/agent-workflow/handoffs/2026-08-31_SEC-fixes_codex-review-round2_claude_handoff.md`
+
+**السابق:** 2026-08-30 — **نشر REL-23 + REL-24 على الإنتاج** (commit
 `0e55ac038a8603d2fa4f24e5353a2c9a0288fb45`) على سيرفر VPS جديد
 (`31.97.193.77`، بعد ما الـDNS الحقيقي اتحوّل عليه). Deploy كامل باتباع
 `DEPLOYMENT.md` §5 حرفيًا (release artifact + rollback point + preflight +

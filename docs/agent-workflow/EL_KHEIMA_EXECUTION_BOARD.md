@@ -124,7 +124,8 @@ CODEX-REVIEW-01 فوق) — بعدها UAT-01 وGo/No-Go النهائي
 
 | البند | النتيجة |
 |---|---|
-| Host/IP | `resort-os-prod` / `191.218.161.133` |
+| Host/IP | `resort-os-prod` / `31.97.193.77` (راجع
+docs/agent-workflow/handoffs/2026-08-30_REL-23-REL-24_production-deploy_claude_handoff.md) |
 | Public site | `https://elkheima.com` و`https://www.elkheima.com` |
 | Staff app | `https://app.elkheima.com` |
 | Owner app | `https://owner.elkheima.com` |

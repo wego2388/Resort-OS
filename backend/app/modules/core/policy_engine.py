@@ -74,11 +74,16 @@ def require_approval(
     acting_user_level: int,
     approver_user_id: Optional[int],
     approver_pin: Optional[str],
+    target_branch_id: int,
 ) -> Optional[int]:
     """يتحقق من موافقة PIN لإجراء حسّاس معروف في SENSITIVE_ACTIONS، بقراءة
     min_approver_level من الكتالوج بدل ما الـ caller يقفله inline. بيرجّع
     ``approved_by`` زي resolve_pin_approval بالظبط (None لو المنفّذ نفسه
-    كان مؤهّل أصلاً)."""
+    كان مؤهّل أصلاً).
+
+    ``target_branch_id`` إجباري (مراجعة Codex 2026-08-31، SEC-07) —
+    core.services.resolve_pin_approval بقى بيتحقق إن المعتمِد فعلاً مصرح
+    له بالفرع ده، مش بس دوره وPIN بتاعه."""
     policy = SENSITIVE_ACTIONS.get(action_key)
     if not policy:
         raise ValueError(f"إجراء غير معروف في Policy Engine: {action_key}")
@@ -88,6 +93,7 @@ def require_approval(
     return core_services.resolve_pin_approval(
         db, acting_user_level, approver_user_id, approver_pin,
         min_approver_level=policy.min_approver_level,
+        target_branch_id=target_branch_id,
     )
 
 

@@ -400,7 +400,7 @@ def upsert_setting(
 )
 def list_audit_logs(
     db: DbDep,
-    _user=Depends(get_manager_user),
+    user=Depends(get_manager_user),
     branch_id: Optional[int] = Query(None),
     entity_type: Optional[str] = Query(None),
     entity_id: Optional[int] = Query(None),
@@ -411,6 +411,14 @@ def list_audit_logs(
     page: int = Query(1, ge=1),
     size: int = Query(50, ge=1, le=200),
 ):
+    # مراجعة Codex 2026-08-31 (SEC-01): branch_id كان اختياري بدون أي
+    # فرض فعلي — أي مدير (مش super_admin بس) كان يقدر يشوف سجل تدقيق كل
+    # الفروع (موافقات PIN، إلغاءات، تغييرات رواتب) بمجرد حذف الفلتر من
+    # الطلب. نفس نمط _require_branch_or_global_read الموجود فعلاً في
+    # الملف ده لإعدادات الفرع (Gate 2B3A): branch_id فاضي = عرض عام،
+    # متاح لـsuper_admin بس؛ branch_id محدد = لازم يطابق فرع الجلسة
+    # الفعلي عبر assert_branch_access.
+    _require_branch_or_global_read(db, user, branch_id, "عرض سجل التدقيق")
     skip = (page - 1) * size
     items, total = crud.list_audit_logs(
         db,

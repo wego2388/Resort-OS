@@ -179,10 +179,11 @@ class TestDiningMenuHTTP:
 
 
 class TestDiningOrderHTTP:
-    def test_create_order_via_http(self, client: TestClient, db, waiter_headers):
+    def test_create_order_via_http(self, client: TestClient, db):
         branch = make_branch_committed(db)
         outlet = make_outlet_committed(db, branch)
         item = make_item_committed(db, branch, outlet)
+        waiter = make_branch_linked_headers(db, branch)
 
         resp = client.post(
             f"/api/v1/dining/outlets/{outlet.id}/orders",
@@ -192,7 +193,7 @@ class TestDiningOrderHTTP:
                 "guests_count": 1,
                 "items": [{"item_id": item.id, "quantity": 2}],
             },
-            headers=waiter_headers,
+            headers=waiter,
         )
         assert resp.status_code == 201, resp.text
         body = resp.json()
@@ -201,7 +202,7 @@ class TestDiningOrderHTTP:
         assert len(body["items"]) == 1
         assert Decimal(str(body["subtotal"])) == Decimal("160.00")
 
-    def test_takeaway_service_charge_override_applies(self, client: TestClient, db, waiter_headers):
+    def test_takeaway_service_charge_override_applies(self, client: TestClient, db):
         """2026-07-16، بحث مقارنة Click القديم: takeaway_service_charge_pct
         override على المنفذ — لو صفر، مفيش رسم خدمة على طلبات التيك أواي
         بس، النسبة العامة (12%) تفضل سارية على dine_in/باقي القنوات."""
@@ -210,12 +211,13 @@ class TestDiningOrderHTTP:
         outlet.takeaway_service_charge_pct = Decimal("0")
         db.commit()
         item = make_item_committed(db, branch, outlet)
+        waiter = make_branch_linked_headers(db, branch)
 
         resp = client.post(
             f"/api/v1/dining/outlets/{outlet.id}/orders",
             json={"outlet_id": outlet.id, "order_type": "takeaway",
                   "items": [{"item_id": item.id, "quantity": 2}]},
-            headers=waiter_headers,
+            headers=waiter,
         )
         assert resp.status_code == 201, resp.text
         body = resp.json()
@@ -224,7 +226,7 @@ class TestDiningOrderHTTP:
         assert Decimal(str(body["vat_amount"])) == Decimal("22.40")
         assert Decimal(str(body["total"])) == Decimal("182.40")
 
-    def test_vat_and_service_charge_settings_are_live(self, client: TestClient, db, waiter_headers):
+    def test_vat_and_service_charge_settings_are_live(self, client: TestClient, db):
         """2026-08-03: كان قبل كده settings.VAT_PERCENTAGE/SERVICE_CHARGE_
         PERCENTAGE (env) بيتقروا مباشرة — تعديل مدير للنسبة من شاشة
         الإعدادات مالوش أي أثر فعلي على أي طلب حقيقي. دلوقتي الفرع اللي
@@ -237,12 +239,13 @@ class TestDiningOrderHTTP:
         upsert_setting(db, "service_charge_percentage", "5", branch_id=branch.id)
         outlet = make_outlet_committed(db, branch)
         item = make_item_committed(db, branch, outlet)
+        waiter = make_branch_linked_headers(db, branch)
 
         resp = client.post(
             f"/api/v1/dining/outlets/{outlet.id}/orders",
             json={"outlet_id": outlet.id, "order_type": "dine_in",
                   "items": [{"item_id": item.id, "quantity": 2}]},
-            headers=waiter_headers,
+            headers=waiter,
         )
         assert resp.status_code == 201, resp.text
         body = resp.json()
@@ -252,9 +255,7 @@ class TestDiningOrderHTTP:
         assert Decimal(str(body["vat_amount"])) == Decimal("16.00")
         assert Decimal(str(body["service_charge"])) == Decimal("8.00")
 
-    def test_delivery_fee_added_to_total_and_survives_item_void(
-        self, client: TestClient, db, waiter_headers, manager_headers,
-    ):
+    def test_delivery_fee_added_to_total_and_survives_item_void(self, client: TestClient, db):
         """رسم توصيل ثابت (delivery_fee) بيتضاف للـ total — ولازم يفضل زي
         ما هو حتى بعد إلغاء صنف (رسم ثابت مش نسبة، مش لازم يتصفّر)."""
         branch = make_branch_committed(db)
@@ -262,12 +263,13 @@ class TestDiningOrderHTTP:
         outlet.delivery_fee = Decimal("15.00")
         db.commit()
         item = make_item_committed(db, branch, outlet)
+        waiter = make_branch_linked_headers(db, branch)
 
         order_resp = client.post(
             f"/api/v1/dining/outlets/{outlet.id}/orders",
             json={"outlet_id": outlet.id, "order_type": "delivery",
                   "items": [{"item_id": item.id, "quantity": 2}]},
-            headers=waiter_headers,
+            headers=waiter,
         )
         assert order_resp.status_code == 201, order_resp.text
         order = order_resp.json()
@@ -308,16 +310,17 @@ class TestDiningOrderHTTP:
         )
         assert resp.status_code == 400
 
-    def test_void_item_requires_cashier_or_above(self, client: TestClient, db, waiter_headers, manager_headers):
+    def test_void_item_requires_cashier_or_above(self, client: TestClient, db):
         branch = make_branch_committed(db)
         outlet = make_outlet_committed(db, branch)
         item = make_item_committed(db, branch, outlet)
+        waiter = make_branch_linked_headers(db, branch)
 
         order_resp = client.post(
             f"/api/v1/dining/outlets/{outlet.id}/orders",
             json={"outlet_id": outlet.id, "order_type": "takeaway",
                   "items": [{"item_id": item.id, "quantity": 1}]},
-            headers=waiter_headers,
+            headers=waiter,
         )
         order = order_resp.json()
         item_id = order["items"][0]["id"]
@@ -327,7 +330,7 @@ class TestDiningOrderHTTP:
         forbidden = client.patch(
             f"/api/v1/dining/orders/{order['id']}/items/{item_id}/void",
             json={"reason": "طلب غلط بالخطأ من النادل"},
-            headers=waiter_headers,
+            headers=waiter,
         )
         assert forbidden.status_code == 403
 
@@ -341,7 +344,7 @@ class TestDiningOrderHTTP:
         )
         assert allowed.status_code == 200, allowed.text
 
-    def test_in_kitchen_transition_broadcasts_to_dining_kds_websocket(self, client: TestClient, db, waiter_headers):
+    def test_in_kitchen_transition_broadcasts_to_dining_kds_websocket(self, client: TestClient, db):
         from unittest.mock import AsyncMock, patch
         branch = make_branch_committed(db)
         outlet = make_outlet_committed(db, branch)
@@ -352,7 +355,7 @@ class TestDiningOrderHTTP:
             f"/api/v1/dining/outlets/{outlet.id}/orders",
             json={"outlet_id": outlet.id, "order_type": "takeaway",
                   "items": [{"item_id": item.id, "quantity": 1}]},
-            headers=waiter_headers,
+            headers=linked_headers,
         )
         order_id = order_resp.json()["id"]
 
@@ -371,7 +374,7 @@ class TestDiningOrderHTTP:
         assert branch_arg == str(branch.id)
         assert payload_arg["type"] == "tickets_updated"
 
-    def test_kds_websocket_client_receives_broadcast(self, client: TestClient, db, waiter_headers):
+    def test_kds_websocket_client_receives_broadcast(self, client: TestClient, db):
         branch = make_branch_committed(db)
         outlet = make_outlet_committed(db, branch)
         item = make_item_committed(db, branch, outlet, station="grill")
@@ -381,7 +384,7 @@ class TestDiningOrderHTTP:
             f"/api/v1/dining/outlets/{outlet.id}/orders",
             json={"outlet_id": outlet.id, "order_type": "takeaway",
                   "items": [{"item_id": item.id, "quantity": 1}]},
-            headers=waiter_headers,
+            headers=linked_headers,
         )
         order_id = order_resp.json()["id"]
 
@@ -395,7 +398,7 @@ class TestDiningOrderHTTP:
             assert message["type"] == "tickets_updated"
             assert message["order_id"] == order_id
 
-    def test_kitchen_tickets_route_to_correct_station(self, client: TestClient, db, waiter_headers):
+    def test_kitchen_tickets_route_to_correct_station(self, client: TestClient, db):
         branch = make_branch_committed(db)
         outlet = make_outlet_committed(db, branch)
         item = make_item_committed(db, branch, outlet, station="grill")
@@ -405,7 +408,7 @@ class TestDiningOrderHTTP:
             f"/api/v1/dining/outlets/{outlet.id}/orders",
             json={"outlet_id": outlet.id, "order_type": "takeaway",
                   "items": [{"item_id": item.id, "quantity": 1}]},
-            headers=waiter_headers,
+            headers=linked_headers,
         )
         order_id = order_resp.json()["id"]
         client.patch(f"/api/v1/dining/orders/{order_id}/status",
@@ -438,13 +441,12 @@ class TestDiningDiscountHTTP:
         )
         return order_resp.json()["id"]
 
-    def test_cashier_apply_discount_without_pin_rejected(
-        self, client: TestClient, db, waiter_headers, cashier_headers,
-    ):
+    def test_cashier_apply_discount_without_pin_rejected(self, client: TestClient, db):
         branch = make_branch_committed(db)
         outlet = make_outlet_committed(db, branch)
         item = make_item_committed(db, branch, outlet)
-        order_id = self._order_id(client, db, waiter_headers, branch, outlet, item)
+        waiter = make_branch_linked_headers(db, branch)
+        order_id = self._order_id(client, db, waiter, branch, outlet, item)
 
         # High 5: discount بقى بيفرض assert_branch_access — كاشير مربوط بالفرع
         # عشان يعدّي فحص الفرع ويوصل لفحص الـ PIN الحقيقي (400).
@@ -455,13 +457,12 @@ class TestDiningDiscountHTTP:
         assert resp.status_code == 400
         assert "موافقة" in resp.json()["detail"]
 
-    def test_manager_apply_discount_self_qualified(
-        self, client: TestClient, db, waiter_headers, manager_headers,
-    ):
+    def test_manager_apply_discount_self_qualified(self, client: TestClient, db):
         branch = make_branch_committed(db)
         outlet = make_outlet_committed(db, branch)
         item = make_item_committed(db, branch, outlet)
-        order_id = self._order_id(client, db, waiter_headers, branch, outlet, item)
+        waiter = make_branch_linked_headers(db, branch)
+        order_id = self._order_id(client, db, waiter, branch, outlet, item)
 
         linked_manager = make_branch_linked_headers(db, branch, "manager")
         resp = client.post(
@@ -469,14 +470,24 @@ class TestDiningDiscountHTTP:
         )
         assert resp.status_code == 200, resp.text
 
-    def test_cashier_apply_discount_with_valid_manager_pin_succeeds(
-        self, client: TestClient, db, waiter_headers, cashier_headers, manager_headers,
-    ):
-        manager_id = _set_shift_pin(db, "manager@test.local", "5566")
+    def test_cashier_apply_discount_with_valid_manager_pin_succeeds(self, client: TestClient, db):
+        # SEC-07: المعتمِد لازم يكون عضو فعليًا في فرع الطلب — مدير معزول
+        # مربوط بهذا الفرع تحديدًا، مش manager@test.local المشتركة (اللي
+        # تستات تانية بتربطها بفروع مختلفة تمامًا، وUserBranchMembership
+        # عضوية واحدة بس لكل مستخدم).
         branch = make_branch_committed(db)
         outlet = make_outlet_committed(db, branch)
         item = make_item_committed(db, branch, outlet)
-        order_id = self._order_id(client, db, waiter_headers, branch, outlet, item)
+        waiter = make_branch_linked_headers(db, branch)
+        order_id = self._order_id(client, db, waiter, branch, outlet, item)
+
+        from tests.conftest import _create_test_user, assign_test_user_to_branch
+        from app.modules.core import services as core_services
+        manager_id = _create_test_user(f"disc-mgr-{uuid.uuid4().hex[:8]}@test.local", "manager")
+        assign_test_user_to_branch(db, manager_id, branch.id)
+        db.commit()
+        core_services.set_pin(db, manager_id, "5566", created_by=manager_id)
+        db.commit()
 
         linked_cashier = make_branch_linked_headers(db, branch, "cashier")
         resp = client.post(
@@ -486,14 +497,13 @@ class TestDiningDiscountHTTP:
         )
         assert resp.status_code == 200, resp.text
 
-    def test_cashier_apply_discount_wrong_pin_rejected(
-        self, client: TestClient, db, waiter_headers, cashier_headers, manager_headers,
-    ):
+    def test_cashier_apply_discount_wrong_pin_rejected(self, client: TestClient, db, manager_headers):
         manager_id = _set_shift_pin(db, "manager@test.local", "5566")
         branch = make_branch_committed(db)
         outlet = make_outlet_committed(db, branch)
         item = make_item_committed(db, branch, outlet)
-        order_id = self._order_id(client, db, waiter_headers, branch, outlet, item)
+        waiter = make_branch_linked_headers(db, branch)
+        order_id = self._order_id(client, db, waiter, branch, outlet, item)
 
         linked_cashier = make_branch_linked_headers(db, branch, "cashier")
         resp = client.post(
@@ -509,26 +519,26 @@ class TestDiningKitchenItemBumpHTTP:
     السيناريوهات بالظبط، على PATCH /dining/orders/{order_id}/items/{item_id}/status
     (فجوة تكافؤ أُغلقت قبل حذف restaurant/cafe — DINING_CUTOVER_PLAN.md Batch 1)."""
 
-    def _order_in_kitchen(self, client, db, waiter_headers, branch, outlet, items):
+    def _order_in_kitchen(self, client, db, branch, outlet, items):
+        # SEC-06 + Gate 1B: الإنشاء والـ status transition الاتنين بيفرضوا
+        # assert_branch_access — نادل واحد مربوط فعليًا بالفرع ده كفاية للاتنين.
+        linked_headers = make_branch_linked_headers(db, branch)
         order = client.post(
             f"/api/v1/dining/outlets/{outlet.id}/orders",
             json={"outlet_id": outlet.id, "order_type": "takeaway", "guests_count": 1,
                   "items": [{"item_id": i.id, "quantity": 1} for i in items]},
-            headers=waiter_headers,
+            headers=linked_headers,
         ).json()
-        # Gate 1B: PATCH .../status بقى بيفرض assert_branch_access — waiter_headers
-        # المشترك بلا Employee/فرع، فمحتاج مستخدم Employee-linked للفرع ده تحديدًا.
-        linked_headers = make_branch_linked_headers(db, branch)
         resp = client.patch(f"/api/v1/dining/orders/{order['id']}/status",
                              json={"status": "in_kitchen"}, headers=linked_headers)
         assert resp.status_code == 200, resp.text
         return order, linked_headers
 
-    def test_bump_single_item_updates_status_and_ticket(self, client: TestClient, db, waiter_headers, manager_headers):
+    def test_bump_single_item_updates_status_and_ticket(self, client: TestClient, db):
         branch = make_branch_committed(db)
         outlet = make_outlet_committed(db, branch)
         item = make_item_committed(db, branch, outlet)
-        order, linked_headers = self._order_in_kitchen(client, db, waiter_headers, branch, outlet, [item])
+        order, linked_headers = self._order_in_kitchen(client, db, branch, outlet, [item])
         item_id = order["items"][0]["id"]
 
         resp = client.patch(
@@ -548,13 +558,13 @@ class TestDiningKitchenItemBumpHTTP:
         ).json()
         assert not any(t["order_id"] == order["id"] for t in tickets)  # مش pending/in_progress بقى
 
-    def test_ticket_stays_pending_until_all_items_bumped(self, client: TestClient, db, waiter_headers, manager_headers):
+    def test_ticket_stays_pending_until_all_items_bumped(self, client: TestClient, db):
         branch = make_branch_committed(db)
         outlet = make_outlet_committed(db, branch)
         hot_item = make_item_committed(db, branch, outlet, station="hot")
         grill_item = make_item_committed(db, branch, outlet, station="hot")
 
-        order, linked_headers = self._order_in_kitchen(client, db, waiter_headers, branch, outlet, [hot_item, grill_item])
+        order, linked_headers = self._order_in_kitchen(client, db, branch, outlet, [hot_item, grill_item])
         first_item_id = order["items"][0]["id"]
 
         client.patch(
@@ -572,11 +582,11 @@ class TestDiningKitchenItemBumpHTTP:
         item_statuses = {i["order_item_id"]: i["status"] for i in ticket["items_snapshot"]}
         assert item_statuses[first_item_id] == "ready"
 
-    def test_bump_item_not_found_returns_400(self, client: TestClient, db, waiter_headers):
+    def test_bump_item_not_found_returns_400(self, client: TestClient, db):
         branch = make_branch_committed(db)
         outlet = make_outlet_committed(db, branch)
         item = make_item_committed(db, branch, outlet)
-        order, linked_headers = self._order_in_kitchen(client, db, waiter_headers, branch, outlet, [item])
+        order, linked_headers = self._order_in_kitchen(client, db, branch, outlet, [item])
 
         resp = client.patch(
             f"/api/v1/dining/orders/{order['id']}/items/999999/status",
@@ -585,11 +595,11 @@ class TestDiningKitchenItemBumpHTTP:
         )
         assert resp.status_code == 400
 
-    def test_bump_invalid_status_rejected(self, client: TestClient, db, waiter_headers):
+    def test_bump_invalid_status_rejected(self, client: TestClient, db):
         branch = make_branch_committed(db)
         outlet = make_outlet_committed(db, branch)
         item = make_item_committed(db, branch, outlet)
-        order, linked_headers = self._order_in_kitchen(client, db, waiter_headers, branch, outlet, [item])
+        order, linked_headers = self._order_in_kitchen(client, db, branch, outlet, [item])
         item_id = order["items"][0]["id"]
 
         resp = client.patch(
@@ -599,11 +609,11 @@ class TestDiningKitchenItemBumpHTTP:
         )
         assert resp.status_code == 422
 
-    def test_bump_cancelled_item_rejected(self, client: TestClient, db, waiter_headers, manager_headers):
+    def test_bump_cancelled_item_rejected(self, client: TestClient, db):
         branch = make_branch_committed(db)
         outlet = make_outlet_committed(db, branch)
         item = make_item_committed(db, branch, outlet)
-        order, linked_headers = self._order_in_kitchen(client, db, waiter_headers, branch, outlet, [item])
+        order, linked_headers = self._order_in_kitchen(client, db, branch, outlet, [item])
         item_id = order["items"][0]["id"]
 
         linked_manager = make_branch_linked_headers(db, branch, "manager")
@@ -617,11 +627,11 @@ class TestDiningKitchenItemBumpHTTP:
         )
         assert resp.status_code == 400
 
-    def test_confirming_whole_ticket_bumps_remaining_items_to_ready(self, client: TestClient, db, waiter_headers, manager_headers):
+    def test_confirming_whole_ticket_bumps_remaining_items_to_ready(self, client: TestClient, db):
         branch = make_branch_committed(db)
         outlet = make_outlet_committed(db, branch)
         item = make_item_committed(db, branch, outlet)
-        order, linked_headers = self._order_in_kitchen(client, db, waiter_headers, branch, outlet, [item])
+        order, linked_headers = self._order_in_kitchen(client, db, branch, outlet, [item])
 
         tickets = client.get(
             "/api/v1/dining/kitchen/tickets",
@@ -646,22 +656,23 @@ class TestDiningTableTransferHTTP:
     السيناريوهات بالظبط، على PATCH /dining/orders/{order_id}/transfer
     (فجوة تكافؤ أُغلقت قبل حذف restaurant/cafe — DINING_CUTOVER_PLAN.md Batch 1)."""
 
-    def test_transfer_order_via_http(self, client: TestClient, db, waiter_headers):
+    def test_transfer_order_via_http(self, client: TestClient, db):
         branch = make_branch_committed(db)
         outlet = make_outlet_committed(db, branch)
         item = make_item_committed(db, branch, outlet)
         old_table = make_table_committed(db, branch, outlet)
         new_table = make_table_committed(db, branch, outlet)
 
+        # High 5 + SEC-06: الإنشاء والـ transfer الاتنين بيفرضوا
+        # assert_branch_access — نادل واحد مربوط فعليًا بالفرع ده كفاية.
+        linked_waiter = make_branch_linked_headers(db, branch, "waiter")
         order = client.post(
             f"/api/v1/dining/outlets/{outlet.id}/orders",
             json={"outlet_id": outlet.id, "table_id": old_table.id, "order_type": "dine_in",
                   "guests_count": 2, "items": [{"item_id": item.id, "quantity": 1}]},
-            headers=waiter_headers,
+            headers=linked_waiter,
         ).json()
 
-        # High 5: transfer بقى بيفرض assert_branch_access — نادل مربوط بالفرع.
-        linked_waiter = make_branch_linked_headers(db, branch, "waiter")
         resp = client.patch(
             f"/api/v1/dining/orders/{order['id']}/transfer",
             json={"table_id": new_table.id},
@@ -671,32 +682,32 @@ class TestDiningTableTransferHTTP:
         assert resp.json()["table_id"] == new_table.id
 
         tables = client.get(
-            f"/api/v1/dining/branches/{branch.id}/tables", headers=waiter_headers,
+            f"/api/v1/dining/branches/{branch.id}/tables", headers=linked_waiter,
         ).json()
         assert next(t for t in tables if t["id"] == old_table.id)["status"] == "available"
         assert next(t for t in tables if t["id"] == new_table.id)["status"] == "occupied"
 
-    def test_transfer_to_occupied_table_returns_400(self, client: TestClient, db, waiter_headers):
+    def test_transfer_to_occupied_table_returns_400(self, client: TestClient, db):
         branch = make_branch_committed(db)
         outlet = make_outlet_committed(db, branch)
         item = make_item_committed(db, branch, outlet)
         table_a = make_table_committed(db, branch, outlet)
         table_b = make_table_committed(db, branch, outlet)
+        linked_waiter = make_branch_linked_headers(db, branch, "waiter")
 
         order_a = client.post(
             f"/api/v1/dining/outlets/{outlet.id}/orders",
             json={"outlet_id": outlet.id, "table_id": table_a.id, "order_type": "dine_in",
                   "guests_count": 2, "items": [{"item_id": item.id, "quantity": 1}]},
-            headers=waiter_headers,
+            headers=linked_waiter,
         ).json()
         client.post(
             f"/api/v1/dining/outlets/{outlet.id}/orders",
             json={"outlet_id": outlet.id, "table_id": table_b.id, "order_type": "dine_in",
                   "guests_count": 2, "items": [{"item_id": item.id, "quantity": 1}]},
-            headers=waiter_headers,
+            headers=linked_waiter,
         )
 
-        linked_waiter = make_branch_linked_headers(db, branch, "waiter")
         resp = client.patch(
             f"/api/v1/dining/orders/{order_a['id']}/transfer",
             json={"table_id": table_b.id},
@@ -722,18 +733,23 @@ class TestDiningWaiterTransferHTTP:
             headers=creator_headers,
         ).json()
 
-    def test_transfer_waiter_reassigns_audits_and_keeps_creator(
-        self, client: TestClient, db, waiter_headers, manager_headers,
-    ):
-        from tests.conftest import _create_test_user
+    def test_transfer_waiter_reassigns_audits_and_keeps_creator(self, client: TestClient, db):
+        from tests.conftest import _create_test_user, _make_token, assign_test_user_to_branch
         from app.modules.dining.models import DiningOrder
         from app.modules.core.crud import list_audit_logs
 
-        creator_id = _create_test_user("waiter@test.local", "waiter")
         branch = make_branch_committed(db)
         outlet = make_outlet_committed(db, branch)
         item = make_item_committed(db, branch, outlet)
-        order = self._open_order(client, db, outlet, item, waiter_headers)
+
+        # SEC-06: الإنشاء بقى بيفرض assert_branch_access — لازم creator
+        # نفسه مربوط بالفرع ده تحديدًا عشان الـidentity check (created_by)
+        # تحت يفضل معناه صح.
+        creator_id = _create_test_user("waiter@test.local", "waiter")
+        assign_test_user_to_branch(db, creator_id, branch.id)
+        db.commit()
+        creator_headers = {"Authorization": f"Bearer {_make_token('waiter@test.local', branch_id=branch.id)}"}
+        order = self._open_order(client, db, outlet, item, creator_headers)
 
         new_waiter_id = _create_test_user(f"nw-{uuid.uuid4().hex[:8]}@test.local", "waiter")
         linked_manager = make_branch_linked_headers(db, branch, "manager")
@@ -753,14 +769,13 @@ class TestDiningWaiterTransferHTTP:
         logs, _ = list_audit_logs(db, branch_id=branch.id, entity_type="dining_order")
         assert any(l.action == "transfer_waiter" and l.entity_id == order["id"] for l in logs)
 
-    def test_transfer_waiter_requires_reason(
-        self, client: TestClient, db, waiter_headers, manager_headers,
-    ):
+    def test_transfer_waiter_requires_reason(self, client: TestClient, db):
         from tests.conftest import _create_test_user
         branch = make_branch_committed(db)
         outlet = make_outlet_committed(db, branch)
         item = make_item_committed(db, branch, outlet)
-        order = self._open_order(client, db, outlet, item, waiter_headers)
+        linked_waiter = make_branch_linked_headers(db, branch, "waiter")
+        order = self._open_order(client, db, outlet, item, linked_waiter)
         new_waiter_id = _create_test_user(f"nw2-{uuid.uuid4().hex[:8]}@test.local", "waiter")
         linked_manager = make_branch_linked_headers(db, branch, "manager")
         resp = client.patch(
@@ -770,17 +785,16 @@ class TestDiningWaiterTransferHTTP:
         )
         assert resp.status_code == 422
 
-    def test_transfer_waiter_requires_manager(
-        self, client: TestClient, db, waiter_headers,
-    ):
+    def test_transfer_waiter_requires_manager(self, client: TestClient, db):
         branch = make_branch_committed(db)
         outlet = make_outlet_committed(db, branch)
         item = make_item_committed(db, branch, outlet)
-        order = self._open_order(client, db, outlet, item, waiter_headers)
+        linked_waiter = make_branch_linked_headers(db, branch, "waiter")
+        order = self._open_order(client, db, outlet, item, linked_waiter)
         resp = client.patch(
             f"/api/v1/dining/orders/{order['id']}/waiter",
             json={"new_waiter_id": 1, "reason": "محاولة نادل عادي"},
-            headers=waiter_headers,
+            headers=linked_waiter,
         )
         assert resp.status_code == 403
 
@@ -920,10 +934,15 @@ class TestSplitBillHTTP:
 class TestDiningBranchIsolationHTTP:
     """Gate 4 final review: order and KDS reads are branch scoped."""
 
-    def _order(self, client, db, waiter_headers):
+    def _order(self, client, db):
+        """مراجعة Codex 2026-08-31 (SEC-06) أضافت _assert_outlet_branch على
+        الإنشاء نفسه — waiter_headers العالمية (مالهاش أي عضوية فرع) بقت
+        تفشل بـ403 هنا، فلازم نادل مربوط فعليًا بالفرع الجديد ده، نفس نمط
+        make_branch_linked_headers."""
         branch = make_branch_committed(db)
         outlet = make_outlet_committed(db, branch)
         item = make_item_committed(db, branch, outlet)
+        owner_user = make_branch_linked_headers(db, branch)
         order = client.post(
             f"/api/v1/dining/outlets/{outlet.id}/orders",
             json={
@@ -931,14 +950,12 @@ class TestDiningBranchIsolationHTTP:
                 "order_type": "takeaway",
                 "items": [{"item_id": item.id, "quantity": 1}],
             },
-            headers=waiter_headers,
+            headers=owner_user,
         ).json()
-        return branch, order
+        return branch, order, owner_user
 
-    def test_cross_branch_user_cannot_read_order(
-        self, client: TestClient, db, waiter_headers,
-    ):
-        _owner_branch, order = self._order(client, db, waiter_headers)
+    def test_cross_branch_user_cannot_read_order(self, client: TestClient, db):
+        _owner_branch, order, _owner_user = self._order(client, db)
         other_branch = make_branch_committed(db)
         other_user = make_branch_linked_headers(db, other_branch)
 
@@ -947,11 +964,51 @@ class TestDiningBranchIsolationHTTP:
         )
         assert response.status_code == 403
 
-    def test_cross_branch_user_cannot_list_kds_tickets(
-        self, client: TestClient, db, waiter_headers,
-    ):
-        owner_branch, order = self._order(client, db, waiter_headers)
-        owner_user = make_branch_linked_headers(db, owner_branch)
+    def test_cross_branch_user_cannot_create_order_in_other_branch_outlet(self, client: TestClient, db):
+        """الثغرة الأصلية (SEC-06): نادل فرع A كان يقدر ينشئ طلب على منفذ
+        فرع B بمجرد تخمين outlet_id — مفيش أي تحقق فرع وقت الإنشاء نفسه."""
+        own_branch = make_branch_committed(db)
+        other_branch = make_branch_committed(db)
+        other_outlet = make_outlet_committed(db, other_branch)
+        other_item = make_item_committed(db, other_branch, other_outlet)
+        own_user = make_branch_linked_headers(db, own_branch)
+
+        response = client.post(
+            f"/api/v1/dining/outlets/{other_outlet.id}/orders",
+            json={
+                "outlet_id": other_outlet.id,
+                "order_type": "takeaway",
+                "items": [{"item_id": other_item.id, "quantity": 1}],
+            },
+            headers=own_user,
+        )
+        assert response.status_code == 403
+
+    def test_cross_branch_user_cannot_hold_or_sync_order_in_other_branch_outlet(self, client: TestClient, db):
+        own_branch = make_branch_committed(db)
+        other_branch = make_branch_committed(db)
+        other_outlet = make_outlet_committed(db, other_branch)
+        other_item = make_item_committed(db, other_branch, other_outlet)
+        own_user = make_branch_linked_headers(db, own_branch)
+
+        hold_resp = client.post(
+            f"/api/v1/dining/outlets/{other_outlet.id}/orders/hold",
+            json={
+                "outlet_id": other_outlet.id,
+                "order_type": "takeaway",
+                "items": [{"item_id": other_item.id, "quantity": 1}],
+            },
+            headers=own_user,
+        )
+        assert hold_resp.status_code == 403
+
+        held_resp = client.get(
+            f"/api/v1/dining/outlets/{other_outlet.id}/orders/held", headers=own_user,
+        )
+        assert held_resp.status_code == 403
+
+    def test_cross_branch_user_cannot_list_kds_tickets(self, client: TestClient, db):
+        owner_branch, order, owner_user = self._order(client, db)
         client.patch(
             f"/api/v1/dining/orders/{order['id']}/status",
             json={"status": "in_kitchen"},

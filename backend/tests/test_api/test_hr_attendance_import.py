@@ -303,3 +303,26 @@ class TestImportAttendanceExcelHttp:
         resp = self._upload(client, branch.id, 2026, 6, content, _manager_headers_for_branch(db, branch))
         assert resp.status_code == 200
         assert resp.json()["unmatched_employees"] == ["GHOST-001"]
+
+    def test_import_rejects_wrong_content_type(self, client, db: Session, fake_redis, manager_headers, branch):
+        """مراجعة Codex 2026-08-31 (SEC-10): ملف مش Excel (زي PDF مزوّر بامتداد
+        .xlsx) لازم يترفض برسالة واضحة قبل ما يوصل لـ openpyxl خالص."""
+        resp = client.post(
+            "/api/v1/hr/attendance/import-excel",
+            params={"branch_id": branch.id, "period_year": 2026, "period_month": 6},
+            files={"file": ("attendance.xlsx", b"%PDF-1.4 not really excel", "application/pdf")},
+            headers=_manager_headers_for_branch(db, branch),
+        )
+        assert resp.status_code == 400
+
+    def test_import_rejects_wrong_extension(self, client, db: Session, fake_redis, manager_headers, branch):
+        """content-type صح بس امتداد الملف غلط (.csv) — لازم يترفض برضو."""
+        content = _build_workbook(["employee_code", 1], [["EMP-1", "p"]])
+        resp = client.post(
+            "/api/v1/hr/attendance/import-excel",
+            params={"branch_id": branch.id, "period_year": 2026, "period_month": 6},
+            files={"file": ("attendance.csv", content,
+                             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+            headers=_manager_headers_for_branch(db, branch),
+        )
+        assert resp.status_code == 400

@@ -1,11 +1,16 @@
 # Production Operations — El Kheima Beach Resort OS
 
 **Current model:** immutable releases with domain TLS on the VPS
-**Current host:** `191.218.161.133`
+**Current host:** `31.97.193.77`
 **Public origins:** `elkheima.com`, `www.elkheima.com`,
 `app.elkheima.com`, `owner.elkheima.com`
-**SSH alias:** `resort-os-vps`
+**SSH alias:** `resort-os-vps-new`
 **Compose project:** `resort-os-prod`
+
+<!-- مراجعة Codex 2026-08-31 (SEC-08/SEC-11): الـhost/alias القدام (191.218.161.133
+     / resort-os-vps) بقوا غير صحيحين — راجع
+     docs/agent-workflow/handoffs/2026-08-30_REL-23-REL-24_production-deploy_claude_handoff.md
+     للسياق الكامل لتحوّل السيرفر. -->
 
 This is the only live deployment runbook. The previous host/runbook is
 archived in
@@ -62,7 +67,7 @@ from the domain override without an explicit reviewed rollback.
 ## 3. Daily status
 
 ```bash
-ssh resort-os-vps
+ssh resort-os-vps-new
 
 docker ps --format '{{.Names}}|{{.Image}}|{{.Status}}' | sort
 curl -fsS http://127.0.0.1:8005/health

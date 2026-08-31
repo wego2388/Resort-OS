@@ -2004,6 +2004,7 @@ def void_order_item(
         db, "void_order_item",
         acting_user_level=acting_user_level,
         approver_user_id=approver_user_id, approver_pin=approver_pin,
+        target_branch_id=order.branch_id,
     )
 
     crud.void_order_item(db, item, reason, voided_by)
@@ -2995,6 +2996,7 @@ def apply_order_discount(
         db, "apply_order_discount",
         acting_user_level=acting_user_level,
         approver_user_id=approver_user_id, approver_pin=approver_pin,
+        target_branch_id=order.branch_id,
     )
 
     rules: list[DiscountRule] = []

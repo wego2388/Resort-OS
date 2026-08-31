@@ -111,9 +111,7 @@ def make_branch_linked_headers(db, branch, role="waiter") -> dict[str, str]:
 
 
 class TestDiningFullCycle:
-    def test_order_to_payment_cycle_with_real_vat_and_service_charge(
-        self, client: TestClient, db, waiter_headers,
-    ):
+    def test_order_to_payment_cycle_with_real_vat_and_service_charge(self, client: TestClient, db):
         from app.modules.dining.models import DiningItem
 
         branch = make_branch(db)
@@ -139,7 +137,7 @@ class TestDiningFullCycle:
                     {"item_id": pasta.id, "quantity": 2},
                 ],
             },
-            headers=waiter_headers,
+            headers=waiter_linked,
         ).json()
         assert order["status"] == "open"
 
@@ -199,14 +197,12 @@ class TestDiningFullCycle:
 
         # 6) الطاولة اترجعت متاحة
         tables_resp = client.get(
-            f"/api/v1/dining/branches/{branch.id}/tables", headers=waiter_headers,
+            f"/api/v1/dining/branches/{branch.id}/tables", headers=waiter_linked,
         )
         found = next(t for t in tables_resp.json() if t["id"] == table.id)
         assert found["status"] == "available"
 
-    def test_dining_full_cycle_matches_frontend_payload(
-        self, client: TestClient, db, waiter_headers,
-    ):
+    def test_dining_full_cycle_matches_frontend_payload(self, client: TestClient, db):
         """نفس الـ shape اللي UnifiedPOSView.vue بيبعته فعليًا —
         item_id (مش menu_item_id)، outlet_id، من غير unit_price/payment_method."""
         from app.modules.dining.models import DiningItem
@@ -226,7 +222,7 @@ class TestDiningFullCycle:
             "order_type": "takeaway",
             "items": [{"item_id": pizza.id, "quantity": 2, "notes": None}],
         }
-        order = client.post(f"/api/v1/dining/outlets/{outlet.id}/orders", json=payload, headers=waiter_headers).json()
+        order = client.post(f"/api/v1/dining/outlets/{outlet.id}/orders", json=payload, headers=waiter_linked).json()
         assert order["status"] == "open"
         subtotal = Decimal("220.00") * 2
         assert Decimal(str(order["subtotal"])) == subtotal

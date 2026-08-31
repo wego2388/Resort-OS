@@ -303,6 +303,7 @@ def resolve_pin_approval(
     approver_pin: Optional[str],
     *,
     min_approver_level: int = 60,
+    target_branch_id: int,
 ) -> Optional[int]:
     """البوابة المركزية اللي كل إجراء حسّاس (إلغاء صنف، مرتجع...) بينادي
     عليها بدل ما يعيد نفس المنطق. بترجع ``approved_by`` (user.id بتاع
@@ -316,6 +317,13 @@ def resolve_pin_approval(
     قرار معماري متعمد: لو مستوى المنفّذ نفسه >= min_approver_level (هو
     أصلاً مدير أو فوق)، **مفيش موافقة PIN مطلوبة خالص** — طلب موافقة مدير
     من نفسه مسرحية أمان بدون قيمة حقيقية، وبتبطّئ شغله من غير داعي.
+
+    ⚠️ مراجعة Codex 2026-08-31 (SEC-07): قبل كده الدالة دي كانت بتتحقق من
+    دور المعتمِد وPIN بس — **من غير أي تحقق فرع خالص**. مدير فرع A كان
+    يقدر PIN بتاعه يوافق على إلغاء/خصم/حركة كاش في فرع B بمجرد ما الكاشير
+    يعرف/يخمّن user_id بتاعه. ``target_branch_id`` بقى إجباري — نفس
+    الفحص المستخدم في ``pin_switch_login`` (``_can_enter_branch``:
+    super_admin بس بيتخطّى، وإلا لازم عضوية فرع فعّالة حقيقية).
     """
     if acting_user_level >= min_approver_level:
         return None
@@ -333,6 +341,8 @@ def resolve_pin_approval(
         raise ValueError("حساب المعتمِد غير نشط")
     if user_level(approver) < min_approver_level:
         raise ValueError("المستخدم ده مش عنده صلاحية كافية للموافقة على هذا الإجراء")
+    if not _can_enter_branch(db, approver, target_branch_id):
+        raise ValueError("المعتمِد غير مصرح له بهذا الفرع")
 
     if not verify_pin(db, approver_user_id, approver_pin):
         raise ValueError("رقم PIN غلط أو الحساب مقفول مؤقتًا بعد محاولات فاشلة")

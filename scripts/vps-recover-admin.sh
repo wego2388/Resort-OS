@@ -33,9 +33,13 @@ print(urlparse(url).password)
 ')
 export DB_PASSWORD
 
-TLS_CERT_PATH=/etc/letsencrypt/live/191.218.161.133/fullchain.pem
-if [[ -f "$TLS_CERT_PATH" ]]; then
-  OVERRIDE=docker-compose.prod.ip-tls.yml
+# مراجعة Codex 2026-08-31 (SEC-08): كان مقفول على IP السيرفر القديم
+# (191.218.161.133) — الشهادة الحقيقية دلوقتي domain-based (elkheima.com،
+# راجع docs/agent-workflow/handoffs/2026-08-30_REL-23-REL-24_production-
+# deploy_claude_handoff.md). ip-only هو fallback bootstrap أول مرة قبل أي
+# شهادة (راجع deploy/nginx/edge-ip-only.conf).
+if [[ -f /etc/letsencrypt/live/elkheima.com/fullchain.pem ]]; then
+  OVERRIDE=docker-compose.prod.domain.yml
 else
   OVERRIDE=docker-compose.prod.ip-only.yml
 fi

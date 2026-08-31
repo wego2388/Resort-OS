@@ -1013,3 +1013,35 @@ class TestTimeshareRouterMiscHttp:
             headers=timeshare_admin_headers,
         )
         assert resp.status_code == 400
+
+    def test_import_excel_rejects_wrong_content_type(self, client: TestClient, db, fake_redis, timeshare_admin_headers):
+        """مراجعة Codex 2026-08-31 (SEC-10): ملف مش Excel لازم يترفض برسالة
+        واضحة قبل ما يوصل لـopenpyxl خالص."""
+        branch = make_branch_committed(db)
+        resp = client.post(
+            f"/api/v1/timeshare/contracts/import-excel?branch_id={branch.id}",
+            files={"file": ("contracts.xlsx", b"%PDF-1.4 not really excel", "application/pdf")},
+            headers=timeshare_admin_headers,
+        )
+        assert resp.status_code == 400
+
+    def test_import_excel_rejects_wrong_extension(self, client: TestClient, db, fake_redis, timeshare_admin_headers):
+        import io
+        import openpyxl
+        branch = make_branch_committed(db)
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.append([
+            "customer_name", "room_type", "total_value", "down_payment",
+            "installments", "start_date", "first_installment_date",
+        ])
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        resp = client.post(
+            f"/api/v1/timeshare/contracts/import-excel?branch_id={branch.id}",
+            files={"file": ("contracts.csv", buf.read(),
+                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+            headers=timeshare_admin_headers,
+        )
+        assert resp.status_code == 400

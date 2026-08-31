@@ -612,6 +612,7 @@ def charge_to_account(
             acting_user_level=acting_user_level,
             approver_user_id=approver_user_id,
             approver_pin=approver_pin,
+            target_branch_id=branch_id,
         )
 
     holder_name = _get_holder_name(db, account)
