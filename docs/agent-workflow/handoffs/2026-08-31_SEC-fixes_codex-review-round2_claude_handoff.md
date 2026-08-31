@@ -175,21 +175,72 @@ certbot المكتشفة يوم 2026-08-30) — آخر نسخة احتياطية
   مبنية، مفيش dev server ولا Vitest UI متعرّضين للإنترنت). محتاج قرار
   منفصل مستقبلي، مش جزء من الدفعة دي.
 
+## SEC-13 — قناة التنبيهات fail-open (Critical، نُفِّذت آخر الدفعة بطلب Mohamed الصريح)
+
+**الملفات**: `core/kernel/whatsapp.py`, `core/kernel/worker.py`,
+`core/kernel/auth/router.py`, `main.py`
+
+3 نقاط صمت حقيقية اتصلحت (الجزء اللي ممكن يتنفذ بدون بيانات اعتماد
+حقيقية — الجزء التاني، ربط مزوّد حقيقي فعليًا، لسه مطلوب من Mohamed،
+تفاصيله تحت):
+
+1. **`send_whatsapp_message`**: كانت بترجع `True` حتى لو Twilio مش مُعدّة
+   خالص — أي caller (فحص احتيال، فشل مهمة Celery، تنبيه تأخر سداد) كان
+   بيصدّق إن التنبيه اتبعت فعليًا. دلوقتي: `True` بس في development/test
+   (نفس السلوك القديم عمدًا، مفيش داعي لإعداد Twilio محليًا)، `False` +
+   ERROR واضح في أي بيئة تانية (الإنتاج تحديدًا).
+2. **`_try_whatsapp_notify`/`_try_sentry_capture`** (في `worker.py`، القلب
+   المشترك لكل تنبيهات فشل المهام): كانوا بيتجاهلوا نتيجة
+   `notify_admin`/`capture_exception` تمامًا — لو القناة رجعت
+   `False`/`None` (مش استثناء)، الفشل ده كان يختفي بصمت فوق فشل المهمة
+   الأصلي نفسه (صمت مزدوج). دلوقتي بيسجّلوا WARNING واضح.
+3. **`password_reset_request`** (auth router): `send_password_reset_email`
+   بترجع `False` (مش استثناء) لو SendGrid غير مُعدّة — الـ`except
+   Exception` القديم مكانش بيمسك الحالة دي خالص، يعني كل طلب استرجاع
+   باسورد كان بيفشل بصمت تمامًا من غير أي أثر في اللوج. دلوقتي بيتسجّل
+   WARNING (الاستجابة العامة للمستخدم فضلت زي ما هي بالظبط — enumeration-
+   safe، مفيش تسريب).
+4. **تحذير موحّد وقت الإقلاع** (`main.py::_warn_if_alert_channels_
+   unconfigured`، جديدة): سطر ERROR واحد واضح في لوجات الإقلاع، بس في
+   production/staging، بيسرد بالاسم أي قناة (Sentry/WhatsApp/ADMIN_PHONE/
+   Email) لسه مش مُعدّة — بدل ما الفجوة تتكشف وقت حادثة حقيقية. تحذير بس،
+   مش فشل إقلاع (بيانات الاعتماد الحقيقية قرار Mohamed منفصل).
+
+**اتأكد حي**: نداءات مباشرة لـ`send_whatsapp_message`/`_warn_if_alert_
+channels_unconfigured` أثبتت السلوك بالظبط (production→False+ERROR،
+dev→True، سطر تحذير واحد واضح بيسرد كل القنوات الفاضية). 9 اختبار جديد
+(`test_kernel_whatsapp.py` جديد كامل، إضافات في `test_kernel_worker.py`
+و`test_auth_session_security.py`).
+
+### 🔴 لسه مطلوب من Mohamed تحديدًا (مش حاجة أقدر أعملها بنفسي)
+
+القناة نفسها لسه ميتة في الإنتاج — الكود بقى يبلّغ عن الصمت ده بوضوح،
+لكن ده مش حل، ده تشخيص. عشان التنبيهات تشتغل فعليًا محتاج منك:
+
+1. **WhatsApp**: إما حساب Twilio حقيقي (`TWILIO_ACCOUNT_SID`,
+   `TWILIO_AUTH_TOKEN`, رقم WhatsApp Business مفعّل)، أو Meta Cloud API
+   مباشرة (`WHATSAPP_PHONE_ID`, `WHATSAPP_ACCESS_TOKEN`) — أي مسار منهم.
+2. **`ADMIN_PHONE`**: رقمك (أو رقم مين تحب يستلم تنبيهات الاحتيال/فشل
+   المهام) بصيغة دولية (`+201...`).
+3. **Sentry**: حساب مجاني على sentry.io، `SENTRY_DSN` بتاعه.
+4. **SendGrid** (لاسترجاع كلمة المرور): `SENDGRID_API_KEY` +
+   `SENDGRID_FROM_EMAIL` (إيميل مُتحقَّق في SendGrid).
+
+بمجرد ما تجهّزهم، أحطهم في `.env.prod` على السيرفر وأعمل restart
+لـcontainer الـbackend — مفيش أي تعديل كود إضافي مطلوب، القيم دي بس.
+
 ## لسه محتاج قرار Mohamed (مؤجَّل عمدًا، برّه نطاق الدفعة المعتمدة)
 
-1. **SEC-13 (رقم 2 الأصلي)** — قناة التنبيهات ميتة تمامًا في الإنتاج
-   (WhatsApp/Sentry/Email، fail-open مش fail-closed). مؤجَّلة لآخر
-   الدفعة بطلب Mohamed الصريح — تفاصيل التنفيذ في handoff منفصل.
-2. **فجوة branch isolation أوسع في dining menu-management** — اتكشفت
+1. **فجوة branch isolation أوسع في dining menu-management** — اتكشفت
    أثناء SEC-06 (`update_outlet`, category/item/table CRUD, صور، extra-
    groups، recipe-lines، variants — كلهم من غير تحقق فرع). مش ضمن الـ13
    بند المعتمدين، محتاجة موافقة صريحة قبل التنفيذ.
-3. **9 اختبار Postgres-only فاشل (pre-existing، من 2026-08-11 وقبلها)**
+2. **9 اختبار Postgres-only فاشل (pre-existing، من 2026-08-11 وقبلها)**
    — `pay_payment()` بدون `collected_by`، alembic-head test بمرجع قديم
    ثابت، وfixture drift في تستات تانية. دين تقني حقيقي غير مرتبط
    بالدفعة دي.
-4. **14 CVE في أدوات البناء الأمامية** (dev-tooling بس، صفر تعرّض
+3. **14 CVE في أدوات البناء الأمامية** (dev-tooling بس، صفر تعرّض
    إنتاجي حقيقي) — يستاهل ترقية منفصلة مخطط لها، مش عاجلة.
-5. **starlette 5 CVE متبقية** (تحتاج starlette 1.x + fastapi 0.135+) —
+4. **starlette 5 CVE متبقية** (تحتاج starlette 1.x + fastapi 0.135+) —
    قفزة أكبر بكتير من دفعة اليوم، غير مستغَلّة فعليًا في هذا المشروع
    تحديدًا لكن يستاهل مراجعة مخصوصة مستقبلًا.

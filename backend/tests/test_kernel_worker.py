@@ -92,3 +92,30 @@ class TestCoreTaskOnFailure:
 
         assert len(whatsapp_calls) == 1
         assert "check_due_reminders" in whatsapp_calls[0]
+
+
+class TestSilentFailureVisibility:
+    """مراجعة Codex 2026-08-31 (SEC-13): _try_whatsapp_notify/_try_sentry_
+    capture كانوا بيتجاهلوا نتيجة notify_admin/capture_exception تمامًا —
+    لو القناة رجعت False/None (مش استثناء)، الفشل ده كان يختفي بصمت فوق
+    فشل المهمة الأصلي نفسه. دلوقتي لازم يتسجّل تحذير واضح في اللوج (نفس
+    نمط باقي التستات هنا — monkeypatch على logger.warning نفسها، مش caplog،
+    لأن loguru مش بيتوجّه لـstdlib logging افتراضيًا)."""
+
+    def test_whatsapp_not_sent_logs_warning(self, monkeypatch):
+        from app.core.kernel.worker import _try_whatsapp_notify, logger
+
+        monkeypatch.setattr(wa_module, "notify_admin", lambda msg: False)
+        warnings = []
+        monkeypatch.setattr(logger, "warning", lambda msg: warnings.append(msg))
+        _try_whatsapp_notify("some.task", ValueError("boom"))
+        assert any("تنبيه واتساب فشل" in w for w in warnings)
+
+    def test_sentry_not_configured_logs_warning(self, monkeypatch):
+        from app.core.kernel.worker import _try_sentry_capture, logger
+
+        monkeypatch.setattr(sentry_module, "capture_exception", lambda exc, **kw: None)
+        warnings = []
+        monkeypatch.setattr(logger, "warning", lambda msg: warnings.append(msg))
+        _try_sentry_capture(ValueError("boom"), task_name="some.task")
+        assert any("Sentry غير مُعدّة" in w for w in warnings)

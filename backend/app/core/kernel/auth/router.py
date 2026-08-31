@@ -753,7 +753,13 @@ def build_auth_router(
         if token:
             try:
                 from app.core.kernel.email_service import send_password_reset_email
-                await send_password_reset_email(email, token, app_name=getattr(settings, "APP_NAME", "Resort OS"))
+                sent = await send_password_reset_email(email, token, app_name=getattr(settings, "APP_NAME", "Resort OS"))
+                # SEC-13 (2026-08-31): send_password_reset_email بترجع False
+                # (مش استثناء) لو SendGrid غير مُعدّة — الـexcept تحت مايمسكهاش
+                # خالص، يعني كل طلب استرجاع باسورد كان بيفشل بصمت تمامًا من
+                # غير أي أثر في اللوج. الفحص هنا يسدّ الفجوة دي.
+                if not sent:
+                    logger.warning("Password-reset email was not sent (SendGrid not configured or send failed)")
             except Exception:
                 # Keep the public response enumeration-safe, but never hide
                 # an operational delivery failure from internal logs. Do not

@@ -447,3 +447,50 @@ class TestAuthRateLimitWiring:
             "/api/v1/auth/change-password",
         ):
             assert ("POST", path) in _LIMITED_ROUTES
+
+
+class TestPasswordResetEmailFailureVisibility:
+    """مراجعة Codex 2026-08-31 (SEC-13): send_password_reset_email بترجع
+    False (مش استثناء) لو SendGrid غير مُعدّة أو الإرسال فشل — الـrouter
+    كان بيتجاهل النتيجة دي تمامًا (بس بيمسك استثناءات)، يعني كل طلب
+    استرجاع باسورد كان بيفشل بصمت تمامًا من غير أي أثر في اللوج.
+    send_password_reset_email مستوردة محليًا جوه الـrouter function (مش
+    module-level attribute) — الـpatch هنا على email_service نفسها، مصدر
+    الاستيراد، عشان يتلقّط صح وقت النداء الفعلي."""
+
+    def test_stays_enumeration_safe_and_logs_warning_when_email_unconfigured(
+        self, client: TestClient, setup_db, monkeypatch,
+    ):
+        import app.core.kernel.email_service as email_module
+        from app.core.kernel.auth import router as auth_router_module
+
+        email = f"reset-silent-{uuid.uuid4().hex}@test.local"
+        _create_user_with_email(email)
+
+        async def _fake_unconfigured(*a, **kw):
+            return False
+        monkeypatch.setattr(email_module, "send_password_reset_email", _fake_unconfigured)
+
+        warnings = []
+        monkeypatch.setattr(auth_router_module.logger, "warning", lambda msg: warnings.append(msg))
+
+        resp = client.post("/api/v1/auth/password-reset/request", json={"email": email})
+        # الاستجابة العامة لازم تفضل نفسها بالظبط (مفيش تسريب معلومات).
+        assert resp.status_code == 200
+        assert "sent" in resp.json()["message"].lower()
+        # لكن اللوج الداخلي دلوقتي لازم يعكس الفشل الحقيقي.
+        assert any("Password-reset email was not sent" in w for w in warnings)
+
+
+def _create_user_with_email(email: str, *, role: str = "cashier") -> int:
+    db = TestingSessionLocal()
+    try:
+        user = User(
+            email=email, password_hash=get_password_hash("Original@12345"),
+            full_name="Reset Test", role=role, is_active=True,
+        )
+        db.add(user)
+        db.commit()
+        return user.id
+    finally:
+        db.close()

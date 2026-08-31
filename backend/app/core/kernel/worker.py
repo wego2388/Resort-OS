@@ -109,17 +109,27 @@ class CoreTask(_CeleryTask):
 def _try_sentry_capture(exc: Exception, *, task_name: Optional[str] = None, extra: Optional[dict] = None) -> None:
     try:
         from app.core.kernel.sentry import capture_exception
-        capture_exception(exc, tags={"task": task_name} if task_name else None, extra=extra)
-    except Exception:
-        pass
+        event_id = capture_exception(exc, tags={"task": task_name} if task_name else None, extra=extra)
+        # SEC-13 (2026-08-31): كانت بتتجاهل نتيجة capture_exception تمامًا —
+        # لو Sentry مش مُعدّة (event_id=None)، ده مش مجرد تفصيل داخلي، ده
+        # يعني فشل مهمة حقيقي راح لمكان محدش بيراقبه. لوج واضح على أقل تقدير.
+        if event_id is None:
+            logger.warning(f"[Task:{task_name}] Sentry غير مُعدّة — الفشل ده مش متسجّل هناك")
+    except Exception as e:
+        logger.warning(f"[Task:{task_name}] Sentry capture نفسها فشلت: {e}")
 
 
 def _try_whatsapp_notify(task_name: str, exc: Exception) -> None:
     try:
         from app.core.kernel.whatsapp import notify_admin
-        notify_admin(f"⚠️ فشلت مهمة مجدولة: {task_name}\nالخطأ: {exc}")
-    except Exception:
-        pass
+        sent = notify_admin(f"⚠️ فشلت مهمة مجدولة: {task_name}\nالخطأ: {exc}")
+        # SEC-13 (2026-08-31): كانت بتتجاهل نتيجة notify_admin تمامًا — لو
+        # القناة مش مُعدّة أو الإرسال فشل فعليًا (False)، ده كان بيختفي بصمت
+        # فوق فشل المهمة الأصلي نفسه. لوج واضح بدل الصمت المزدوج.
+        if not sent:
+            logger.warning(f"[Task:{task_name}] تنبيه واتساب فشل يوصل للإدارة")
+    except Exception as e:
+        logger.warning(f"[Task:{task_name}] محاولة تنبيه واتساب نفسها طلعت استثناء: {e}")
 
 
 def notify_task_failure(task_name: str, exc: Exception, *, extra: Optional[dict] = None) -> None:
