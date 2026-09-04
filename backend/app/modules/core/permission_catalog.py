@@ -337,6 +337,15 @@ PERMISSION_CATALOG: list[PermissionCatalogEntry] = [
         "endpoint": "DELETE /crm/customers/{customer_id}/blacklist",
     },
     {
+        "resource": "crm.customer_groups",
+        "action": "manage",
+        "label_ar": "إنشاء/تعديل مجموعات العملاء ونسب الخصم الدائم (زي مجموعة الموظفين)",
+        "label_en": "Create/edit customer groups and their standing discount rate (e.g. Staff)",
+        "module": "crm",
+        "min_role_level": 80,
+        "endpoint": "POST /crm/customer-groups; PATCH /crm/customer-groups/{group_id}",
+    },
+    {
         "resource": "finance.void_payment",
         "action": "execute",
         "label_ar": "إلغاء دفعة",

@@ -4705,6 +4705,8 @@
       "discountOf": "{pct}% discount",
       "groupActive": "Active",
       "groupSuspended": "Suspended",
+      "groupComplimentary": "Complimentary",
+      "groupComplimentaryHint": "The discounted portion posts as a real expense instead of vanishing — for staff/comps, not ordinary commercial discounts",
       "edit": "Edit",
       "suspend": "Suspend",
       "noGroups": "No customer groups yet",

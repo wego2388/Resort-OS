@@ -15,6 +15,7 @@ class CustomerGroupCreate(BaseModel):
     name:                str = Field(..., max_length=100)
     name_ar:             Optional[str] = Field(None, max_length=100)
     discount_percentage: Decimal = Field(Decimal("0"), ge=0, le=100)
+    is_complimentary:    bool = False
 
 
 class CustomerGroupUpdate(BaseModel):
@@ -22,12 +23,13 @@ class CustomerGroupUpdate(BaseModel):
     name_ar:             Optional[str]     = Field(None, max_length=100)
     discount_percentage: Optional[Decimal] = Field(None, ge=0, le=100)
     is_active:           Optional[bool]    = None
+    is_complimentary:    Optional[bool]    = None
 
 
 class CustomerGroupRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int; branch_id: int; name: str; name_ar: Optional[str]
-    discount_percentage: Decimal; is_active: bool
+    discount_percentage: Decimal; is_active: bool; is_complimentary: bool
     created_at: datetime; updated_at: datetime
 
 

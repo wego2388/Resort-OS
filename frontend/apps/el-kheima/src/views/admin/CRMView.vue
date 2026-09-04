@@ -34,6 +34,7 @@ interface Customer {
 }
 interface CustomerGroup {
   id: number; name: string; name_ar?: string | null; discount_percentage: number; is_active: boolean
+  is_complimentary: boolean
 }
 interface Opportunity {
   id: number; customer_id: number; title: string; product_type: string; stage: string
@@ -91,15 +92,18 @@ const groups = ref<CustomerGroup[]>([])
 const groupModal = ref(false)
 const savingGroup = ref(false)
 const editingGroup = ref<CustomerGroup | null>(null)
-const groupForm = ref({ name: '', name_ar: '', discount_percentage: '10' })
+const groupForm = ref({ name: '', name_ar: '', discount_percentage: '10', is_complimentary: false })
 
 function openCreateGroup() {
   editingGroup.value = null
-  groupForm.value = { name: '', name_ar: '', discount_percentage: '10' }
+  groupForm.value = { name: '', name_ar: '', discount_percentage: '10', is_complimentary: false }
 }
 function openEditGroup(g: CustomerGroup) {
   editingGroup.value = g
-  groupForm.value = { name: g.name, name_ar: g.name_ar ?? '', discount_percentage: String(g.discount_percentage) }
+  groupForm.value = {
+    name: g.name, name_ar: g.name_ar ?? '', discount_percentage: String(g.discount_percentage),
+    is_complimentary: g.is_complimentary,
+  }
 }
 
 const showOpportunityForm = ref(false)
@@ -281,6 +285,7 @@ async function saveGroup() {
       name: groupForm.value.name,
       name_ar: groupForm.value.name_ar || undefined,
       discount_percentage: groupForm.value.discount_percentage || '0',
+      is_complimentary: groupForm.value.is_complimentary,
     }
     if (editingGroup.value) {
       await api.patch(`/api/v1/crm/customer-groups/${editingGroup.value.id}`, payload)
@@ -1307,7 +1312,7 @@ onMounted(loadLeads)
           {{ t('backoffice.crm.groupsHint') }}
         </p>
 
-        <AppCard v-if="authStore.roleLevel >= 80" padding="sm">
+        <AppCard v-if="authStore.hasPermission('crm.customer_groups:manage')" padding="sm">
           <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
             <input v-model="groupForm.name" type="text" :placeholder="t('backoffice.crm.nameEnglishRequired')"
               class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
@@ -1316,6 +1321,12 @@ onMounted(loadLeads)
             <input v-model="groupForm.discount_percentage" type="number" min="0" max="100" step="0.01" :placeholder="t('backoffice.crm.discountPct')"
               class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           </div>
+          <label class="flex items-center gap-2 mt-2 text-sm text-gray-700 dark:text-gray-300">
+            <input v-model="groupForm.is_complimentary" type="checkbox"
+              class="rounded border-stone-300 dark:border-border" />
+            {{ t('backoffice.crm.groupComplimentary') }}
+            <span class="text-xs text-gray-400 dark:text-gray-500">({{ t('backoffice.crm.groupComplimentaryHint') }})</span>
+          </label>
           <div class="flex gap-2 mt-2">
             <AppButton size="sm" :loading="savingGroup" @click="saveGroup">
               {{ editingGroup ? t('backoffice.crm.saveEdits') : t('backoffice.crm.addGroup') }}
@@ -1330,10 +1341,11 @@ onMounted(loadLeads)
             <div>
               <span class="font-medium text-sm text-gray-900 dark:text-gray-100">{{ g.name_ar || g.name }}</span>
               <span class="text-xs text-gray-500 dark:text-gray-400 ms-2">{{ t('backoffice.crm.discountOf', { pct: g.discount_percentage }) }}</span>
+              <AppBadge v-if="g.is_complimentary" size="sm" variant="info" class="ms-2">{{ t('backoffice.crm.groupComplimentary') }}</AppBadge>
             </div>
             <div class="flex items-center gap-2">
               <AppBadge size="sm" :variant="g.is_active ? 'success' : 'neutral'">{{ g.is_active ? t('backoffice.crm.groupActive') : t('backoffice.crm.groupSuspended') }}</AppBadge>
-              <template v-if="authStore.roleLevel >= 80">
+              <template v-if="authStore.hasPermission('crm.customer_groups:manage')">
                 <button @click="openEditGroup(g)" class="text-xs font-semibold text-primary-700 hover:underline">{{ t('backoffice.crm.edit') }}</button>
                 <button @click="toggleGroupActive(g)" class="text-xs font-semibold text-gray-500 dark:text-gray-400 hover:underline">
                   {{ g.is_active ? t('backoffice.crm.suspend') : t('backoffice.crm.activate') }}

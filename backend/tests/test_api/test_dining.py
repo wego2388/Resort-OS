@@ -85,7 +85,8 @@ def make_finance_accounts(db, branch, revenue_code="4200"):
     وقت الدفع الصارم — idempotent (query-or-create) عشان النداء المتكرر
     بنفس الفرع/الكود آمن. زائد 2160/2165 (FIN-TAX-01، OPS-DATA-02 §11.2) —
     post_taxed_sale_journal محتاجاهم لأي طلب فيه VAT/service (كل طلب دايننج
-    حقيقي)."""
+    حقيقي)، وزائد 5400 (2026-09-04) — طلبات مجموعات "ضيافة/تكريم" (زي
+    الموظفين) بترحّل جزء الخصم كمصروف على الحساب ده."""
     from app.modules.finance.models import Account
     wanted = {
         "1100": ("Cash", "asset"),
@@ -94,6 +95,7 @@ def make_finance_accounts(db, branch, revenue_code="4200"):
         "5200": ("تكلفة البضاعة المباعة (COGS)", "expense"),
         "2160": ("ضريبة القيمة المضافة مستحقة", "liability"),
         "2165": ("رسم خدمة مستحق", "liability"),
+        "5400": ("مصروف ضيافة/استهلاك مجاني", "expense"),
         revenue_code: ("Dining Revenue", "revenue"),
     }
     accounts = {}
@@ -1104,6 +1106,130 @@ class TestCustomerGroupDiscount:
 
         db.refresh(rule)
         assert rule.uses_count == 1
+
+
+class TestComplimentaryGroupExpensePosting:
+    """طلبات مجموعة "ضيافة/تكريم" (CustomerGroup.is_complimentary=True — زي
+    مجموعة "الموظفين") — الجزء المخصوم يترحّل كمصروف حقيقي (5400) بدل ما
+    يختفي بصمت مع الخصم. راجع
+    dining.services._post_complimentary_expense_if_applicable (طلب Mohamed
+    2026-09-04: "استهلاك بسيط يومي للموظفين، مش 100% خصم، النسبة بتتحدد من
+    السوبر أدمن أو المحاسب")."""
+
+    def _make_customer_with_group(self, db, branch, pct, is_complimentary):
+        from app.modules.crm import services as crm_services
+        from app.modules.crm.schemas import CustomerCreate, CustomerGroupCreate
+
+        group = crm_services.create_customer_group(
+            db, CustomerGroupCreate(
+                branch_id=branch.id, name="Staff", discount_percentage=pct,
+                is_complimentary=is_complimentary,
+            ),
+        )
+        customer = crm_services.create_customer(
+            db, CustomerCreate(branch_id=branch.id, full_name="Staff Member"),
+        )
+        crm_services.assign_customer_group(db, customer.id, group.id)
+        return customer, group
+
+    def test_settlement_posts_complimentary_expense_for_discounted_share(self, db):
+        from app.modules.finance.models import JournalEntry
+
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch, outlet_type="cafe", revenue_account_code="4200")
+        make_finance_accounts(db, branch, revenue_code="4200")
+        item = make_item(db, branch, outlet, price=Decimal("100.00"))
+        customer, _group = self._make_customer_with_group(
+            db, branch, pct=Decimal("90"), is_complimentary=True,
+        )
+
+        order = services.create_order(
+            db, branch.id,
+            OrderCreate(outlet_id=outlet.id, order_type="takeaway", customer_id=customer.id,
+                        items=[OrderItemCreate(item_id=item.id, quantity=1)]),
+            waiter_id=1,
+        )
+        services.update_order_status(db, order.id, "served")
+        db.refresh(order)
+        assert order.discount_amount > 0
+        # 10% لسه مدفوع فعليًا — لازم order.total > 0 عشان settle_order
+        # يقبل التسوية (بيرفض إجمالي صفر/سالب صراحة).
+        assert order.total > 0
+
+        # settled_by=None — direct-tender shift lock بيتفعّل بس لما فيه
+        # actor كاشير حقيقي؛ التستات دي بتركّز على القيد المحاسبي، مش
+        # سلسلة الوردية (نفس نمط باقي الـ dining tests اللي بتستخدم room
+        # tender أو بتفتح وردية صراحة لو محتاجة settled_by حقيقي).
+        services.settle_order(
+            db, order.id,
+            tenders=[{"method": "cash", "amount": order.total}],
+            settled_by=None,
+        )
+        db.refresh(order)
+        assert order.status == "paid"
+
+        comp_entries = (
+            db.query(JournalEntry)
+            .filter(
+                JournalEntry.source == "dining_complimentary_expense",
+                JournalEntry.source_id == order.id,
+            )
+            .all()
+        )
+        assert len(comp_entries) == 1
+        entry = comp_entries[0]
+        debit_codes = {line.account.code for line in entry.lines if line.debit > 0}
+        credit_codes = {line.account.code for line in entry.lines if line.credit > 0}
+        assert debit_codes == {"5400"}
+        assert "4200" in credit_codes
+
+        # مجموع مدين القيد ده = order.discount_amount بالظبط — صفر قرش ضائع
+        # بين الجزء المُحصَّل (كاش) والجزء المتبرَّع به (5400).
+        total_debit = sum(line.debit for line in entry.lines)
+        assert total_debit == order.discount_amount
+
+    def test_non_complimentary_group_discount_posts_no_expense_entry(self, db):
+        """خصم مجموعة عادية (ولاء/سعر شركات، is_complimentary=False) — نفس
+        السلوك القديم بالظبط، صفر قيد مصروف إضافي."""
+        from app.modules.finance.models import JournalEntry
+
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch, outlet_type="cafe", revenue_account_code="4200")
+        make_finance_accounts(db, branch, revenue_code="4200")
+        item = make_item(db, branch, outlet, price=Decimal("100.00"))
+        customer, _group = self._make_customer_with_group(
+            db, branch, pct=Decimal("10"), is_complimentary=False,
+        )
+
+        order = services.create_order(
+            db, branch.id,
+            OrderCreate(outlet_id=outlet.id, order_type="takeaway", customer_id=customer.id,
+                        items=[OrderItemCreate(item_id=item.id, quantity=1)]),
+            waiter_id=1,
+        )
+        services.update_order_status(db, order.id, "served")
+        db.refresh(order)
+        assert order.discount_amount > 0
+
+        # settled_by=None — direct-tender shift lock بيتفعّل بس لما فيه
+        # actor كاشير حقيقي؛ التستات دي بتركّز على القيد المحاسبي، مش
+        # سلسلة الوردية (نفس نمط باقي الـ dining tests اللي بتستخدم room
+        # tender أو بتفتح وردية صراحة لو محتاجة settled_by حقيقي).
+        services.settle_order(
+            db, order.id,
+            tenders=[{"method": "cash", "amount": order.total}],
+            settled_by=None,
+        )
+
+        comp_entries = (
+            db.query(JournalEntry)
+            .filter(
+                JournalEntry.source == "dining_complimentary_expense",
+                JournalEntry.source_id == order.id,
+            )
+            .all()
+        )
+        assert comp_entries == []
 
 
 class TestFoodCostReport:

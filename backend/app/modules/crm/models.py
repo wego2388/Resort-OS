@@ -34,6 +34,13 @@ class CustomerGroup(Base, TimestampMixin):
     name_ar:             Mapped[str | None] = mapped_column(String(100), nullable=True)
     discount_percentage: Mapped[Decimal]  = mapped_column(Numeric(5, 2), default=Decimal("0"))
     is_active:           Mapped[bool]     = mapped_column(Boolean, default=True)
+    # True = المجموعة دي خصمها "ضيافة/تكريم" حقيقي (موظفين، ضيوف VIP مجانًا)
+    # مش تسعير تجاري عادي (زي خصم ولاء أو سعر شركات متفاوَض عليه). الفرق
+    # محاسبي بحت: عند التسوية، الجزء المخصوم بيترحّل كمصروف ضيافة حقيقي
+    # (Dr 5400) بدل ما يختفي بصمت من غير أي أثر — عشان تقرير تكلفة الطعام
+    # ميفهمش استهلاك المجموعة دي "نقص مخزون مجهول". راجع
+    # dining.services._post_complimentary_expense_if_applicable.
+    is_complimentary:    Mapped[bool]     = mapped_column(Boolean, default=False)
 
     customers: Mapped[list["Customer"]] = relationship("Customer", back_populates="customer_group", lazy="select")
 

@@ -571,6 +571,10 @@ def _seed_chart_of_accounts(db: Session) -> None:
         {"code": "2310", "name": "التزام عقود الملكية الجزئية",       "account_type": "liability"},
         {"code": "3100", "name": "رأس المال",                     "account_type": "equity"},
         {"code": "3200", "name": "أرباح مرحّلة",                  "account_type": "equity"},
+        # 2026-09-04 — طلب Mohamed: استهلاك مجموعات عملاء "ضيافة/تكريم"
+        # (زي مجموعة الموظفين) يترحّل كمصروف حقيقي بدل ما يختفي بصمت.
+        # راجع crm.CustomerGroup.is_complimentary + dining.services.
+        {"code": "5400", "name": "مصروف ضيافة/استهلاك مجاني (موظفين وتكريم)", "account_type": "expense"},
     ]
 
     existing = {

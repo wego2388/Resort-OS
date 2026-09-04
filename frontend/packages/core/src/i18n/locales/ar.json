@@ -4705,6 +4705,8 @@
       "discountOf": "خصم {pct}%",
       "groupActive": "نشطة",
       "groupSuspended": "موقوفة",
+      "groupComplimentary": "ضيافة/تكريم",
+      "groupComplimentaryHint": "الجزء المخصوم يترحّل كمصروف حقيقي بدل ما يختفي — للموظفين والتكريم، مش للخصومات التجارية العادية",
       "edit": "تعديل",
       "suspend": "إيقاف",
       "noGroups": "لا توجد مجموعات عملاء بعد",

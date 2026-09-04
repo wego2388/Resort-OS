@@ -45,9 +45,12 @@ def _assert_crm_branch(db, user, branch_id: int, action_desc: str) -> None:
 
 
 # ── Customer Groups (standing discount) ─────────────────────────────────
-# نفس نمط /finance/discounts بالظبط (مرجع صريح): قراءة لمدير+، إنشاء/تعديل
-# لـ admin+ فقط — تعيين مجموعة لعميل بيمنحه خصم دائم تلقائي على مبيعاته
-# القادمة، فمفيش داعي يبقى مقيّد أوسع من إدارة الخصومات الشرطية نفسها.
+# نفس نمط /finance/discounts: قراءة لمدير+. إنشاء/تعديل افتراضيًا admin+
+# (نفس السقف القديم بالظبط، عبر require_permission مش role dependency صلب)
+# — لكن دلوقتي قابل لمنح استثناء صريح لمحاسب معيّن (طلب Mohamed 2026-09-04:
+# نسبة خصم مجموعات زي "الموظفين" قرار مالي يفترض المحاسب يقدر يضبطه هو
+# كمان، مش السوبر أدمن بس) عبر شاشة /admin/permissions العادية، من غير ما
+# نرفع سقف الدور العام لكل المحاسبين.
 
 @router.get("/crm/customer-groups", response_model=list[CustomerGroupRead])
 def list_customer_groups(
@@ -59,14 +62,16 @@ def list_customer_groups(
 
 
 @router.post("/crm/customer-groups", response_model=CustomerGroupRead,
-             status_code=status.HTTP_201_CREATED)
-def create_customer_group(data: CustomerGroupCreate, db: DbDep, user=Depends(get_admin_user)):
+             status_code=status.HTTP_201_CREATED,
+             dependencies=[Depends(require_permission("crm.customer_groups", "manage", min_role_level=80))])
+def create_customer_group(data: CustomerGroupCreate, db: DbDep, user=Depends(get_current_active_user)):
     _assert_crm_branch(db, user, data.branch_id, "إنشاء مجموعة عملاء")
     return services.create_customer_group(db, data)
 
 
-@router.patch("/crm/customer-groups/{group_id}", response_model=CustomerGroupRead)
-def update_customer_group(group_id: int, data: CustomerGroupUpdate, db: DbDep, user=Depends(get_admin_user)):
+@router.patch("/crm/customer-groups/{group_id}", response_model=CustomerGroupRead,
+              dependencies=[Depends(require_permission("crm.customer_groups", "manage", min_role_level=80))])
+def update_customer_group(group_id: int, data: CustomerGroupUpdate, db: DbDep, user=Depends(get_current_active_user)):
     group = crud.get_customer_group(db, group_id)
     if not group:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "المجموعة غير موجودة")

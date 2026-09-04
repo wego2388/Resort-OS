@@ -89,6 +89,20 @@ def get_customer_group_discount_percentage(db: Session, customer_id: Optional[in
     return group.discount_percentage
 
 
+def is_customer_group_complimentary(db: Session, customer_id: Optional[int]) -> bool:
+    """True لو العميل ده مربوط بمجموعة خصمها "ضيافة/تكريم" حقيقي (زي
+    مجموعة الموظفين) — راجع CustomerGroup.is_complimentary. بتُستخدم وقت
+    التسوية عشان نقرر: الجزء المخصوم يترحّل كمصروف حقيقي (5400) بدل ما
+    يختفي بصمت، نفس منطق get_customer_group_discount_percentage بالظبط."""
+    if not customer_id:
+        return False
+    customer = crud.get_customer(db, customer_id)
+    if not customer or not customer.customer_group_id:
+        return False
+    group = crud.get_customer_group(db, customer.customer_group_id)
+    return bool(group and group.is_active and group.is_complimentary)
+
+
 # ── Customer ──────────────────────────────────────────────────────────
 
 def get_customer_or_404(db: Session, customer_id: int) -> Customer:

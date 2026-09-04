@@ -1416,6 +1416,10 @@ def settle_order(
                 approver_pin=approver_pin,
             )
 
+        # 2026-09-04 — طلب Mohamed: استهلاك مجموعات "ضيافة/تكريم" (زي
+        # الموظفين) يترحّل كمصروف حقيقي بدل ما يختفي بصمت مع الخصم.
+        _post_complimentary_expense_if_applicable(db, order, outlet_splits, revenue_account)
+
         # خصم المخزون مرة واحدة للطلب كله جوه المعاملة الصارمة.
         _deduct_inventory_for_order(db, order, commit=False, strict=True)
 
@@ -1581,6 +1585,83 @@ def _post_folio_revenue_splits(
             reference=f"{ref_base}-OUT{outlet.id}",
             description=f"إيرادات دايننج (فوليو/{outlet.name}) — {order.order_number}",
             source="dining_folio_charge", source_id=order.id,
+            cost_center_code=_outlet_cost_center_code(outlet),
+            commit_cost_centers=False,
+        )
+
+
+def _post_complimentary_expense_if_applicable(
+    db: Session, order: DiningOrder,
+    outlet_splits: "list[tuple] | None",
+    fallback_revenue_code: str,
+) -> None:
+    """2026-09-04 — طلب Mohamed: لو عميل الطلب مربوط بمجموعة "ضيافة/تكريم"
+    حقيقية (CustomerGroup.is_complimentary — زي مجموعة "الموظفين")، الجزء
+    المخصوم من الطلب بيترحّل كمصروف ضيافة حقيقي (5400) بدل ما يختفي بصمت مع
+    الخصم. من غير القيد ده: المخزون بيتخصم فعليًا (_deduct_inventory_for_order
+    شغالة لكل الطلبات بغض النظر عن الخصم) لكن مفيش أي أثر محاسبي مقابل —
+    يعني تقرير تكلفة الطعام كان هيشوف نقص مخزون "مجهول" بدل مصروف موثّق.
+
+    خصومات المجموعات العادية (ولاء، سعر شركات متفاوَض) **ميتأثروش خالص** —
+    دول تسعير تجاري حقيقي، الإيراد المخفّض هو الإيراد الصح من الأساس، صفر
+    قيد إضافي. الفرق كله في علم CustomerGroup.is_complimentary.
+
+    النسبة (net/vat/service) للجزء المخصوم بتتحسب بنفس أسلوب _settle_direct_
+    tender بالظبط (نسبة من نفس order.vat_amount/service_charge الكاملين) —
+    عشان مجموع (الجزء المُحصَّل + الجزء المُتبرَّع به) يفضل يساوي القيم
+    الكاملة المخزّنة على الطلب بالظبط، بدون أي ازدواج أو فقدان قرش."""
+    from app.modules.crm.services import is_customer_group_complimentary  # noqa: PLC0415
+    from app.modules.finance import services as finance_services  # noqa: PLC0415
+
+    discount = order.discount_amount or Decimal("0")
+    if discount <= 0 or not order.customer_id:
+        return
+    if not is_customer_group_complimentary(db, order.customer_id):
+        return
+
+    full_amount_before_discount = (order.total or Decimal("0")) + discount
+    if full_amount_before_discount <= 0:
+        return
+    ratio = discount / full_amount_before_discount
+    vat_share = (order.vat_amount * ratio).quantize(Decimal("0.01"))
+    svc_share = (order.service_charge * ratio).quantize(Decimal("0.01"))
+    ref_base = f"ORD-{order.order_number}-COMP"
+
+    if not outlet_splits or len(outlet_splits) == 1:
+        outlet = outlet_splits[0][0] if outlet_splits else None
+        rev_code = outlet.revenue_account_code if outlet else fallback_revenue_code
+        net_share = (discount - vat_share - svc_share).quantize(Decimal("0.01"))
+        if net_share + vat_share + svc_share <= 0:
+            return
+        finance_services.post_taxed_sale_journal(
+            db, order.branch_id, local_today(settings.TIMEZONE),
+            debit_account_code="5400", revenue_account_code=rev_code,
+            net_revenue_amount=net_share, vat_amount=vat_share, service_charge_amount=svc_share,
+            reference=ref_base,
+            description=f"استهلاك مجموعة ضيافة/تكريم — {order.order_number}",
+            source="dining_complimentary_expense", source_id=order.id,
+            cost_center_code=_outlet_cost_center_code(outlet),
+            commit_cost_centers=False,
+        )
+        return
+
+    total_subtotal = sum(s for _, s in outlet_splits) or Decimal("1")
+    for outlet, sub in outlet_splits:
+        sub_ratio = (sub / total_subtotal).quantize(Decimal("0.0001"))
+        outlet_vat = (vat_share * sub_ratio).quantize(Decimal("0.01"))
+        outlet_svc = (svc_share * sub_ratio).quantize(Decimal("0.01"))
+        outlet_disc = (discount * sub_ratio).quantize(Decimal("0.01"))
+        outlet_net = (outlet_disc - outlet_vat - outlet_svc).quantize(Decimal("0.01"))
+        amount = outlet_net + outlet_vat + outlet_svc
+        if amount <= 0:
+            continue
+        finance_services.post_taxed_sale_journal(
+            db, order.branch_id, local_today(settings.TIMEZONE),
+            debit_account_code="5400", revenue_account_code=outlet.revenue_account_code,
+            net_revenue_amount=outlet_net, vat_amount=outlet_vat, service_charge_amount=outlet_svc,
+            reference=f"{ref_base}-OUT{outlet.id}",
+            description=f"استهلاك مجموعة ضيافة/تكريم ({outlet.name}) — {order.order_number}",
+            source="dining_complimentary_expense", source_id=order.id,
             cost_center_code=_outlet_cost_center_code(outlet),
             commit_cost_centers=False,
         )
