@@ -74,16 +74,18 @@ from app.modules.timeshare.schemas import (
     TimeshareContractCreate, TimeshareContractRead, TimeshareContractUpdate,
     TimeshareOwnerContractRead, TimeshareOwnerVerifyConfirm, TimeshareOwnerVerifyRequest,
     TimeshareOwnerPortalToken,
-    TimeshareStaffCreate, TimeshareStaffProvisioned, TimeshareStaffRead, TimeshareStaffStatusUpdate,
+    TimeshareEligibleEmployeeRead, TimeshareStaffCreate, TimeshareStaffProvisioned,
+    TimeshareStaffRead, TimeshareStaffStatusUpdate,
     TimeshareSupportTicketCreate, TimeshareSupportTicketRead,
     TimeshareTicketReplyCreate, TimeshareTicketStatusUpdate,
     TimeshareUnitCreate, TimeshareUnitPairCreate, TimeshareUnitPairRead,
     TimeshareUnitRead, TimeshareUnitUpdate,
     TimeshareVisitCreate, TimeshareVisitRead, TimeshareVisitUpdate,
     TimeshareVisitRequestApprove, TimeshareVisitRequestCreate,
-    TimeshareVisitRequestReject, TimeshareVisitRequestRead,
+    TimeshareVisitRequestReject, TimeshareVisitRequestRead, TimeshareUnitAvailabilityRead,
     WaitlistCreate, WaitlistRead, WaitlistStatusUpdate,
     ImportContractsResponse,
+    TIMESHARE_BOOKING_RULES_VERSION, TIMESHARE_TERMS_VERSION,
 )
 from app.modules.core import services as core_services
 from app.modules.core.schemas import PaginatedResponse
@@ -423,7 +425,7 @@ def list_waitlist(db: DbDep, user=Depends(get_timeshare_user), branch_id: int = 
 
 @router.post("/timeshare/waitlist", response_model=WaitlistRead,
              status_code=status.HTTP_201_CREATED,
-             dependencies=[Depends(require_permission("timeshare.waitlist", "create", min_role_level=40))])
+             dependencies=[Depends(require_permission("timeshare.waitlist", "create", min_role_level=25))])
 def add_to_waitlist(data: WaitlistCreate, db: DbDep, user=Depends(get_timeshare_user)):
     _assert_timeshare_branch(db, user, data.branch_id, "إضافة لقائمة الانتظار")
     try:
@@ -581,7 +583,7 @@ def list_visits(
 
 @router.post("/timeshare/visits", response_model=TimeshareVisitRead,
              status_code=status.HTTP_201_CREATED,
-             dependencies=[Depends(require_permission("timeshare.visits", "create", min_role_level=40))])
+             dependencies=[Depends(require_permission("timeshare.visits", "create", min_role_level=25))])
 def create_visit(data: TimeshareVisitCreate, db: DbDep, user=Depends(get_timeshare_user)):
     _assert_timeshare_branch(db, user, data.branch_id, "إنشاء زيارة ملكية جزئية")
     try:
@@ -689,6 +691,16 @@ async def import_contracts_excel(
 ):
     _assert_timeshare_branch(db, user, branch_id, "استيراد عقود من Excel")
     try:
+        # مراجعة Codex 2026-08-31 (SEC-10): نفس فحص content-type المضاف لـ
+        # hr.import_attendance_excel — services.import_contracts_excel كان
+        # عنده أصلاً حد 5 ميجا (zip bomb protection) بس بعد قراءة الملف
+        # كامل ومن غير فحص نوع محتوى.
+        ALLOWED_EXCEL_TYPES = {
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/octet-stream",
+        }
+        if file.content_type not in ALLOWED_EXCEL_TYPES or not (file.filename or "").lower().endswith(".xlsx"):
+            raise ValueError("الملف لازم يكون Excel (.xlsx) صحيح")
         content = await file.read()
         return services.import_contracts_excel(db, branch_id, content, signed_by=user.id)
     except ValueError as exc:
@@ -705,6 +717,16 @@ def _resolve_owner_token(x_owner_token: str) -> int:
         return services.verify_owner_portal_token(x_owner_token)
     except services.OwnerVerificationError as exc:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, str(exc))
+
+
+@router.get("/timeshare/public/portal-config", response_model=None)
+def owner_portal_config():
+    """Public non-secret versions required for an explicit valid consent."""
+    return {
+        "resort_name": "El Kheima Beach Resort",
+        "terms_version": TIMESHARE_TERMS_VERSION,
+        "booking_rules_version": TIMESHARE_BOOKING_RULES_VERSION,
+    }
 
 
 @router.post("/timeshare/public/verify-request", response_model=None)
@@ -856,8 +878,29 @@ def list_visit_requests(
             read.customer_name = r.contract.customer_name
             read.customer_phone = r.contract.customer_phone
             read.contract_number = r.contract.contract_number
+            # 2026-08-16: عشان الشاشة الإدارية تعرض خريطة الوحدات الصح وقت
+            # الموافقة — راجع TimeshareVisitRequestRead docstring.
+            read.room_type = r.contract.room_type
+            read.contract_unit_id = r.contract.unit_id
+            read.unit_capacity = r.contract.unit_capacity
         result.append(read)
     return result
+
+
+@router.get("/timeshare/units/availability", response_model=list[TimeshareUnitAvailabilityRead],
+            dependencies=[Depends(require_permission("timeshare.visit_requests", "view", min_role_level=25))])
+def get_units_availability(
+    db: DbDep, user=Depends(get_timeshare_user),
+    branch_id: int = Query(...), unit_type: str = Query(...),
+    check_in: date = Query(...), check_out: date = Query(...),
+):
+    """خريطة الوحدات (2026-08-16) — تدعم اختيار يدوي حقيقي لوحدة عقد عائم
+    وقت تأكيد زيارة، بدل التخصيص الأعمى بالكامل. راجع
+    services.get_units_availability."""
+    _assert_timeshare_branch(db, user, branch_id, "عرض خريطة الوحدات")
+    if check_out <= check_in:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "check_out يجب أن يكون بعد check_in")
+    return services.get_units_availability(db, branch_id, unit_type, check_in, check_out)
 
 
 @router.post("/timeshare/visit-requests/{request_id}/approve", response_model=TimeshareVisitRequestRead,
@@ -869,7 +912,9 @@ def approve_visit_request(request_id: int, data: TimeshareVisitRequestApprove, d
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"طلب الزيارة {request_id} غير موجود")
     _assert_timeshare_branch(db, user, req.branch_id, "الموافقة على طلب زيارة")
     try:
-        return services.approve_visit_request(db, request_id, data.check_in, data.check_out, approved_by=user.id)
+        return services.approve_visit_request(
+            db, request_id, data.check_in, data.check_out, approved_by=user.id, unit_id=data.unit_id,
+        )
     except services.VisitConflictError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
     except ValueError as exc:
@@ -954,11 +999,25 @@ def create_timeshare_staff(data: TimeshareStaffCreate, db: DbDep, user=Depends(g
     try:
         return services.provision_timeshare_agent(
             db, email=data.email, full_name=data.full_name, phone=data.phone,
-            branch_id=data.branch_id, created_by=user.id,
+            employee_id=data.employee_id, branch_id=data.branch_id, created_by=user.id,
             preferred_language=data.preferred_language,
         )
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+@router.get(
+    "/timeshare/staff/eligible-employees",
+    response_model=list[TimeshareEligibleEmployeeRead],
+)
+def list_eligible_timeshare_employees(
+    db: DbDep,
+    user=Depends(get_timeshare_admin_user),
+    branch_id: int = Query(...),
+):
+    """Minimal HR picker: only active, unlinked staff in the active branch."""
+    _assert_timeshare_branch(db, user, branch_id, "عرض الموظفين المتاحين للربط")
+    return services.list_eligible_timeshare_employees(db, branch_id)
 
 
 @router.get("/timeshare/staff", response_model=list[TimeshareStaffRead])

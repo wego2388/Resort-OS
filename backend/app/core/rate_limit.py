@@ -4,13 +4,13 @@ IP-keyed rate limiting middleware for unauthenticated / abuse-prone routes.
 
 Per 08-SECURITY.md:
     login:{ip}        settings.LOGIN_RATE_LIMIT_MAX / LOGIN_RATE_LIMIT_WINDOW_SECONDS
-                       (5/300s production default — راجع app.core.config.Settings)
+                       (60/300s shared-office default — راجع app.core.config.Settings)
     public:{ip}       30  / 60s
 
-⚠️ login threshold بقى قابل للتعديل عبر .env (LOGIN_RATE_LIMIT_MAX/
-LOGIN_RATE_LIMIT_WINDOW_SECONDS) — القيمة الافتراضية (5/300) هي المعتمدة
-أمنيًا وما اتغيّرش، بس بيئة تطوير محلية ممكن ترفعها لراحة اختبار حسابات
-تجريبية كتير بسرعة من غير ما تتقفل. لا تغيّر الافتراضي نفسه، غيّر .env بس.
+The IP bucket is deliberately coarse because all resort devices share one
+NAT address. Known accounts still lock after MAX_LOGIN_ATTEMPTS for either
+password or 2FA failures, so increasing this ceiling does not remove the
+per-identity brute-force control.
 
 Resource-keyed limits (otp:{user_id}, payment:{user_id}, eta:{branch_id}) are
 applied as FastAPI dependencies at their own endpoints instead, since they
@@ -147,6 +147,11 @@ _LIMITED_ROUTES: dict[tuple[str, str], tuple[str, int, int]] = {
     ("POST", "/api/v1/public/alerts"): ("public", 20, 60),
     ("POST", "/api/v1/public/guest-requests"): ("public", 20, 60),
     ("POST", "/api/v1/public/guest-sessions"): ("public", 30, 60),
+    # تقييم ضيف (survey link) — عام بدون auth (JWT token بس). مراجعة Codex
+    # 2026-08-30 (M-03): كان بدون أي حد أقصى خالص — أضيق من التصفح العادي
+    # (20 مش 30) لأنه إجراء كتابة (مش قراءة قائمة)، ونفس نطاق "public" زي
+    # /public/alerts.
+    ("POST", "/api/v1/analytics/reviews/submit"): ("public", 20, 60),
     ("GET",  "/api/v1/public/service-location"): ("public", 30, 60),
     ("GET",  "/api/v1/dining/public/service-menu"): ("public", 60, 60),
     # الشات بوت — أضيق من التصفح العادي (20 مش 30) لأنه نداء AI حقيقي بتكلفة
@@ -163,6 +168,7 @@ _LIMITED_ROUTES: dict[tuple[str, str], tuple[str, int, int]] = {
     # الغاشمة، مش مجرد قراءة قائمة مجانية.
     ("POST", "/api/v1/timeshare/public/verify-request"): ("timeshare-otp", 5, 300),
     ("POST", "/api/v1/timeshare/public/verify-confirm"): ("timeshare-otp", 10, 300),
+    ("GET",  "/api/v1/timeshare/public/portal-config"):   ("public", 30, 60),
     ("GET",  "/api/v1/timeshare/public/my-contract"):     ("public", 30, 60),
     ("GET",  "/api/v1/timeshare/public/my-payments"):     ("public", 30, 60),
     ("POST", "/api/v1/timeshare/public/visit-requests"):  ("public", 20, 60),
@@ -187,6 +193,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             if not rate_limit(f"{prefix}:{ip}", max_requests=max_requests, window_seconds=window):
                 return JSONResponse(
                     status_code=429,
+                    headers={"Retry-After": str(window)},
                     content={
                         "code": "rate_limit_exceeded",
                         "message": "محاولات كثيرة جداً — حاول لاحقاً",

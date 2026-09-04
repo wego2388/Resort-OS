@@ -1,31 +1,35 @@
 """app/modules/beach/services.py — Business logic"""
 from __future__ import annotations
 
+import logging
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.modules.beach import crud
 from app.modules.beach.models import BeachInventory, BeachLocation, BeachTransaction
 from app.modules.beach.schemas import (
-    B2BCheckinRequest, BeachLocationCheckinRequest, BeachReservationCreate,
-    BeachSellRequest,
+    B2BCheckinRequest, BeachCartSellRequest, BeachLocationCheckinRequest,
+    BeachReservationCreate, BeachSellRequest,
 )
 from app.resort_os.beach_engine import (
+    BEACH_CAPACITY_SETTING_KEY,
+    DEFAULT_BEACH_CAPACITY_MAX,
     B2BContractState,
     BeachInventoryState,
-    calculate_b2b_price,
     calculate_inventory_delta,
     calculate_tx_price,
     is_contract_overdue,
+    parse_beach_capacity_max,
     validate_b2b_checkin,
     validate_entry,
-    would_exceed_credit_limit,
 )
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from app.modules.beach.models import B2BContract, B2BContractDay, BeachReservation
@@ -45,11 +49,72 @@ def _business_today() -> date:
     return local_today(settings.TIMEZONE)
 
 
+def _configured_capacity_max(db: Session, branch_id: int) -> tuple[int, bool]:
+    """Return (capacity, explicitly_configured).
+
+    ``False`` preserves an existing daily row created with an intentional
+    one-off capacity when neither a branch nor global setting exists.  New
+    rows still use the safe 200-person fallback.
+    """
+    from app.modules.core.services import get_setting_value  # noqa: PLC0415
+
+    raw = get_setting_value(db, BEACH_CAPACITY_SETTING_KEY, branch_id, default=None)
+    if raw is None:
+        return DEFAULT_BEACH_CAPACITY_MAX, False
+    try:
+        return parse_beach_capacity_max(raw), True
+    except ValueError:
+        logger.error(
+            "Invalid %s setting for branch_id=%s; using safe fallback %s",
+            BEACH_CAPACITY_SETTING_KEY,
+            branch_id,
+            DEFAULT_BEACH_CAPACITY_MAX,
+        )
+        return DEFAULT_BEACH_CAPACITY_MAX, True
+
+
+def get_configured_capacity_max(db: Session, branch_id: int) -> int:
+    """Effective maximum used when a new BeachInventory day is created."""
+    return _configured_capacity_max(db, branch_id)[0]
+
+
+def get_inventory(db: Session, branch_id: int, inv_date: Optional[date] = None) -> BeachInventory:
+    """Get/create a daily row and apply today's configured capacity.
+
+    Past rows remain immutable snapshots.  A setting change takes effect on
+    today's existing row on its next read/sale, while the following day is
+    created from the same branch-aware setting instead of a hard-coded 200.
+    """
+    inv_date = inv_date or _business_today()
+    configured_max, explicitly_configured = _configured_capacity_max(db, branch_id)
+    row = crud.get_inventory(db, branch_id, inv_date)
+    if row is None:
+        return crud.get_or_create_inventory(
+            db, branch_id, inv_date, capacity_max=configured_max,
+        )
+    if (
+        explicitly_configured
+        and inv_date == _business_today()
+        and row.capacity_max != configured_max
+    ):
+        row.capacity_max = configured_max
+        db.flush()
+    return row
+
+
 class BeachConcurrencyError(Exception):
     """عملية بيع/تشيك-إن تانية ماسكة صف سعة الشاطئ لنفس الفرع/اليوم دلوقتي، أو
     موقع فعلي (BeachLocation) مشغول بالفعل/بيتسجّل دخوله دلوقتي — 409، مش 400
     (زي pms.services.BookingConflictError بالظبط: بيغطّي الحالتين "القفل نفسه
     مشغول" و"الحالة التجارية بتاعت المصدر متعارضة" تحت نفس الاستثناء/الكود)."""
+
+
+class NoOpenShiftError(Exception):
+    """محاولة تحصيل tender مباشر (كاش/بطاقة/محفظة) من غير وردية مفتوحة لنفس
+    الكاشير والفرع — 409 NO_OPEN_SHIFT، نفس اتفاقية dining.services تمامًا
+    (نفس error_code، نفس السلوك الأمامي في POSPaymentModal.vue). الدفع
+    المباشر لازم يُنسب لوردية مفتوحة عشان يظهر في تقرير الوردية ومطابقة
+    الكاش؛ من غيرها الكاش المحصّل هيبقى غير منسوب (orphaned)."""
 
 
 def _lock_inventory_or_raise(db: Session, inv_row: BeachInventory) -> BeachInventory:
@@ -127,20 +192,23 @@ def _get_base_prices(db: Session, branch_id: int) -> dict[str, Decimal]:
         child    = _price("beach.price.child",    "100")
         resident = _price("beach.price.resident", "150")
         towel    = _price("beach.price.towel",    "50")
+        service  = _price("beach.price.outside_food_fee", "50")
         return {
-            "entry":          adult,
-            "entry_child":    child,
-            "entry_resident": resident,
-            "entry_towel":    adult + towel,
-            "towel_rent":     towel,
+            "entry":            adult,
+            "entry_child":      child,
+            "entry_resident":   resident,
+            "entry_towel":      adult + towel,
+            "towel_rent":       towel,
+            "outside_food_fee": service,
         }
     except Exception:
         return {
-            "entry":          Decimal("200"),
-            "entry_child":    Decimal("100"),
-            "entry_resident": Decimal("150"),
-            "entry_towel":    Decimal("250"),
-            "towel_rent":     Decimal("50"),
+            "entry":            Decimal("200"),
+            "entry_child":      Decimal("100"),
+            "entry_resident":   Decimal("150"),
+            "entry_towel":      Decimal("250"),
+            "towel_rent":       Decimal("50"),
+            "outside_food_fee": Decimal("50"),
         }
 
 
@@ -154,13 +222,14 @@ def get_base_prices(db: Session, branch_id: int) -> dict[str, Decimal]:
     return _get_base_prices(db, branch_id)
 
 
-def _vat(db: Session, branch_id: int, amount: Decimal) -> Decimal:
-    """راجع core.services.get_effective_vat_percentage — 2026-08-03: كان
-    بيقرأ settings.VAT_PERCENTAGE (env) مباشرة، فتعديل مدير للنسبة من
-    شاشة الإعدادات مالوش أي أثر فعلي على بيع شاطئ حقيقي."""
-    from app.modules.core.services import get_effective_vat_percentage  # noqa: PLC0415
-    pct = get_effective_vat_percentage(db, branch_id)
-    return (amount * pct / Decimal("100")).quantize(Decimal("0.01"))
+BEACH_VAT_AMOUNT = Decimal("0.00")
+"""قرار التشغيل 2026-08-15: أسعار الشاطئ نهائية ولا تُضاف عليها VAT.
+
+``BeachTransaction.total_amount`` هو المبلغ الوحيد الذي يراه ويدفعه
+الكاشير، وهو نفسه الذي يُسجَّل في الوردية والفوليو والحساب الآجل والدفتر.
+وجود الثابت هنا يمنع رجوع الاختلاف القديم الذي كان يعرض 200 ج في الـPOS
+والإيصال ثم يسجّل 228 ج في درج الوردية بسبب VAT مخفية.
+"""
 
 
 def _customer_group_discount_amount(db: Session, customer_id: Optional[int], gross_amount: Decimal) -> Decimal:
@@ -209,6 +278,65 @@ def sell_ticket(
         raise
 
 
+def sell_cart(
+    db: Session,
+    branch_id: int,
+    data: BeachCartSellRequest,
+    tx_date: Optional[date] = None,
+    acting_user_level: int = 100,
+) -> list[BeachTransaction]:
+    """بيع سلة متعددة الأصناف (زي "2 بالغ + فوطة") كـ transaction واحدة
+    atomic — إما كل صنف ينجح أو ولا واحد فيهم يترحّل، عكس اللي كان بيحصل
+    قبل كده (POS بيبعت طلب منفصل لكل صنف، وأي فشل نصف طريق كان بيسيب سلة
+    نص متسجّلة). idempotency على مستوى السلة كلها: لو ``cart_local_id``
+    موجود ومعاد إرساله (retry بعد قطع نت)، بنرجّع نفس التذاكر اللي
+    اتسجّلت قبل كده بدل ما نكرر البيع.
+
+    كل صنف بيستخدم نفس مسار sell_ticket الداخلي (_sell_ticket_no_commit)
+    حرفيًا — صفر منطق مكرر، بس من غير commit مستقل لكل صنف."""
+    if data.cart_local_id:
+        existing = crud.get_transactions_by_cart_local_id(db, data.cart_local_id)
+        if existing:
+            return existing
+
+    tx_date = tx_date or _business_today()
+    results: list[BeachTransaction] = []
+    try:
+        for index, item in enumerate(data.items):
+            item_local_id = f"{data.cart_local_id}:{index}" if data.cart_local_id else None
+            single = BeachSellRequest(
+                tx_type=item.tx_type, quantity=item.quantity,
+                cashier_id=data.cashier_id, folio_id=data.folio_id, room_id=data.room_id,
+                b2b_contract_id=data.b2b_contract_id, customer_id=data.customer_id,
+                credit_account_id=data.credit_account_id, notes=data.notes,
+                location_id=data.location_id, local_id=item_local_id,
+                payment_currency=data.payment_currency, payment_fx_rate=data.payment_fx_rate,
+                payment_method=data.payment_method, payment_channel_id=data.payment_channel_id,
+                approver_user_id=data.approver_user_id, approver_pin=data.approver_pin,
+            )
+            tx = _sell_ticket_no_commit(
+                db, branch_id, single, tx_date, acting_user_level=acting_user_level,
+            )
+            results.append(tx)
+        db.commit()
+    except IntegrityError:
+        # ريترّاي متزامن لنفس السلة بالظبط (نفس cart_local_id) — الـUNIQUE
+        # على client_local_id بيرفض الإدراج الثاني؛ ده مش خطأ فعلي، السلة
+        # الأولى اتسجّلت بالفعل. نرجّعها بدل ما نفشل بغلطة تقنية مربكة.
+        db.rollback()
+        if data.cart_local_id:
+            existing = crud.get_transactions_by_cart_local_id(db, data.cart_local_id)
+            if existing:
+                return existing
+        raise
+    except Exception:
+        db.rollback()
+        raise
+    for tx in results:
+        db.refresh(tx)
+    return results
+
+
 def _sell_ticket_no_commit(
     db: Session,
     branch_id: int,
@@ -235,8 +363,41 @@ def _sell_ticket_no_commit(
         if not folio_id:
             raise ValueError(f"مفيش ضيف مسجّل دخول في الغرفة {data.room_id} حاليًا")
 
+    # طريقة الدفع الفعلية المستخدمة — نفس القاعدة اللي كانت جوه create_transaction
+    # تحت، محسوبة هنا بدري عشان نقدر نتحقق من الوردية/القناة قبل أي أثر جانبي
+    # (خصم سعة، إنشاء تذكرة...).
+    resolved_method = data.payment_method or ("room" if folio_id else "cash")
+    is_direct_tender = not is_personal_credit and resolved_method in ("cash", "card", "wallet")
+
+    # لا تسمح بدفع مباشر (كاش/كارت/محفظة) من غير وردية مفتوحة لنفس الكاشير —
+    # نفس قاعدة dining.services (راجع finance_services._lock_open_shift_or_conflict).
+    # بيتحقق منها *قبل* أي خصم سعة عشان الطلب المرفوض ميسيبش أثر جانبي جزئي.
+    shift_row = None
+    if is_direct_tender and data.cashier_id:
+        from app.modules.finance import services as finance_services  # noqa: PLC0415
+
+        shift_row = finance_services._lock_open_shift_or_conflict(db, branch_id, data.cashier_id)
+        if not shift_row:
+            raise NoOpenShiftError(
+                "مفيش وردية مفتوحة لهذا الكاشير — لازم تفتح وردية قبل تحصيل دفع مباشر"
+            )
+
+    # قناة التحصيل الفعلية (صندوق/Visa CIB/...) — الفرع بدون أي قنوات
+    # مُعرَّفة بيفضل يشتغل بمسار الحساب القديم (legacy fallback)، مش خطأ.
+    channel_snapshot = {
+        "payment_channel_id": None, "payment_channel_code": None,
+        "payment_channel_name": None, "settlement_account_code": None,
+    }
+    settlement_account_code: Optional[str] = None
+    if is_direct_tender:
+        from app.modules.dining.payment_policy import resolve_tender_channel  # noqa: PLC0415
+
+        resolution = resolve_tender_channel(db, branch_id, resolved_method, data.payment_channel_id)
+        settlement_account_code = resolution.account_code
+        channel_snapshot = resolution.channel_snapshot
+
     # جلب/إنشاء inventory + قفل الصف طول الـ transaction (راجع _lock_inventory_or_raise)
-    inv_row = crud.get_or_create_inventory(db, branch_id, tx_date)
+    inv_row = get_inventory(db, branch_id, tx_date)
     inv_row = _lock_inventory_or_raise(db, inv_row)
     inv_state = BeachInventoryState(
         towels_available=inv_row.towels_available,
@@ -255,12 +416,11 @@ def _sell_ticket_no_commit(
     surge_pct   = float(inv_row.surge_pct)
     unit_price  = calculate_tx_price(data.tx_type, base_prices, surge_pct)
     gross_total = unit_price * data.quantity
-    # خصم مجموعة العميل الدائم — تلقائي بالكامل، بيتحسب على السعر الأصلي
-    # قبل الـ VAT (نفس اتفاقية dining._customer_group_discount_amount).
-    # الـ VAT بيتحسب على gross_total من غير خصم (زي dining بالظبط — الخصم
-    # بيقلل الصافي المُحصَّل، مش بيغيّر الإقرار الضريبي على السعر المعلن).
+    # خصم مجموعة العميل الدائم — تلقائي بالكامل، بيتحسب على السعر الأصلي.
+    # قرار التشغيل 2026-08-15: الشاطئ بلا VAT؛ السعر بعد الخصم هو المبلغ
+    # النهائي نفسه في الشاشة والإيصال والتحصيل وتقفيل الوردية.
     discount = _customer_group_discount_amount(db, data.customer_id, gross_total)
-    vat      = _vat(db, branch_id, gross_total)
+    vat      = BEACH_VAT_AMOUNT
     total    = max(Decimal("0"), gross_total - discount)
 
     # تحديث inventory
@@ -269,13 +429,17 @@ def _sell_ticket_no_commit(
 
     # ربط العملية بوردية الكاشير المفتوحة (لو موجودة) — نفس الباترن المستخدم
     # في finance.services.add_payment، عشان مبيعات الشاطئ تظهر في تقرير نهاية
-    # الوردية بدل ما تفضل غير مرتبطة بأي وردية.
-    shift_id = None
-    if data.cashier_id:
-        from app.modules.finance.crud import get_open_shift  # noqa: PLC0415
-        open_shift = get_open_shift(db, branch_id, data.cashier_id)
-        if open_shift:
-            shift_id = open_shift.id
+    # الوردية بدل ما تفضل غير مرتبطة بأي وردية. لو دفع مباشر، shift_row
+    # اتقفلت بالفعل فوق (نفس الصف، مش لوكاپ تاني غير مقفول).
+    if shift_row is not None:
+        shift_id = shift_row.id
+    else:
+        shift_id = None
+        if data.cashier_id:
+            from app.modules.finance.crud import get_open_shift  # noqa: PLC0415
+            open_shift = get_open_shift(db, branch_id, data.cashier_id)
+            if open_shift:
+                shift_id = open_shift.id
 
     tx = crud.create_transaction(db, {
         "branch_id":       branch_id,
@@ -288,7 +452,7 @@ def _sell_ticket_no_commit(
         "surge_applied":   surge_pct > 0,
         "tx_date":         tx_date,
         "cashier_id":      data.cashier_id,
-        "payment_method":  data.payment_method or ("room" if folio_id else "cash"),
+        "payment_method":  resolved_method,
         "folio_id":        folio_id,
         "b2b_contract_id": data.b2b_contract_id,
         "customer_id":     data.customer_id,
@@ -296,6 +460,7 @@ def _sell_ticket_no_commit(
         "shift_id":        shift_id,
         "location_id":     data.location_id,
         "client_local_id": data.local_id,
+        **channel_snapshot,
     })
 
     # POS-03: نحفظ currency/fx_rate كـ transient attributes على الـ tx عشان
@@ -340,14 +505,8 @@ def _sell_ticket_no_commit(
             raise ValueError(
                 "لا يوجد حساب آجل مطابق في هذا الفرع"
             )
-        # ⚠️ فجوة معروفة، غير مغطاة بهذه الدفعة (FIN-TAX-01 غطّت direct
-        # tender وfolio charge فقط): revenue_allocations هنا لسه بترحّل
-        # الإجمالي شامل VAT كإيراد كامل على 4300 — نفس باج post_simple_
-        # revenue_journal بالظبط، بس عبر آلية ترحيل منفصلة تمامًا في
-        # credit.services._create_journal (مش finance.services). تصحيحها
-        # يحتاج تغيير شكل credit_allocations نفسه (مشترك مع dining أيضًا) —
-        # نطاق أوسع من الدفعة دي، موثّق كمتابعة منفصلة.
-        charge_amount = (tx.total_amount or Decimal("0")) + (tx.vat_amount or Decimal("0"))
+        # سعر الشاطئ نهائي بلا VAT؛ الحساب الآجل يستلم نفس إجمالي الشاشة.
+        charge_amount = tx.total_amount or Decimal("0")
         credit_services.charge_to_account(
             db,
             credit_account.id,
@@ -390,22 +549,29 @@ def _sell_ticket_no_commit(
             db.rollback()
             raise
     else:
-        _post_beach_revenue_journal(db, tx)
-        _record_shift_payment(db, tx)
+        _post_beach_revenue_journal(db, tx, settlement_account_code)
+        _record_shift_payment(db, tx, channel_snapshot)
     if tx.customer_id:
         from app.modules.crm.services import record_customer_visit  # noqa: PLC0415
-        record_customer_visit(db, tx.customer_id, tx.total_amount + tx.vat_amount, tx.tx_date)
+        record_customer_visit(db, tx.customer_id, tx.total_amount, tx.tx_date)
 
     return tx
 
 
-def _post_beach_revenue_journal(db: Session, tx: "BeachTransaction") -> None:
+def _post_beach_revenue_journal(
+    db: Session, tx: "BeachTransaction", settlement_account_code: Optional[str] = None,
+) -> None:
     """Direct tender journal, using the configured GL account for its method.
 
-    OPS-DATA-02 §11.2 (FIN-TAX-01) — كانت بترحّل total_amount+vat_amount
-    (الإجمالي شامل الضريبة) على 4300 كإيراد كامل، يعني VAT payable ماكانش
-    بيتسجّل خالص وإيراد الشاطئ كان مبالغ فيه بقيمة الضريبة. الشاطئ VAT بس،
-    مفيش رسم خدمة (§10.4).
+    قرار التشغيل 2026-08-15: الشاطئ بلا VAT أو رسم خدمة. نستخدم نفس منشئ
+    القيد الصارم المشترك لكن بقيمة ضريبة صفر؛ الناتج Dr وسيلة التحصيل / Cr
+    إيراد الشاطئ بالمبلغ النهائي الظاهر للكاشير.
+
+    ``settlement_account_code`` هو نفس الحساب اللي resolve_tender_channel
+    حلّه وقت البيع (قناة تحصيل حقيقية أو fallback القديم) — بيتمرر من
+    _sell_ticket_no_commit عشان يفضل نفس الحساب المستخدم فعليًا، مش إعادة
+    حل مستقل ممكن يختلف نظريًا لو إعداد القناة اتغيّر في نفس اللحظة.
+    ``None`` (نداء مباشر قديم بدون تمرير الباراميتر) يرجع لمسار legacy.
 
     towel_return مالوش قيمة مالية (0/0) — post_taxed_sale_journal الصارمة
     بترفض إجمالي صفر (على عكس post_simple_revenue_journal القديمة اللي
@@ -417,7 +583,7 @@ def _post_beach_revenue_journal(db: Session, tx: "BeachTransaction") -> None:
     from app.modules.dining.payment_policy import resolve_direct_tender_account  # noqa: PLC0415
 
     method = tx.payment_method or "cash"
-    debit_code = resolve_direct_tender_account(method)
+    debit_code = settlement_account_code or resolve_direct_tender_account(method)
 
     post_taxed_sale_journal(
         db, tx.branch_id, tx.tx_date,
@@ -428,10 +594,19 @@ def _post_beach_revenue_journal(db: Session, tx: "BeachTransaction") -> None:
         description=f"إيرادات شاطئ ({method}) — {tx.tx_type}",
         source="beach", source_id=tx.id,
         cost_center_code="BEACH",
+        # ⚠️ باج حقيقي اتكشف واتصلح هنا (أثناء بناء sell_cart): الافتراضي
+        # commit_cost_centers=True كان بيعمل db.commit() ضمني (عبر
+        # ensure_default_cost_centers) وسط أي عملية بيع شاطئ — يعني حتى
+        # sell_ticket المفرد كان بيقفل الـtransaction بدري من غير قصد، وسلة
+        # متعددة الأصناف (sell_cart) كانت بتفقد الـatomicity بالكامل: أول
+        # صنف ينجح كان بيتثبّت فعليًا في الداتابيز قبل ما نوصل حتى للصنف
+        # التاني، فرفض صنف لاحق مايقدرش يرجع الصنف الناجح. نفس الحل
+        # المستخدم في dining.services (Gate 1B) لكل مسار strict atomic.
+        commit_cost_centers=False,
     )
 
 
-def _record_shift_payment(db: Session, tx: "BeachTransaction") -> None:
+def _record_shift_payment(db: Session, tx: "BeachTransaction", channel_snapshot: Optional[dict] = None) -> None:
     """⚠️ باج حقيقي اتصلح: migration 504f42d2c755 (2026-07-15) جهّزت
     Payment.folio_id nullable/ref_order_id صراحةً "عشان مبيعات الشاطئ/
     الدايننج المباشرة تظهر في تقرير نهاية الوردية" — بس عمرها ما كان فيه
@@ -460,7 +635,9 @@ def _record_shift_payment(db: Session, tx: "BeachTransaction") -> None:
 
     finance_crud.create_direct_payment(
         db, branch_id=tx.branch_id,
-        amount=(tx.total_amount or Decimal("0")) + (tx.vat_amount or Decimal("0")),
+        # مهم: total_amount هو إجمالي الشاشة/الإيصال النهائي. لا تضف أي
+        # مكوّن آخر هنا وإلا سيظهر فرق وهمي عند تقفيل الوردية.
+        amount=(tx.total_amount or Decimal("0")),
         method=tx.payment_method or "cash",
         posted_at=datetime.combine(tx.tx_date, datetime.min.time()),
         shift_id=tx.shift_id, cashier_id=tx.cashier_id,
@@ -468,14 +645,16 @@ def _record_shift_payment(db: Session, tx: "BeachTransaction") -> None:
         currency=currency,
         fx_rate=fx_rate,
         source="beach",
+        channel_snapshot=channel_snapshot,
     )
 
 
 def _post_beach_folio_charge_journal(db: Session, tx: "BeachTransaction") -> None:
-    """Dr. ذمم الفوليو (1150) / Cr. إيراد الشاطئ (4300) + VAT payable —
-    عملية محمّلة على فوليو غرفة. راجع restaurant.services._post_order_folio_
-    charge_journal للتفاصيل الكاملة — نفس المنطق بالظبط، زائد فصل الضريبة
-    (FIN-TAX-01، OPS-DATA-02 §11.2)."""
+    """Dr. ذمم الفوليو (1150) / Cr. إيراد الشاطئ (4300).
+
+    عملية محمّلة على فوليو غرفة بالمبلغ النهائي نفسه؛ الشاطئ بلا VAT أو
+    رسم خدمة بقرار التشغيل 2026-08-15.
+    """
     from app.modules.finance.services import post_taxed_sale_journal  # noqa: PLC0415
 
     post_taxed_sale_journal(
@@ -487,19 +666,30 @@ def _post_beach_folio_charge_journal(db: Session, tx: "BeachTransaction") -> Non
         description=f"إيرادات شاطئ (محمّل على الغرفة) — {tx.tx_type}",
         source="beach_folio_charge", source_id=tx.id,
         cost_center_code="BEACH",
+        commit_cost_centers=False,  # راجع تعليق _post_beach_revenue_journal
     )
 
 
-def _contract_state(contract_row: "B2BContract", checked_in_today: int) -> B2BContractState:
+def _month_bounds(day: date) -> tuple[date, date]:
+    """أول وآخر يوم في الشهر التقويمي اللي يحتوي ``day`` — يُستخدم لحساب
+    استهلاك الحد الشهري الاسترشادي ولقطة guests_count وقت الترحيل الشهري."""
+    start = day.replace(day=1)
+    if start.month == 12:
+        end = date(start.year, 12, 31)
+    else:
+        end = date(start.year, start.month + 1, 1) - timedelta(days=1)
+    return start, end
+
+
+def _contract_state(contract_row: "B2BContract", checked_in_this_month: int) -> B2BContractState:
     """يبني B2BContractState من صف B2BContract — نقطة واحدة عشان أي حقل
     جديد (زي valid_from/valid_until) يتضاف مرة واحدة بس، مش يتكرر في 3 أماكن."""
     return B2BContractState(
         contract_id=contract_row.id,
         hotel_name=contract_row.hotel_name,
-        daily_quota=contract_row.daily_quota,
-        checked_in_today=checked_in_today,
-        entry_price=contract_row.entry_price,
-        towel_price=contract_row.towel_price,
+        monthly_guest_cap=contract_row.monthly_guest_cap,
+        checked_in_this_month=checked_in_this_month,
+        monthly_fee=contract_row.monthly_fee,
         is_active=contract_row.is_active,
         valid_from=contract_row.valid_from,
         valid_until=contract_row.valid_until,
@@ -512,6 +702,12 @@ def b2b_checkin(
     data: B2BCheckinRequest,
     tx_date: Optional[date] = None,
 ) -> BeachTransaction:
+    """2026-08-20، طلب Mohamed صراحةً: عقد B2B بقى مبلغ شهري ثابت، فتشيك-إن
+    الضيف بقى عدّاد بحت — مفيش سعر، مفيش رفض لو الحد الشهري الاسترشادي
+    اتخطّى (تخطّيه مسموح صراحةً)، ومفيش قيد محاسبي هنا خالص (الإيراد
+    بيترحّل مرة واحدة شهريًا — راجع post_b2b_monthly_fees). المتبقّي اللي
+    لسه حقيقي فعليًا: صلاحية العقد + سعة/فوط الشاطئ الفعلية (قيود فيزيائية
+    حقيقية، مش شرط عقد)."""
     tx_date = tx_date or _business_today()
 
     contract_row = crud.get_b2b_contract(db, data.contract_id)
@@ -520,14 +716,17 @@ def b2b_checkin(
 
     contract_day = crud.get_or_create_contract_day(db, data.contract_id, tx_date)
     contract_day = _lock_contract_day_or_raise(db, contract_day)
-    contract_state = _contract_state(contract_row, contract_day.checked_in_count)
 
-    validation = validate_b2b_checkin(contract_state, data.guests_count, tx_date)
+    month_start, month_end = _month_bounds(tx_date)
+    checked_in_this_month = crud.get_b2b_checked_in_count_for_month(db, data.contract_id, month_start, month_end)
+    contract_state = _contract_state(contract_row, checked_in_this_month)
+
+    validation = validate_b2b_checkin(contract_state, tx_date)
     if not validation.valid:
         raise ValueError(validation.error)
 
     # التحقق من inventory — نفس قفل الصف المستخدم في sell_ticket
-    inv_row = crud.get_or_create_inventory(db, branch_id, tx_date)
+    inv_row = get_inventory(db, branch_id, tx_date)
     inv_row = _lock_inventory_or_raise(db, inv_row)
     inv_state = BeachInventoryState(
         towels_available=inv_row.towels_available,
@@ -540,49 +739,27 @@ def b2b_checkin(
     if not inv_validation.valid:
         raise ValueError(inv_validation.error)
 
-    total = calculate_b2b_price(contract_state, data.guests_count, data.with_towel)
-    vat   = _vat(db, branch_id, total)
-
-    # تحقق من حد الائتمان — قبل أي تعديل فعلي على inventory/checked_in_count
-    # عشان لو اتخطى الحد، محدش يتأثر ولا يتحتاج عكس. راجع تعليق B2BContract
-    # في models.py: حد ائتمان صريح (مش None) معناه مدير الإيرادات قرر عمدًا
-    # إن الفندق ده يستاهل حد أقصى للرصيد المستحق — تخطيه لازم يترفض بوضوح
-    # (زي استنفاد الحصة اليومية بالظبط)، مش يتحول لمجرد تحذير صامت ممكن حد
-    # يتجاهله تحت ضغط الشغل (نفس فئة الأخطاء الصامتة اللي اتصلحت في موديولات
-    # تانية قبل كده في هذا المشروع). المقارنة على أساس `total` (قبل الضريبة)
-    # مش `total + vat` — عشان تفضل متسقة مع B2BContractDay.total_amount نفسه
-    # (نفس العمود اللي بيتجمع منه outstanding_balance وبيُعرض كـ "إيراد B2B"
-    # في اللوحة الحيّة أصلاً)، مش رقم تاني بمعنى مختلف شوية.
-    if contract_row.credit_limit is not None:
-        outstanding = crud.get_b2b_outstanding_balance(db, data.contract_id, contract_row.last_settled_at)
-        if would_exceed_credit_limit(outstanding, total, contract_row.credit_limit):
-            raise ValueError(
-                f"تخطّى حد الائتمان لعقد {contract_row.hotel_name} — "
-                f"الرصيد المستحق حاليًا {outstanding:,.2f} ج.م + هذه العملية "
-                f"{total:,.2f} ج.م هيتعدّى الحد المسموح "
-                f"{contract_row.credit_limit:,.2f} ج.م. سوّي الحساب مع الفندق "
-                f"أو ارفع حد الائتمان من شاشة إدارة عقود B2B قبل المتابعة."
-            )
-
     cap_delta, towel_delta = calculate_inventory_delta(tx_type, data.guests_count)
     crud.apply_inventory_delta(db, inv_row, cap_delta, towel_delta)
 
-    crud.increment_b2b_checkins(db, data.contract_id, tx_date, data.guests_count, total)
+    crud.increment_b2b_checkins(db, data.contract_id, tx_date, data.guests_count)
 
-    # تحذير الحصة (warning إذا بقي ≤ 5) — لازم يتحسب على العدد بعد الزيادة
-    # (increment_b2b_checkins فوق)، وإلا التحذير كان هيتأخر تسجيل دخول واحد
-    # كامل عن اللحظة الفعلية اللي الحصة توصل فيها للحد (باج توقيت حقيقي).
-    updated_day = crud.get_or_create_contract_day(db, data.contract_id, tx_date)
-    updated_state = _contract_state(contract_row, updated_day.checked_in_count)
-    if updated_state.quota_warning and not updated_day.notified_quota_warning:
-        updated_day.notified_quota_warning = True
+    # تحذير الحد الشهري (warning إذا بقي ≤ 5) — لازم يتحسب على العدد بعد
+    # الزيادة فوق، وإلا التحذير كان هيتأخر تسجيل دخول واحد كامل عن اللحظة
+    # الفعلية اللي الحد يوصل فيها (نفس باج التوقيت اللي كان موجود في النسخة
+    # اليومية القديمة). ``notified_quota_warning_period`` بيتقارن بأول يوم
+    # في الشهر الحالي — بيتصفّر ضمنيًا كل شهر جديد من غير أي مهمة Celery
+    # منفصلة تصفّره.
+    updated_state = _contract_state(contract_row, checked_in_this_month + data.guests_count)
+    if updated_state.quota_warning and contract_row.notified_quota_warning_period != month_start:
+        contract_row.notified_quota_warning_period = month_start
         db.flush()
         if contract_row.contact_phone:
             try:
                 from app.core.kernel.whatsapp import send_whatsapp_message  # noqa: PLC0415
                 send_whatsapp_message(
                     contract_row.contact_phone,
-                    f"تنبيه: حصة {contract_row.hotel_name} اليومية في الخيمة بيتش أوشكت على الانتهاء (≤5 متبقي).",
+                    f"تنبيه: الحد الشهري لـ {contract_row.hotel_name} في الخيمة بيتش أوشك على الانتهاء (≤5 متبقي هذا الشهر).",
                 )
             except Exception:
                 pass  # ميمنعش إتمام تسجيل الدخول لو فشل إرسال التنبيه
@@ -591,16 +768,17 @@ def b2b_checkin(
         "branch_id":       branch_id,
         "tx_type":         tx_type,
         "quantity":        data.guests_count,
-        "unit_price":      contract_row.entry_price,
-        "total_amount":    total,
-        "vat_amount":      vat,
+        "unit_price":      Decimal("0"),
+        "total_amount":    Decimal("0"),
+        "vat_amount":      Decimal("0"),
         "surge_applied":   False,
         "tx_date":         tx_date,
         "cashier_id":      data.cashier_id,
         "b2b_contract_id": data.contract_id,
     })
 
-    _post_beach_revenue_journal(db, tx)
+    # مفيش ترحيل إيراد هنا عمدًا — الرسم الشهري الثابت بيترحّل مرة واحدة
+    # شهريًا (راجع post_b2b_monthly_fees)، مش لكل تشيك-إن.
 
     db.commit()
     db.refresh(tx)
@@ -638,7 +816,7 @@ def _void_transaction_atomic(
     # حصلت في نفس اللحظة بالظبط على نفس الفرع/اليوم، الإلغاء ده كان ممكن
     # يبني على قراءة قديمة ويمسح أثر البيع الجديد بصمت (lost update، نفس
     # فئة الباج الموثّقة في lock_inventory_for_update's docstring بالظبط).
-    inv_row = crud.get_or_create_inventory(db, tx.branch_id, tx.tx_date)
+    inv_row = get_inventory(db, tx.branch_id, tx.tx_date)
     inv_row = _lock_inventory_or_raise(db, inv_row)
     cap_delta, towel_delta = calculate_inventory_delta(tx.tx_type, tx.quantity)
     crud.apply_inventory_delta(db, inv_row, -cap_delta, -towel_delta)
@@ -646,7 +824,15 @@ def _void_transaction_atomic(
     # عكس الأثر المالي — نفس التفرّع اللي حصل وقت sell_ticket بالظبط.
     # الحساب الآجل له دفتر فرعي وقيد Dr 1160 مستقل؛ معاملته كبيع كاش هنا
     # كانت ستنشئ Cr 1100 وهمي وتترك مديونية العميل كما هي.
-    if tx.payment_method == "credit_account":
+    #
+    # تشيك-إن B2B (2026-08-20): مفيش أثر مالي خالص وقت التسجيل (الرسم
+    # الشهري الثابت بيترحّل منفصل شهريًا — راجع b2b_checkin) فمفيش قيد
+    # عكسي ولا دفعة وردية يتلغوا هنا. _post_beach_revenue_reversal_journal
+    # كانت هترفض فعليًا (gross_amount=0 → ValueError) لو اتنادت على معاملة
+    # زي دي.
+    if tx.b2b_contract_id:
+        pass
+    elif tx.payment_method == "credit_account":
         from app.modules.credit import crud as credit_crud  # noqa: PLC0415
         from app.modules.credit import services as credit_services  # noqa: PLC0415
 
@@ -685,16 +871,14 @@ def _void_transaction_atomic(
         _post_beach_revenue_reversal_journal(db, tx)
         _void_shift_payment(db, tx, voided_by)
 
-    # عكس رصيد B2B المستحق لو العملية كانت تشيك-إن فندق شريك — راجع تعليق
-    # crud.decrement_b2b_checkins: باج حقيقي كان هنا قبل إضافة حد الائتمان
-    # (الإلغاء كان بيعكس كل حاجة إلا رصيد الفندق نفسه). ⚠️ باج تاني اتصلح
-    # هنا (2026-07-28): decrement_b2b_checkins بتعمل قراءة/تعديل غير مقفولة
-    # لصف B2BContractDay — نفس فئة باج الـinventory فوق بالظبط، لو تشيك-إن
-    # B2B جديد حصل في نفس اللحظة، الإلغاء كان ممكن يمسح أثره بصمت.
+    # عكس عدّاد B2B اليومي (checked_in_count بس دلوقتي — مفيش مبلغ يتعكس
+    # منذ 2026-08-20، راجع models.B2BContractDay) لو العملية كانت تشيك-إن
+    # فندق شريك. القفل هنا نفس فئة قفل الـinventory فوق بالظبط — لو تشيك-إن
+    # B2B جديد حصل في نفس اللحظة، الإلغاء كان ممكن يمسح أثره بصمت من غيره.
     if tx.b2b_contract_id:
         day_row = crud.get_or_create_contract_day(db, tx.b2b_contract_id, tx.tx_date)
         _lock_contract_day_or_raise(db, day_row)
-        crud.decrement_b2b_checkins(db, tx.b2b_contract_id, tx.tx_date, tx.quantity, tx.total_amount)
+        crud.decrement_b2b_checkins(db, tx.b2b_contract_id, tx.tx_date, tx.quantity)
 
     # ⚠️ باج حقيقي كان هنا (اتصلح 2026-07-28): إلغاء معاملة اتسجّلت عن طريق
     # خريطة الشاطئ الحية (checkin_location) كان بيعكس كل الأثر المالي/المخزني
@@ -742,21 +926,28 @@ def _post_beach_revenue_reversal_journal(db: Session, tx: "BeachTransaction") ->
     صافي + VAT payable) في الدفاتر بنفس السطور والنسب، مش قيد جديد بإجمالي
     gross على الإيراد بس (FIN-TAX-01، OPS-DATA-02 §11.2).
 
-    ⚠️ فجوة موجودة من قبل، غير معدَّلة هنا (خارج نطاق FIN-TAX-01): الطرف
-    الآخر ثابت "1100" (كاش) دايمًا حتى لو البيع الأصلي كان بالكارت
-    (resolve_direct_tender_account) — الإلغاء مش بيرجع لنفس حساب الاستلام
-    الأصلي. موثّق كفجوة منفصلة، مش هذه الدفعة."""
+    ✅ فجوة حقيقية اتصلحت هنا (كانت موثّقة سابقًا كـ"خارج النطاق"): الطرف
+    الآخر كان ثابت "1100" (كاش) دايمًا حتى لو البيع الأصلي كان بالكارت أو
+    قناة تحصيل تانية — الإلغاء مايرجعش بالضرورة لنفس حساب الاستلام الأصلي.
+    دلوقتي بيستخدم ``tx.settlement_account_code`` — لقطة الحساب الفعلي
+    المحفوظة وقت البيع نفسه، مش إعداد القناة الحالي (ده ممكن يتغيّر بعد
+    البيع). معاملات قديمة قبل payment_channels (snapshot=None) لسه بترجع
+    لمسار legacy القديم (resolve_direct_tender_account) عشان توافق تاريخي."""
     from app.modules.finance.services import reverse_taxed_sale_journal  # noqa: PLC0415
+    from app.modules.dining.payment_policy import resolve_direct_tender_account  # noqa: PLC0415
+
+    debit_code = tx.settlement_account_code or resolve_direct_tender_account(tx.payment_method or "cash")
 
     reverse_taxed_sale_journal(
         db, tx.branch_id, _business_today(),
-        debit_account_code="1100", revenue_account_code="4300",
+        debit_account_code=debit_code, revenue_account_code="4300",
         net_revenue_amount=(tx.total_amount or Decimal("0")),
         vat_amount=(tx.vat_amount or Decimal("0")),
         reference=f"BCH-VOID-{tx.id:06d}",
         description=f"إلغاء عملية شاطئ — {tx.tx_type}",
         source="beach_void", source_id=tx.id,
         cost_center_code="BEACH",
+        commit_cost_centers=False,  # راجع تعليق _post_beach_revenue_journal
     )
 
 
@@ -774,6 +965,7 @@ def _post_beach_folio_charge_reversal_journal(db: Session, tx: "BeachTransaction
         description=f"إلغاء عملية شاطئ (محمّل على الغرفة) — {tx.tx_type}",
         source="beach_folio_void", source_id=tx.id,
         cost_center_code="BEACH",
+        commit_cost_centers=False,  # راجع تعليق _post_beach_revenue_journal
     )
 
 
@@ -800,7 +992,6 @@ def generate_ticket_pdf(db: Session, tx_id: int) -> bytes:
         ("نوع التذكرة",  tx_label),
         ("الكمية",       str(tx.quantity)),
         ("سعر الوحدة",   f"{tx.unit_price:,.2f} EGP"),
-        ("ضريبة القيمة", f"{tx.vat_amount:,.2f} EGP"),
         ("التاريخ",      str(tx.tx_date)),
     ]
     if tx.surge_applied:
@@ -820,6 +1011,9 @@ def set_surge(db: Session, branch_id: int, surge_pct: Decimal, inv_date: Optiona
     inv_date = inv_date or _business_today()
     if surge_pct < 0 or surge_pct > 200:
         raise ValueError("surge_pct يجب أن يكون بين 0 و 200")
+    # Ensure a new day inherits the configured capacity before the surge row
+    # is created by the lower-level persistence helper.
+    get_inventory(db, branch_id, inv_date)
     row = crud.set_surge_manual(db, branch_id, inv_date, surge_pct)
     db.commit()
     db.refresh(row)
@@ -935,53 +1129,152 @@ def generate_eod_report_pdf(db: Session, branch_id: int, report_date: Optional[d
 
 
 def get_b2b_quota_status(db: Session, branch_id: int, day: Optional[date] = None) -> list[dict]:
-    """حالة حصص/ائتمان كل فنادق B2B النشطة اليوم — بيوصل quota_warning
-    (≤5 أشخاص متبقين) من beach_engine.B2BContractState + حالة الائتمان
-    (outstanding_balance/credit_limit/is_overdue) لنفس اللوحة الحيّة، بنفس
-    نمط عرض العقود المنتهية (is_valid_today) اللي اتضاف قبل كده."""
+    """حالة الحد الشهري الاسترشادي + الائتمان لكل فنادق B2B النشطة — بيوصل
+    quota_warning (≤5 متبقي من الحد الشهري) من beach_engine.B2BContractState
+    + حالة الائتمان (outstanding_balance/credit_limit/is_overdue) لنفس
+    اللوحة الحيّة. ``checked_in_today`` لسه معروض منفصل (إحصائية تشغيلية
+    مفيدة للكاشير حتى لو الحد نفسه بقى شهري مش يومي)."""
     day = day or _business_today()
+    month_start, month_end = _month_bounds(day)
     rows = crud.list_b2b_contracts_with_today_usage(db, branch_id, day)
 
     result = []
     for contract, checked_in_today in rows:
-        state = _contract_state(contract, checked_in_today)
+        checked_in_this_month = crud.get_b2b_checked_in_count_for_month(db, contract.id, month_start, month_end)
+        state = _contract_state(contract, checked_in_this_month)
         outstanding = crud.get_b2b_outstanding_balance(db, contract.id, contract.last_settled_at)
         result.append({
-            "contract_id":        state.contract_id,
-            "hotel_name":         state.hotel_name,
-            "daily_quota":        state.daily_quota,
-            "checked_in_today":   state.checked_in_today,
-            "remaining_quota":    state.remaining_quota,
-            "is_quota_exhausted": state.is_quota_exhausted,
-            "quota_warning":      state.quota_warning,
-            "is_valid_today":     state.is_valid_on(day),
-            "credit_limit":       contract.credit_limit,
-            "outstanding_balance": outstanding,
-            "credit_exceeded":    (
+            "contract_id":           state.contract_id,
+            "hotel_name":            state.hotel_name,
+            "checked_in_today":      checked_in_today,
+            "monthly_guest_cap":     state.monthly_guest_cap,
+            "checked_in_this_month": state.checked_in_this_month,
+            "remaining_monthly_quota": state.remaining_monthly_quota,
+            "quota_warning":         state.quota_warning,
+            "is_valid_today":        state.is_valid_on(day),
+            "monthly_fee":           contract.monthly_fee,
+            "credit_limit":          contract.credit_limit,
+            "outstanding_balance":   outstanding,
+            "credit_exceeded":       (
                 contract.credit_limit is not None and outstanding > contract.credit_limit
             ),
-            "is_overdue":         contract.is_overdue,
-            "payment_terms_days": contract.payment_terms_days,
+            "is_overdue":            contract.is_overdue,
+            "payment_terms_days":    contract.payment_terms_days,
         })
     return result
 
 
 def settle_b2b_contract(
     db: Session, contract_id: int, settled_through: Optional[date] = None,
+    settlement_account_code: str = "1110",
 ) -> "B2BContract":
     """يسجّل تسوية (تحصيل) رصيد الفندق الشريك — يُستدعى لما الفندق يدفع
-    فاتورته الدورية. بيصفّر الرصيد المستحق فعليًا لحد تاريخ التسوية وبيلغي
-    علم التأخر."""
-    contract = crud.get_b2b_contract(db, contract_id)
+    فاتورته الدورية (عادة تحويل بنكي للمنتجع، مش كاش في درج كاشير الشاطئ —
+    الحساب الافتراضي 1110 بنك، مش 1100 صندوق). بيرحّل قيد تحصيل حقيقي
+    (Dr <settlement_account_code> / Cr 1165) بالمبلغ المستحق فعليًا قبل ما
+    يصفّر الرصيد، وبيلغي علم التأخر.
+
+    ✅ فجوة حقيقية اتصلحت هنا (2026-08-20): قبل كده التسوية كانت مجرد
+    تصفير رصيد بدون أي أثر محاسبي — رصيد 1165 (ذمم فنادق شريكة) كان
+    هيفضل متضخّم للأبد حتى بعد ما الفندق يدفع فعليًا. مفيش قيد لو الرصيد
+    المستحق صفر أصلاً (عقد جديد لسه ما اتحاسبش عليه شهر، أو اتسوّى بالفعل).
+
+    ⚠️ 3 باجات حقيقية اتصلحوا هنا (مراجعة Codex 2026-08-30، H-04):
+    1. العقد كان بيتقرا من غير قفل — تسويتان متزامنتان لنفس العقد كان
+       ممكن الاتنين يرحّلوا قيد تحصيل، وآخر واحد يكتب last_settled_at
+       بيكسب بصمت (تحصيل مزدوج فعلي في الدفاتر).
+    2. مفيش حد أعلى (`through`) على حساب الرصيد المستحق — تسوية بتاريخ
+       معيّن كانت بتجمع كل الشهور المُرحَّلة **حتى المستقبلية**، مش تقف
+       عند `settled_through` فعليًا.
+    3. القيد كان بيترحّل عبر post_journal_entry (بتعمل commit داخلي)
+       قبل تحديث last_settled_at بـcommit منفصل — فشل بينهم (كراش، خطأ
+       شبكة) كان يسيب قيد تحصيل مُرحَّل فعليًا من غير أي علامة تسوية
+       مقابلة، فالمرة الجاية outstanding يحسبه تاني ويرحّل قيد إضافي.
+       دلوقتي عملية واحدة ذرية: القيد بيتبني بـflush بس (مش commit)،
+       وlast_settled_at بيتحدّث في نفس الـtransaction، وcommit واحد
+       بس في الآخر — إما الاتنين يحصلوا مع بعض أو ولا واحد."""
+    from app.modules.finance import crud as finance_crud  # noqa: PLC0415
+    from app.modules.finance.schemas import JournalEntryCreate, JournalLineCreate  # noqa: PLC0415
+    from app.modules.finance.services import validate_period_open  # noqa: PLC0415
+
+    contract = crud.lock_b2b_contract_for_update(db, contract_id)
     if not contract:
         raise ValueError(f"العقد {contract_id} غير موجود")
     settled_through = settled_through or _business_today()
+    if settled_through > _business_today():
+        raise ValueError("تاريخ التسوية لا يمكن أن يكون في المستقبل")
     if contract.last_settled_at and settled_through < contract.last_settled_at:
         raise ValueError("تاريخ التسوية لا يمكن أن يكون قبل آخر تسوية مسجّلة")
+
+    outstanding = crud.get_b2b_outstanding_balance(
+        db, contract_id, contract.last_settled_at, through=settled_through,
+    )
+    if outstanding > 0:
+        settlement_account = finance_crud.get_account_by_code(db, contract.branch_id, settlement_account_code)
+        receivable_account = finance_crud.get_account_by_code(db, contract.branch_id, "1165")
+        if not settlement_account or not receivable_account:
+            raise ValueError("حسابات التسوية أو ذمم الفنادق الشريكة غير معرّفة في دليل الحسابات")
+        validate_period_open(db, contract.branch_id, settled_through)
+        finance_crud.create_journal_entry(
+            db,
+            JournalEntryCreate(
+                branch_id=contract.branch_id, entry_date=settled_through,
+                reference=f"B2B-SETTLE-{contract.id}-{settled_through.isoformat()}",
+                description=f"تسوية رصيد B2B — {contract.hotel_name}",
+                source="beach_b2b_settlement", source_id=contract.id,
+                lines=[
+                    JournalLineCreate(account_id=settlement_account.id, debit=outstanding, credit=Decimal("0")),
+                    JournalLineCreate(account_id=receivable_account.id, debit=Decimal("0"), credit=outstanding),
+                ],
+            ),
+            user_id=0,
+        )
+
     contract = crud.settle_b2b_contract(db, contract, settled_through)
     db.commit()
     db.refresh(contract)
     return contract
+
+
+def post_b2b_monthly_fees(db: Session, today: Optional[date] = None) -> int:
+    """يرحّل الرسم الشهري الثابت لكل عقد B2B نشط لسه ما ترحّلش له الشهر
+    الحالي — الجزء القابل للاختبار من مهمة Celery الدورية (نفس نمط
+    mark_b2b_contracts_overdue: دالة service خالصة بتاخد db + today وتُرجع
+    عدد العقود اللي اترحّلها، والـ task نفسه بس wrapper حول SessionLocal +
+    commit). idempotent على مستويين: B2BContractMonth.UniqueConstraint
+    (contract_id, period_month) بيتحقق منه هنا قبل أي محاولة، وpost_taxed_
+    sale_journal's فحص source/source_id/reference (لو الاتنين اتخطّوا لأي
+    سبب، القيد نفسه برضو مايتكررش)."""
+    from app.modules.finance.services import post_taxed_sale_journal  # noqa: PLC0415
+
+    today = today or _business_today()
+    month_start, month_end = _month_bounds(today)
+    contracts = crud.list_active_b2b_contracts(db)
+    billed = 0
+    for contract in contracts:
+        # العقد لازم يكون سارٍ في جزء على الأقل من الشهر ده — لو خلص خلاص
+        # قبل بداية الشهر أو لسه ما بدأش لحد آخره، مفيش رسم يترحّل.
+        if contract.valid_until < month_start or contract.valid_from > month_end:
+            continue
+        if crud.get_b2b_contract_month(db, contract.id, month_start):
+            continue  # اترحّل بالفعل لهذا الشهر
+
+        guests_count = crud.get_b2b_checked_in_count_for_month(db, contract.id, month_start, month_end)
+        entry = post_taxed_sale_journal(
+            db, contract.branch_id, today,
+            debit_account_code="1165", revenue_account_code="4300",
+            net_revenue_amount=contract.monthly_fee,
+            reference=f"B2B-MONTHLY-{contract.id}-{month_start.isoformat()}",
+            description=f"رسم شهري ثابت — {contract.hotel_name} ({month_start:%Y-%m})",
+            source="beach_b2b_monthly", source_id=contract.id,
+            cost_center_code="BEACH",
+            commit_cost_centers=False,
+        )
+        crud.create_b2b_contract_month(
+            db, contract.id, month_start, guests_count, contract.monthly_fee, entry.id,
+        )
+        billed += 1
+    return billed
 
 
 def mark_b2b_contracts_overdue(db: Session, today: Optional[date] = None) -> int:
@@ -993,10 +1286,10 @@ def mark_b2b_contracts_overdue(db: Session, today: Optional[date] = None) -> int
     دخول في حالة التأخر (notified_overdue) — نفس نمط quota_warning في
     b2b_checkin، عشان مبعتش رسالة كل يوم للفندق طول ما لسه متأخر."""
     today = today or _business_today()
-    contracts = crud.list_active_b2b_contracts_for_overdue_check(db)
+    contracts = crud.list_active_b2b_contracts(db)
     changed = 0
     for contract in contracts:
-        oldest_unsettled = crud.get_b2b_oldest_unsettled_day(db, contract.id, contract.last_settled_at)
+        oldest_unsettled = crud.get_b2b_oldest_unsettled_month(db, contract.id, contract.last_settled_at)
         overdue_now = is_contract_overdue(oldest_unsettled, today, contract.payment_terms_days)
         if overdue_now != contract.is_overdue:
             contract.is_overdue = overdue_now

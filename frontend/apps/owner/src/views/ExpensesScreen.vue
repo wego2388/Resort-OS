@@ -14,6 +14,7 @@ import ErrorState from '../components/ErrorState.vue'
 import SkeletonCards from '../components/SkeletonCards.vue'
 import DateRangePicker from '../components/DateRangePicker.vue'
 import DetailSheet from '../components/DetailSheet.vue'
+import DataFreshness from '../components/DataFreshness.vue'
 
 const tabs = ['expenses', 'procurement'] as const
 type Tab = typeof tabs[number]
@@ -27,6 +28,13 @@ const procParams = computed(() => ({ date_from: dateRange.value?.date_from, date
 
 const { data: expData,  loading: expLoading,  error: expError,  reload: expReload,  updateParams: updateExp  } = useOwnerExpenseAnalytics(expParams)
 const { data: procData, loading: procLoading, error: procError, reload: procReload, updateParams: updateProc } = useOwnerProcurementAnalytics(procParams)
+
+const totalCurrentExpense = computed(() =>
+  (expData.value?.expense_lines ?? []).reduce(
+    (sum, line) => sum + (Number.parseFloat(line.current_amount) || 0),
+    0,
+  ),
+)
 
 function onDateChange(range: { date_from: string; date_to: string }) {
   dateRange.value = range
@@ -91,8 +99,17 @@ const poStatusLabel: Record<string, string> = { received: 'مستلم', partial:
 
         <template v-else-if="expData">
           <div class="owner-card">
-            <div class="section-label">إجمالي الإيراد (الفترة الحالية)</div>
-            <div class="metric-value text-owner-green">{{ formatMoney(expData.current_revenue) }}</div>
+            <div class="section-label">ملخص الفترة</div>
+            <div class="grid grid-cols-2 gap-4">
+              <div>
+                <div class="text-xs text-owner-muted">الإيراد</div>
+                <div class="mt-1 text-lg font-bold text-owner-green">{{ formatMoney(expData.current_revenue) }}</div>
+              </div>
+              <div>
+                <div class="text-xs text-owner-muted">فئات المصروف المسجّلة</div>
+                <div class="mt-1 text-lg font-bold text-owner-amber">{{ formatMoney(totalCurrentExpense) }}</div>
+              </div>
+            </div>
             <div class="text-xs text-owner-muted mt-1">
               {{ expData.period_from }} ← {{ expData.period_to }}
               <span v-if="expData.is_provisional" class="text-owner-amber ml-2">⏳ مؤقت</span>
@@ -140,6 +157,7 @@ const poStatusLabel: Record<string, string> = { received: 'مستلم', partial:
               </button>
             </div>
           </div>
+          <DataFreshness :at="expData.computed_at" :refresh="expReload" />
         </template>
       </template>
 
@@ -203,6 +221,7 @@ const poStatusLabel: Record<string, string> = { received: 'مستلم', partial:
               </div>
             </div>
           </div>
+          <DataFreshness :at="procData.computed_at" :refresh="procReload" />
         </template>
       </template>
 

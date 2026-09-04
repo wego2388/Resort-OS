@@ -14,11 +14,12 @@ import {
 } from '../composables/useOwnerData'
 import { fetchDiningItemDetail, fetchBeachTypeDetail } from '../api/owner'
 import type { DiningItemDetailResponse, BeachTypeDetailResponse } from '../api/types'
-import { formatMoney, formatMoneyFull, formatPct } from '../composables/useFormat'
+import { formatApiDateTime, formatMoney, formatMoneyFull, formatPct } from '../composables/useFormat'
 import ErrorState from '../components/ErrorState.vue'
 import SkeletonCards from '../components/SkeletonCards.vue'
 import DateRangePicker from '../components/DateRangePicker.vue'
 import DetailSheet from '../components/DetailSheet.vue'
+import DataFreshness from '../components/DataFreshness.vue'
 
 const tabs = ['dining', 'beach', 'channels', 'discounts'] as const
 type Tab = typeof tabs[number]
@@ -95,7 +96,7 @@ function openBeachDetail(txType: string) {
 }
 
 function formatDateTime(iso: string) {
-  return new Date(iso).toLocaleString('ar-EG', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+  return formatApiDateTime(iso)
 }
 
 const orderTypeLabel: Record<string, string> = {
@@ -150,7 +151,7 @@ const orderTypeLabel: Record<string, string> = {
               لا توجد مبيعات في هذه الفترة
             </div>
             <div v-else class="space-y-1">
-              <div class="grid grid-cols-12 gap-1 text-xs text-owner-muted pb-2 border-b border-owner-border">
+              <div class="hidden sm:grid grid-cols-12 gap-1 text-xs text-owner-muted pb-2 border-b border-owner-border">
                 <span class="col-span-5">الصنف</span>
                 <span class="col-span-2 text-center">تصنيف</span>
                 <span class="col-span-2 text-left">كمية</span>
@@ -159,16 +160,18 @@ const orderTypeLabel: Record<string, string> = {
               <button
                 v-for="item in topItems"
                 :key="item.item_id"
-                class="w-full grid grid-cols-12 gap-1 py-2 border-b border-owner-border/50 last:border-0 text-xs text-right active:bg-owner-card transition-colors rounded-lg -mx-1 px-1"
+                class="w-full flex items-center gap-3 py-2.5 border-b border-owner-border/50 last:border-0 text-xs text-right active:bg-owner-bg transition-colors rounded-lg -mx-1 px-1 sm:grid sm:grid-cols-12 sm:gap-1"
                 @click="openItemDetail(item.item_id)"
               >
-                <div class="col-span-5">
+                <div class="min-w-0 flex-1 sm:col-span-5">
                   <div class="font-semibold text-owner-text truncate">{{ item.name }}</div>
-                  <div v-if="item.margin_pct != null" class="text-owner-muted mt-0.5">
-                    هامش {{ formatPct(item.margin_pct) }}
+                  <div class="text-owner-muted mt-0.5 truncate">
+                    <span v-if="item.abc_class" class="sm:hidden" :class="abcColor[item.abc_class]">{{ item.abc_class }} · </span>
+                    <span class="sm:hidden">{{ item.quantity_sold }} قطعة<span v-if="item.margin_pct != null"> · </span></span>
+                    <span v-if="item.margin_pct != null">هامش {{ formatPct(item.margin_pct) }}</span>
                   </div>
                 </div>
-                <div class="col-span-2 flex items-center justify-center">
+                <div class="hidden col-span-2 sm:flex items-center justify-center">
                   <span
                     v-if="item.abc_class"
                     class="font-bold text-sm"
@@ -176,19 +179,20 @@ const orderTypeLabel: Record<string, string> = {
                   >{{ item.abc_class }}</span>
                   <span v-else class="text-owner-muted">—</span>
                 </div>
-                <div class="col-span-2 flex items-center font-mono text-owner-muted">{{ item.quantity_sold }}</div>
-                <div class="col-span-3 flex items-center justify-between font-mono text-owner-text font-semibold">
+                <div class="hidden col-span-2 sm:flex items-center font-mono text-owner-muted">{{ item.quantity_sold }}</div>
+                <div class="shrink-0 sm:col-span-3 flex items-center justify-between gap-1 font-mono text-owner-text font-semibold">
                   <span>{{ formatMoney(item.revenue) }}</span>
                   <span class="text-owner-muted" aria-hidden="true">‹</span>
                 </div>
               </button>
             </div>
-            <div class="mt-3 pt-3 border-t border-owner-border flex gap-4 text-xs text-owner-muted">
+            <div class="mt-3 pt-3 border-t border-owner-border flex flex-wrap gap-4 text-xs text-owner-muted">
               <span><span class="text-owner-green font-bold">A</span> = 80% من الإيراد</span>
               <span><span class="text-owner-amber font-bold">B</span> = 15%</span>
               <span><span class="text-owner-muted font-bold">C</span> = 5%</span>
             </div>
           </div>
+          <DataFreshness :at="salesData.computed_at" :refresh="salesReload" />
         </template>
       </template>
 
@@ -229,6 +233,7 @@ const orderTypeLabel: Record<string, string> = {
               </button>
             </div>
           </div>
+          <DataFreshness :at="beachData.computed_at" :refresh="beachReload" />
         </template>
       </template>
 
@@ -241,7 +246,7 @@ const orderTypeLabel: Record<string, string> = {
           <!-- ملخص -->
           <div class="owner-card">
             <div class="section-label">إجمالي قنوات B2B</div>
-            <div class="grid grid-cols-3 gap-3 mt-2">
+            <div class="grid grid-cols-1 gap-3 mt-2 sm:grid-cols-3">
               <div class="text-center">
                 <div class="metric-value text-owner-text text-xl">{{ channelData.total_checkins }}</div>
                 <div class="text-xs text-owner-muted">دخول</div>
@@ -298,6 +303,7 @@ const orderTypeLabel: Record<string, string> = {
               </div>
             </div>
           </div>
+          <DataFreshness :at="channelData.computed_at" :refresh="channelReload" />
         </template>
       </template>
 
@@ -396,6 +402,7 @@ const orderTypeLabel: Record<string, string> = {
               </div>
             </div>
           </div>
+          <DataFreshness :at="discountData.computed_at" :refresh="discountReload" />
         </template>
       </template>
 

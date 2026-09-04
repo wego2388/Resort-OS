@@ -1,31 +1,512 @@
 # حالة المشروع الحالية — El Kheima Beach Resort OS
 
-**آخر تحديث:** 2026-08-11 — REL-13 + Owner PWA hotfix منشوران ومتحققان.
-- **Production:** الإصدار الفعال `/opt/resort-os-releases/8fbda3c` من commit
-  `8fbda3c752d5f877fc17f4d7dbd5558b0461d57a`؛ Alembic
-  `c9d0e1f2a3b4 (head)`؛ PostgreSQL وRedis والخدمات سليمة.
-- **الملكية الجزئية:** الاسم الظاهر للمستخدم استُبدل في Staff/Owner/i18n
-  والأدلة؛ أسماء API والجداول والأدوار التقنية `timeshare*` بقيت ثابتة للتوافق.
-- **سلامة مالية:** تحصيلات الإيجارات والملكية الجزئية دخلت دفتر Payment
-  والورديات، إلغاء السلف والعقود له عكس محاسبي وتدقيق، والاستلام الجزئي
-  للمخزون ذري، مع idempotency إلزامي للقيود.
-- **مصالحة الإنتاج:** قيدان PMS بإجمالي `250.00 EGP` وخمسة استحقاقات إيجار
-  بإجمالي `138,000.00 EGP` طُبقت ذريًا؛ dry-run الثاني أعاد صفر مقترحات.
-- **Full gates:** backend `2806` اختبارًا وصل 100% بـexit 0 وصفر failure؛
-  Staff frontend `103/103`؛ type-check/build/agent-check وPostgreSQL 16
-  upgrade/downgrade/re-upgrade وGitleaks كلها ناجحة.
-- **Live acceptance:** النطاقات الأربعة HTTP 200، health/ready وsystemd
-  healthcheck ناجحة، protected probes رجعت 401، وكل الخدمات `RestartCount=0`
-  وصفر alerts بعد الاستقرار.
-- **Console/PWA:** أضيف وسم `mobile-web-app-capable` العام وأصبح ظاهرًا في
-  HTML الحي. رسائل 401 المصورة طابقت فتح نافذة Incognito بلا cookie ومحاولة
-  دخول فاشلة تلتها محاولة ناجحة وbootstrap 200؛ لا يوجد refresh replay.
-- **Rollback:** النسخة الطازجة
-  `/var/backups/resort-os/database/resort_os_20260811_123803.dump` (1547 TOC،
-  SHA-256 `53d269039128ba78848bbf74e0176f4999a14444bda72b013696c075dfa8a37d`)،
-  وأرشيف المصدر `8fbda3c.tar.gz` مطابق محليًا وعلى الخادم.
+**آخر تحديث:** 2026-08-31 — **SEC-01→SEC-13: كل الـ12 finding من جولة
+مراجعة Codex الثانية (مكتملة بالكامل، بما فيها SEC-13 المؤجَّلة عمدًا
+لآخر الدفعة)** (بعد تحقق شخصي بـ4 وكلاء معزولين متوازيين قبل أي تنفيذ).
+أهمها: تسريب سجل التدقيق عبر الفروع (Core)، مدير فرع A كان يقدر PIN بتاعه
+يوافق على إجراءات في فرع B (`resolve_pin_approval` بلا تحقق فرع خالص —
+أثّر على 7 نقاط: خصم/إلغاء دايننج، حركة كاش، قفل وردية، سند مصروفات)،
+إنشاء طلبات دايننج عبر الفروع بدون تحقق، CVE حرجة في python-jose (JWT
+algorithm confusion) + ترقية fastapi/starlette/cryptography/python-
+multipart، تفعيل حقيقي لـbackup/health timers على السيرفر (كانا موثّقين
+بس غير مثبّتين — نفس فجوة certbot المكتشفة يوم 30 أغسطس)، باسورد عربي
+حقيقي كان بيكسر التسجيل (bcrypt 72-byte crash)، ومراجع IP سيرفر قديم في
+سكربتات وظيفية ووثائق حية. **SEC-13 (نُفِّذت آخر الدفعة بطلب Mohamed
+الصريح)**: قناة التنبيهات (WhatsApp/Sentry/Email) كانت fail-open — 3 نقاط
+صمت حقيقية اتصلحت في الكود (الفشل بيبان دلوقتي بدل ما يختفي بصمت)، زائد
+تحذير موحّد وقت الإقلاع يسرد أي قناة لسه فاضية. **القناة نفسها لسه ميتة
+فعليًا** — بيانات اعتماد حقيقية (Twilio/WhatsApp Business/Sentry/
+SendGrid) لسه مطلوبة من Mohamed، مش حاجة ممكن تتعمل بدونه. **بوابة تحقق كاملة**: pytest الكامل صفر فشل،
+16 ملف Postgres concurrency (56 عدّوا/9 فشلوا pre-existing مؤكَّد بـgit
+blame، غير مرتبطين بالدفعة دي)، frontend type-check+build+106 اختبار
+نظيفين، pip-audit وpnpm audit جديدين. Backup/restore drill حي حقيقي على
+السيرفر. تفاصيل كاملة:
+`docs/agent-workflow/handoffs/2026-08-31_SEC-fixes_codex-review-round2_claude_handoff.md`
 
-**السابق:** 2026-08-08 — REL-11: Owner Intelligence Cockpit Phase 1-5 نشر على `owner.elkheima.com` (commit `719a432` + `74959e4` — منشور ✅)
+**السابق:** 2026-08-30 — **نشر REL-23 + REL-24 على الإنتاج** (commit
+`0e55ac038a8603d2fa4f24e5353a2c9a0288fb45`) على سيرفر VPS جديد
+(`31.97.193.77`، بعد ما الـDNS الحقيقي اتحوّل عليه). Deploy كامل باتباع
+`DEPLOYMENT.md` §5 حرفيًا (release artifact + rollback point + preflight +
+استبدال تدريجي بالترتيب backend→celery→frontends→nginx، health check حقيقي
+بعد كل خطوة). اكتشاف حقيقي أثناء التنفيذ: TLS مكانتش مُصدرة خالص على هذا
+السيرفر الجديد (فجوة إعداد سابقة، مش تراجع سببه الـdeploy) — اتصلحت بإصدار
+شهادة Let's Encrypt حقيقية أول مرة (الأربع نطاقات) + تركيب automation
+التجديد الرسمية للمشروع (كانت غير مثبتة خالص على السيرفر ده). كل بنود
+post-release acceptance (§6) اتحققت: alembic عند head الصحيح، صور backend/
+celery متطابقة IDs وrevision label، HTTPS 200 على الأربع نطاقات، TLS SAN
+صحيح، لوجات نظيفة. تفاصيل كاملة:
+`docs/agent-workflow/handoffs/2026-08-30_REL-23-REL-24_production-deploy_claude_handoff.md`
+
+**السابق:** 2026-08-30 — REL-24: باقي الـ11 finding من مراجعة Codex
+المستقلة (H-01 حتى M-04) اتنفّذوا كاملين بعد موافقة محمد الصريحة على
+الاستمرار من غير توقف. أهمها: إلغاء حجز PMS وهو الضيف لسه نازل (كان
+بيرجّع الغرفة "متاحة" وهي مشغولة فعليًا)، تسوية عقود B2B غير ذرية
+(ممكن تحصيل مزدوج)، ترتيب أقفال معكوس في تحصيل/إلغاء عقود الملكية
+الجزئية، استلام أمر شراء بلا قفل ولا تجميع تكرار الصنف، فجوات عزل فرع
+متبقية في HR وAnalytics (~15 endpoint إضافي)، وعاء تأمين اجتماعي أكبر
+من الراتب الأساسي (زائد اكتشاف فجوة أعمق: قيد الرواتب المجمّع كان بلا
+فحص توازن خالص)، عقود ملكية جزئية ملغاة تفضل في تقارير التحصيل،
+إدارة PIN بلا فحص فرع/مستوى نسبي، استبيان رضا قابل للتكرار بلا حد
+(migration جديدة + rate limit)، وشاشة أسعار صرف معطّلة في الإنتاج
+(مسار API ناقص البادئة). 16 اختبار انحدار جديد، `pytest tests/ -v`
+أخضر بالكامل، فرونت إند نظيف (type-check + i18n + vitest). **منشور ومتحقق
+فعليًا على الإنتاج الآن (راجع سجل النشر أعلاه، 2026-08-30).** تفاصيل كاملة:
+`docs/agent-workflow/handoffs/2026-08-30_REL-24_codex-review-H01-M04_claude_handoff.md`
+
+**السابق:** 2026-08-30 — REL-23: نفس مراجعة Codex، الدفعة الأولى بس
+(C-01 — عزل الفروع في Finance، ~30 endpoint). تفاصيل كاملة:
+`docs/agent-workflow/handoffs/2026-08-30_REL-23_codex-review-C01-finance-branch-isolation_claude_handoff.md`
+
+**السابق:** 2026-08-29 — REL-22: مراجعة شاملة نهائية قبل التشغيل
+الحقيقي (طلب محمد صراحةً) — 8 باجات حقيقية اتكشفت واتصلحت عبر 6
+موديولات (تسريب IDOR منهجي في HR وFinance عبر ~26 endpoint، راتب صافي
+ممكن يروح سالب، حراس حالة طلب مُرتجَع ناقصة في Dining، أقساط عقود
+ملغاة بتتعلّم "متأخرة" للأبد في Timeshare، قفل صفوف ناقص في PMS، تحقق
+ناقص في استلام أوامر شراء بالمخزون). كل التستات الخلفية عدّت 100%
+والفرونت إند نظيف بالكامل. **الكود جاهز ومُختبَر محليًا — لسه محتاج
+commit/push/deploy كخطوة منفصلة.** تفاصيل كاملة:
+`docs/agent-workflow/handoffs/2026-08-29_REL-22_pre-launch-comprehensive-audit_claude_handoff.md`
+
+**السابق:** 2026-08-25 — REL-21: تدقيق إنتاج شامل بناءً على طلب
+محمد الصريح قبل النقل لـVPS جديد (Hostinger) — حساب B2B مفقود (1165)
+اتضاف + 495,000 ج فوترة شهرية اتترحّلت، وباج نظامي حقيقي في تسجيل
+موديلات SQLAlchemy جوه Celery worker (كان بيوقف مهمة الملكية الجزئية
+اليومية، 18 قسط متأخر عالقين) اتكشف واتصلح جذريًا + اختبار انحدار
+حقيقي، وuploads volume دائم اتضاف. منشور ومتحقق فعليًا على الـVPS
+(release commit `afb8ce6`؛ صفر migration جديدة — تصحيح بيانات فقط).
+
+## REL-21 — تدقيق إنتاج شامل + إصلاحات تشغيلية (2026-08-25) — DEPLOYED
+
+- محمد بعت تقرير تدقيق إنتاج خارجي (4 مشاكل: فوترة B2B فاشلة لحساب
+  1165 مفقود، مهمة الملكية الجزئية اليومية فاشلة بباج SQLAlchemy،
+  مفيش نسخ احتياطي خارج السيرفر، مجلد رفع الصور بدون volume دائم)
+  وطلب صراحةً الإصلاح الكامل قبل نقل المشروع لسيرفر جديد نظيف.
+- **حساب 1165**: أُدخل مباشرة على قاعدة بيانات الإنتاج (فجوة بنيوية
+  معروفة — `_seed_chart_of_accounts` ممنوعة من الشغل على production،
+  فحسابات جديدة في الكود محتاجة إدخال يدوي على إنتاج موجود من قبل).
+  مهمة الفوترة الشهرية اتشغّلت يدويًا بعدها — 3 قيود حقيقية (495,000 ج
+  إجمالي، عقود HIST/Panorama/Shsrm klev).
+- **باج نظامي في `app/tasks/__init__.py`**: عملية Celery worker
+  الحقيقية لا تستورد `app.main` خالص (تخفيف startup)، فأي موديل عنده
+  `ForeignKey` حقيقي يفضل غير مسجّل في `Base.metadata` لحد أول task
+  يلمسه — نفس فخ `alembic/env.py` الموثّق في CLAUDE.md §13 بند ❹-ب.
+  اتصلح باستيراد صريح لكل الـ16 موديول + `users` قبل أي تسجيل تلقائي.
+  اتأكّد بإعادة إنتاج حقيقية (مش افتراض) عبر `.delay()` الفعلي، مش
+  استيراد Python عادي، واختبار انحدار جديد اتأكّد إنه فعلاً حسّاس
+  للباج (فشل لما الإصلاح اتعطّل مؤقتًا، نجح بعد إرجاعه).
+- **uploads volume**: `resort_uploads` named volume جديد في
+  `docker-compose.prod.yml`، مربوط بـ`/app/uploads` — صفر خسارة بيانات
+  حقيقية (مفيش ملفات مرفوعة وقت الإصلاح).
+- Backend `pytest -v` + اختبار انحدار جديد
+  (`test_tasks_package_registers_models.py`)، `alembic heads` = head
+  واحد. النشر: نفس الـrunbook الكامل (release artifact + checksum،
+  rollback tags، نسخة احتياطية + `pg_restore --list`، بناء الصور،
+  استبدال متحكَّم فيه بترتيب التبعية، health gate الرسمي `passes=16`
+  مؤكَّد من سجل systemd الفعلي قبل وبعد النشر). تفاصيل كاملة:
+  `docs/agent-workflow/handoffs/2026-08-25_REL-21_production-audit-ops-fixes_claude_handoff.md`
+- **معلّق**: النسخ الاحتياطي خارج السيرفر (offsite) محتاج قرار محمد
+  لمزود التخزين السحابي وبياناته — الآلية جاهزة بالكامل في الكود.
+
+**السابق:** 2026-08-23 — REL-20: عقود B2B الشهرية (استبدال كامل
+لنظام "سعر لكل ضيف × حصة يومية" القديم) + تحسينات شاملة لكاشير الشاطئ
+والدايننج (بوابة الطاولة الإجبارية، أمان السلة، تحمّل انقطاع النت)،
+منشور ومتحقق فعليًا على الـVPS (release commit `5dbb4f4`؛ migration
+واحدة حقيقية).
+
+## REL-20 — عقود B2B شهرية + تحسينات الكاشير (2026-08-23) — DEPLOYED
+
+- Mohamed شرح إن نظام عقود الفنادق الشريكة الحقيقي مختلف عن الكود:
+  مبلغ شهري ثابت مقابل حد أقصى استرشادي (تخطّيه مسموح صراحةً)، مش سعر
+  لكل ضيف. `B2BContract` اتعمله rewrite كامل (`monthly_fee`/
+  `monthly_guest_cap` بدل `daily_quota`/`entry_price`/`towel_price`)،
+  `B2BContractMonth` جديد للفوترة الشهرية الآلية (Celery يومي، قيد
+  حقيقي Dr.1165/Cr.4300)، التسوية بقت بترحّل قيد عكسي حقيقي بدل علم
+  بدون أثر. حساب `1165` (ذمم فنادق شريكة) جديد. Migration `45aabf472620`
+  (إضافي/backfill بالكامل، صفر فقدان بيانات). باج حقيقي اتصلح: إلغاء
+  تشيك-إن B2B كان هيكسر (`void_transaction` يتصادم مع حارس رفض القيد
+  الصفري).
+- بعدها، مراجعة شاملة لكاشير الشاطئ (`BeachPOSView.vue`): شريط "آخر
+  العمليات" (إعادة طباعة لأي كاشير، إلغاء بـPIN مدير)، اختصارات لوحة
+  مفاتيح + إضافة سريعة لعدد ضيوف الفنادق، إدخال كاش بأزرار جاهزة، رسم
+  "خدمة" جديد لدخول مأكولات خارجية (٥٠ ج افتراضي، قابل للتعديل).
+- ومراجعة شاملة للكاشير الموحّد (`UnifiedPOSView.vue`): إزالة بوابة كانت
+  بتجبر الكاشير يفتح طاولة (واسم ضيف إجباري) قبل ما يشوف اختيارات نوع
+  الطلب خالص — حتى لو تيك أواي/توصيل/خدمة غرف. أمان السلة (حذف صنف
+  واحد بدون تأكيد على زرار ٤٠px بقى ٤٨px + تأكيد فعلي). إصلاح انقطاع
+  النت: المنيو/الطاولات بقى آخر رد ناجح بيتخزّن محليًا (localStorage)
+  ويرجع تلقائي بدل ما يفضى، تحديث فوري لحظة رجوع الاتصال.
+- Backend `pytest -v` كامل → 2960 اجتازوا (+4 اختبارات رسم الخدمة)، صفر
+  فشل. Frontend `type-check:all`/`test:frontend` (106/106)/`test:e2e:mock`
+  (8/8)/`test:e2e` owner (12/12)/`build:all` نظاف. النشر: backend/celery
+  worker+beat/el_kheima/owner كلهم اتبنوا واتستبدلوا، health gate الرسمي
+  `passes=16`. تفاصيل كاملة:
+  `docs/agent-workflow/handoffs/2026-08-23_REL-20_b2b-monthly-fee-pos-overhaul_claude_handoff.md`
+
+**السابق:** 2026-08-20 — REL-19: إصلاح باج بيع مكرر حقيقي في كاشير
+الشاطئ (مسار البيع الأوفلاين الجزئي)، اتكشف أثناء تجربة Mohamed الحية
+على الإنتاج وطلبه المباشر بمراجعة الكاشيرات، منشور ومتحقق فعليًا على
+الـVPS (release commit `330cc45`؛ `el_kheima` بس، مفيش migration).
+
+## REL-19 — إصلاح بيع مكرر في كاشير الشاطئ (2026-08-20) — DEPLOYED
+
+- Mohamed كان بيجرّب كاشير الدايننج والشاطئ حيًا وطلب مراجعة استباقية
+  للمشاكل المحتملة. مراجعة كود منهجية (fork منفصل، مش جزء من دفعة
+  REL-18 المحاسبية اللي كانت شغالة في نفس الوقت) كشفت باج حقيقي واحد:
+  `BeachPOSView.vue`'s مسار البيع الأوفلاين الجزئي (نداء منفصل لكل صنف
+  في السلة، عكس المسار الأونلاين الذري) كان بيبعت كل صنف من غير
+  `local_id` — لو صنف نجح وصنف بعده فشل (مخزون خلص)، الحلقة كانت
+  بتوقف قبل `clearCart()` فالسلة تفضل عارضة كل الكميات، ولو الكاشير
+  ضغط "إتمام البيع" تاني، الصنف اللي نجح فعلاً كان بيتباع مرتين.
+  **Release commit:** `330cc454b2b8488f7fca1e968aec0b6cde3dc075`.
+- الإصلاح فرونت إند بحت: مفتاح idempotency ثابت لكل صنف
+  (`${saleLocalId}:${cartKey}`، نفس نمط `cart_local_id` بتاع المسار
+  الأونلاين) بيتبعت كـ`local_id` — آلية dedup الباك إند
+  (`services.sell_ticket`) كانت موجودة ومُختبَرة بالفعل بس مش مستخدمة
+  في المسار ده. كل صنف نجح بيتشال من السلة فورًا بدل ما يفضل معروض
+  كمعلّق. اختبار backend جديد بيحاكي السيناريو بالتحديد (صنف ناجح +
+  صنف فاشل + إعادة محاولة).
+- كاشير الدايننج اتراجع في نفس المراجعة ولوحظ سليم بالكامل (مسار البيع
+  فيه عملية ذرية واحدة أصلاً، مفيهوش نفس الفئة من الباج).
+- Backend `pytest -v` كامل → 2966 اجتازوا (زيادة واحد عن آخر مرة —
+  الاختبار الجديد)، صفر فشل. Frontend `type-check:all`/`test:frontend`
+  (106/106)/`build:all` نظاف. النشر: `el_kheima` بس اتبنى واتستبدل
+  (backend/celery/owner متلمسوش خالص — كودهم متغيّرش صفريًا)، health
+  gate الرسمي `passes=16`. تفاصيل كاملة:
+  `docs/agent-workflow/handoffs/2026-08-20_REL-19_beach-pos-offline-double-sell-fix_claude_handoff.md`
+
+**السابق:** 2026-08-20 — REL-18: كشف حساب، حد موافقة المصروفات، تصدير
+PDF/Excel للتقارير المالية، تقرير أعمار الديون، الإقفال السنوي — زائد
+إعادة تنظيم شاشة `FinanceView.vue` كاملة في 4 مجموعات منطقية، منشور
+ومتحقق فعليًا على الـVPS (release commit `9504ae3`؛ migration واحدة
+إضافية: `accounting_year_closes`).
+
+## REL-18 — كشف حساب، حد موافقة، تصدير تقارير، أعمار ديون، إقفال سنوي (2026-08-20) — DEPLOYED
+
+- بعد دفعة REL-17 المحاسبية، سأل Mohamed هل ناقص المحاسب أي حاجة تخص
+  شغله — فحص شامل حدّد 5 فجوات حقيقية، Mohamed اختار تنفيذها كلها فورًا
+  زائد طلب صريح تاني: تنظيم شاشة المحاسبة "زي برنامج محاسبي حقيقي".
+  **Release commit:** `9504ae3d5e9a263757c618b2d36b48db94d8c3f7`.
+- Backend (migration واحدة، `accounting_year_closes`): كشف حساب
+  (`GET /finance/accounts/{id}/ledger`، رصيد متحرك)، حد موافقة مصروفات
+  (`EXPENSE_APPROVAL_THRESHOLD`، PIN مدير+ عبر `policy_engine`،
+  `min_approver_level=80` عمدًا أعلى من حد تسجيل المصروف العادي عشان
+  الحد يبقى فاعل مش no-op)، 6 endpoints تصدير PDF/Excel (ميزان
+  المراجعة/قائمة الدخل/الميزانية)، تقرير أعمار الديون (فوليوهات مفتوحة +
+  أوامر شراء/مصروفات آجلة، مبوّب 0-30/31-60/61-90/90+)، وإقفال سنة
+  محاسبية (`POST /finance/periods/{year}/close-year`، `min_role_level=80`
+  — يرحّل صافي الربح لحساب 3200 عبر `crud.create_journal_entry` مباشرة
+  متجاوزًا `validate_period_open` لأن ديسمبر لازم يكون مقفول أصلاً
+  كشرط مسبق).
+- Frontend: `FinanceView.vue` بقت شريط تابات بمستويين — 4 مجموعات
+  (العمليات اليومية / الحسابات والدفتر / التقارير المالية / إعدادات
+  متقدمة) بدل 18 تاب مسطّح. صفوف جدول الحسابات بقت قابلة للضغط تفتح
+  modal كشف حساب. سند المصروفات: تدفق موافقة PIN تلقائي (بيتبعت عادي،
+  ولو السيرفر رفضه برسالة الموافقة تحديدًا بيفتح `PinGuardModal`
+  `min-level=80` ويعيد المحاولة) — الفرونت إند ماعندوش نسخة من قيمة
+  الحد نفسها. تاب الفترات: شبكة 12 شهر (حالة مفتوح/مقفول من غياب/وجود
+  صف `AccountingPeriod`)، زرار إقفال شهر لكل شهر، وزرار "إقفال السنة"
+  لمدير+ فقط.
+- **إصلاح جانبي أثناء التحقق**: حارس تباين لوني موجود
+  (`themeContrast.spec.ts`) كشف `dark:text-gray-500` حقيقي في تاب
+  الفترات — اتصلح لـ`dark:text-gray-400` زي باقي النصوص الثانوية.
+- اتحقق منه فعليًا بتفاعل حي (Playwright ضد dev server، تسجيل دخول
+  `manager@resortos.local`): كل التابات الجديدة بتحمّل بيانات حقيقية،
+  كشف الحساب بيفتح، زراير PDF/Excel بترجع ملفات حقيقية (260KB PDF مُتحقَّق
+  منه عبر curl مباشر)، اختبار API مباشر لحد الموافقة رجّع رسالة الرفض
+  المتوقعة بالظبط. Backend `pytest -v` (كامل، مش `-q` — البيئة دي بتخفي
+  سطر النتيجة مع `-q`) صفر فشل (2965 اجتازوا، 68 اتخطّوا). Frontend:
+  `type-check:all` نظيف، `test:frontend` 106/106، `test:e2e:mock`
+  el-kheima 8/8، `test:e2e` owner 12/12، `test:e2e` el-kheima حي 74/74،
+  `build:all` نظيف. النشر: `backend`/`celery_worker`/`celery_beat`/
+  `el_kheima`/`nginx` اتبنوا واتستبدلوا، health gate الرسمي
+  `passes=16`. تفاصيل كاملة:
+  `docs/agent-workflow/handoffs/2026-08-20_REL-18_finance-ledger-approval-reports-year-close_claude_handoff.md`
+- **مؤجَّل عمدًا برّه نطاق REL-18**: باج حقيقي منفصل اتكشف أثناء مراجعة
+  كود كاشير الشاطئ بطلب Mohamed المباشر وهو بيجرّب الكاشيرات حيًا —
+  `BeachPOSView.vue`'s مسار البيع الجزئي/أوفلاين ممكن يبيع نفس الصنف
+  مرتين لو صنف تاني في نفس السلة فشل بعد نجاح صنف قبله (مفيش idempotency
+  key لكل صنف، عكس المسار الأونلاين الذري). قيد الإصلاح منفصل عن الدفعة
+  دي.
+
+**السابق:** 2026-08-17 — REL-17c: الضغط على كارت الإيراد/المصروف في
+تطبيق المالك بيفتح تفصيل حقيقي بالحساب ثم قيود اليومية، منشور ومتحقق
+فعليًا على الـVPS (release commit `b162bbe`؛ مفيش migration).
+
+## REL-17c — تفصيل الإيراد/المصروف بالحساب في تطبيق المالك (2026-08-17) — DEPLOYED
+
+- Mohamed طلب: الضغط على كارت زي "إيراد اليوم"/"مصروفات اليوم" يوريه
+  تفاصيل أكتر، مسحوبة من الحسابات نفسها، بطريقة كويسة وذكية.
+  **Release commit:** `b162bbed78a0d169c13b59f92d9fa9c1cae75b4a`.
+- جانب المصروف كان عنده بنية تحتية جاهزة من قبل ("Phase 8" drill-down في
+  `ExpensesScreen.vue`) لكن مالهاش أي اختبار خالص، ومش موصول بكروت
+  "الآن"/"الأداء" الرئيسية. جانب الإيراد ملوش أي endpoint تفصيل بالحساب
+  خالص.
+- Backend إضافي بحت (مفيش migration): `GET /owner/revenue-breakdown`
+  (غلاف رفيع فوق `finance.get_income_statement`'s الموجودة أصلاً
+  `revenue_lines` — صفر حساب جديد) و`GET /owner/revenue-detail` (نظير
+  `expense-detail` على جانب الدائن — الإيراد يزيد بالدائن). 9 اختبار
+  جديد يغطي المسارين (كان صفر تغطية للعائلة دي كلها قبل كده).
+- Frontend: `MetricCard.vue` بقى قابل للضغط (`clickable` prop، بيتحول
+  لـ`<button>` حقيقي)، composable مشترك جديد
+  `useAccountBreakdownDrilldown` (مستويين: قائمة حسابات → قيود يومية
+  فعلية داخل حساب منها، مع زرار رجوع) — مستخدم في `NowScreen` (فترة =
+  اليوم) و`PerformanceScreen` (فترة = أي تاب نشط: اليوم/الأسبوع/الشهر).
+  "كاش الأدراج" بيودّي لشاشة `/shifts` بدل drill-down (تفاصيله الحقيقية
+  هناك أصلاً).
+- اتحقق منه فعليًا بتفاعل حي (Playwright، ضغطات فعلية): كارت → تفصيل
+  بالحساب → حساب → قيود يومية فعلية → رجوع → إغلاق، صفر overflow طول
+  التسلسل. Backend `pytest -q` صفر فشل (2956 مجمّعة)، `type-check:all`
+  نظيف، `test:e2e` owner **12/12**. النشر: `backend`/`celery`/`owner`
+  اتبنوا واتستبدلوا (`el_kheima`/`nginx` متلمسوش)، health gate الرسمي
+  `passes=16`. تفاصيل كاملة:
+  `docs/agent-workflow/handoffs/2026-08-17_REL-17c_owner-app-account-drilldown_claude_handoff.md`
+
+**السابق:** 2026-08-17 — REL-17b: لايت مود كامل + تفضيل حجم نص
+(عادي/كبير/أكبر) لتطبيق المالك، منشور ومتحقق فعليًا على الـVPS
+(release commit `65a0605`؛ تغيير frontend بحت، مفيش migration).
+
+## REL-17b — لايت مود + نص أوضح لتطبيق المالك (2026-08-17) — DEPLOYED
+
+- Mohamed جرّب تطبيق المالك بنفسه، لاحظ إن الأرقام/النص صغيرة وهو لابس
+  نظارة قراءة، وطلب لايت مود كامل — قرار منتج صريح يلغي قرار "dark-first
+  فقط" الأصلي في Decision 0004. **Release commit:** `65a06052dbbad5ed`.
+- لايت/دارك مود حقيقي بإعادة استخدام كاملة للآلية الموجودة فعلاً في
+  el-kheima (`useTheme`/`initTheme`/`<ThemeToggle>` من
+  `@resort-os/core`/`@resort-os/ui`) — الألوان `owner-*` في
+  `tailwind.config.js` بقت بتتحل من CSS vars (لايت افتراضي، دارك تحت
+  `.dark` بنفس القيم الأصلية بالظبط)، فكل الـ~450 استخدام موجود عبر
+  الـ17 شاشة بيتلوّن صح تلقائيًا من غير أي تغيير في مكان الاستخدام.
+  12 استخدام Tailwind class غامق ثابت (صناديق خطأ/تحذير) اتحوّلوا
+  لمكافئهم المعتمد على الـtoken الجديد. باج تباين حقيقي اتصلح: badge
+  عداد حرج كان نص أسود على أحمر فاشل WCAG AA مع الأحمر الفاتح الجديد.
+- تفضيل حجم نص (عادي/كبير/أكبر) — `useTextScale.ts` جديد بيغيّر جذر حجم
+  الخط (17/19/21px) بدل تعديل ~200 Tailwind text-size class فردي، فكل
+  نص/رقم في التطبيق بيكبر مع بعض من إعداد واحد.
+- **باج حقيقي اتصلح اكتشفه e2e test موجود بالفعل**: ارتفاع النافبار
+  السفلي الأدنى الثابت (56px) وpadding المحجوز في `.owner-main` طلعوا
+  مش متزامنين لما جذر حجم الخط كبر — اتصلح بتحويل الاتنين لنفس قيمة rem.
+- اتحقق منه فعليًا بتفاعل حي (Playwright، ضغط زرار حقيقي، مش build ناجح
+  بس): خلفية `.owner-card` اتغيّرت فعليًا `أبيض ↔ #1C1B1A` (اللون
+  الأصلي محفوظ حرفيًا)، حجم الخط دار `17→19→21→17px` صح مع حفظ
+  `localStorage`، صفر overflow. `type-check:all`/`build:all` نظاف،
+  `test:e2e` **12/12** (320-1280px).
+- النشر: حاوية `owner` فقط اتبنت واتستبدلت (backend/celery/el_kheima/
+  nginx فضلوا زي ما هم — مفيش migration ولا تغيير backend). الـbundle
+  المنشور اتأكد إنه نفس hash الـbuild المحلي بالظبط. Health gate
+  الرسمي: `passes=16`. تفاصيل كاملة:
+  `docs/agent-workflow/handoffs/2026-08-17_REL-17b_owner-app-light-mode-readability_claude_handoff.md`
+
+**السابق:** 2026-08-16 — REL-17: استرداد بيانات دخول الموظفين +
+إصلاح إضافة أصناف لطلب دايننج مفتوح + اختيار وحدة زيارة التيم شير +
+3 سندات محاسبية حقيقية (قيد يدوي/مصروفات/دفع موردين)، منشور ومتحقق
+فعليًا على الـVPS (release commit `3f44a14`؛ Alembic `79d4d53e7109`
+فعّال على الإنتاج).
+
+## REL-17 — استرداد الدخول + إصلاحات دايننج/تيم شير + سندات محاسبية (2026-08-16) — DEPLOYED
+
+- **Release commit المنشور فعليًا:** `3f44a14` (فرع
+  `codex/rel-15-auth-ops-readiness`)
+- **الإنتاج**: `/opt/resort-os-current` → `/opt/resort-os-releases/3f44a14...`؛
+  الستة containers (backend/celery_worker/celery_beat/el_kheima/owner/nginx)
+  استُبدلوا بالترتيب المحكوم، RestartCount=0، صفر خطأ جديد في اللوجات،
+  health gate الرسمي `passes=16`. تفاصيل كاملة في §10 من
+  `docs/agent-workflow/handoffs/2026-08-16_REL-17_credential-reset-dining-timeshare-finance-vouchers_claude_handoff.md`.
+- **Migration:** `79d4d53e7109` — إضافية بحتة فوق `a7b3f2c8e9d1`، head
+  واحد. تُنشئ `expenses` + `supplier_payments`، وتضيف
+  `purchase_orders.amount_paid`/`payment_status`.
+- **استرداد بيانات دخول الموظفين (SuperAdmin)**: سبب حقيقي — قفل حساب
+  المحاسب "يوسف رمضان بخيت" بمحاولات باسورد خاطئة متكررة، ومفيش أداة
+  ويب لاسترداد موظف عادي (الأداة الوحيدة كانت CLI مقصورة على
+  super_admin/owner). `core.services.reset_staff_credentials` جديدة
+  (محمية step-up) — بترفض صراحة أي هدف super_admin/owner (نفس حدود
+  `BOOTSTRAP_CREATABLE_ROLES` بالظبط)، بتولّد باسورد مؤقت + enrollment
+  token جديد لو الدور محتاج 2FA إجباري، تمسح قفل الحساب، تلغي كل
+  refresh tokens وrecovery codes القديمة، وتكتب `AuditLog`. زرار جديد
+  في شاشة `/admin/super-admin` لكل صف موظف (مخفي لصفوف
+  super_admin/owner).
+- **إصلاح كاشير الدايننج — إضافة أصناف لطلب مفتوح**: باج UX حقيقي —
+  مفيش طريقة كانت موجودة لإضافة صنف لطلب اتبعت للمطبخ بالفعل غير عمل
+  طلب منفصل بالكامل. اتضاف "وضع الإضافة" في `POSCartPanel.vue` (بيعيد
+  استخدام نفس شاشة بناء السلة الموجودة، مفيش تكرار لمنطق تصفح المنيو)
+  + زرار "➕ إضافة أصناف للفاتورة" في `DiningOrderDetailModal.vue`.
+- **التيم شير — خريطة وحدات حقيقية عند تأكيد الزيارة**: قبل كده كان
+  تعيين الوحدة تلقائي بالكامل وأعمى (`find_available_unit`) بلا أي
+  رؤية للموظف. `GET /timeshare/units/availability` جديد +
+  `TimeshareUnitPicker.vue` — شبكة وحدات فعلية قابلة للاختيار في مودالي
+  الموافقة/جدولة الزيارة، بيحترم عقود الوحدة الثابتة (يرفض اختيار
+  يدوي يخالف العقد) وعقود Family Compound (لسه تلقائي زي ما هو).
+- **3 سندات محاسبية حقيقية جديدة** (بعد سؤال Mohamed عن أنواع السندات
+  المحاسبية المصرية القياسية):
+  1. **سند القيد اليدوي** (`FinanceView.vue`، تاب جديد) — واجهة حقيقية
+     أول مرة لـ`POST /finance/journal-entries` الموجود من قبل بلا أي
+     شاشة تستخدمه، بميزان مدين/دائن حي قبل الإرسال.
+  2. **سند المصروفات المصنّفة** (`finance.Expense` جديد) —
+     `POST/GET /finance/expenses`، الفئة = حساب حقيقي من دليل
+     الحسابات (مفيش enum موازي)، بيستخدم
+     `post_simple_revenue_journal(..., strict=True)` +
+     `validate_period_open` صراحة (فعل محاسبي بيبدأه محاسب، مش ترحيل
+     تلقائي من نقطة بيع).
+  3. **سند دفع الموردين** (`inventory.SupplierPayment` جديد +
+     `PurchaseOrder.amount_paid`/`payment_status`) — كان فيه فجوة
+     محاسبية حقيقية: استلام أمر شراء بيرحّل Dr.1200/Cr.2200 (ذمم
+     دائنة) من الأساس، لكن مفيش أي طريقة كانت موجودة لتسجيل سداد
+     الذمة دي أبدًا. `POST /inventory/purchase-orders/{id}/pay` بيقفل
+     الذمة (Dr.2200/Cr.حساب التسوية) بنفس نمط `strict=True` +
+     `validate_period_open`. شاشة "مستحقات الموردين" جديدة في
+     `InventoryView.vue`.
+- **باج dark-mode حقيقي اتصلح قبل الديبلوي**: تاب المصروفات الجديد في
+  `FinanceView.vue` استخدم `dark:text-gray-500` (تباين منخفض جدًا على
+  الخلفية الداكنة) بدل النمط المعتمد `dark:text-gray-400` في باقي
+  الملف — اكتشفه test guard موجود بالفعل (`themeContrast.spec.ts`)،
+  اتصلح قبل الـcommit.
+- **البوابات**: backend `pytest tests/ -q` → صفر فشل (2947 test
+  collected)، `agent-check.sh` PASS، `alembic heads` → head واحد
+  `79d4d53e7109`، `git diff --check` نظيف. frontend `type-check:all`
+  نظيف (el-kheima + owner)، `validate-i18n` نظيف (6445 مفتاح كل لغة،
+  صفر ناقص)، `test:frontend` **106/106**، `test:e2e:mock` **8/8**،
+  `build:all` نظيف.
+- تفاصيل كاملة:
+  `docs/agent-workflow/handoffs/2026-08-16_REL-17_credential-reset-dining-timeshare-finance-vouchers_claude_handoff.md`
+
+**السابق:** 2026-08-16 — REL-16: قنوات تحصيل حقيقية (Payment
+Channels) + تحصين كاشير الشاطئ، منشور ومتحقق فعليًا على الـVPS
+(release commit `43eae4c`؛ Alembic `a7b3f2c8e9d1` فعّال على الإنتاج).
+
+## REL-16 — قنوات التحصيل + تحصين كاشير الشاطئ (2026-08-16) — DEPLOYED
+
+- **Implementation commit:** `4b08698` — **Release commit المنشور فعليًا:**
+  `43eae4c` (فرع `codex/rel-15-auth-ops-readiness`)
+- **الإنتاج**: `/opt/resort-os-current` → `/opt/resort-os-releases/43eae4c...`؛
+  الستة containers (backend/celery_worker/celery_beat/el_kheima/owner/nginx)
+  استُبدلوا بالترتيب المحكوم، RestartCount=0، صفر خطأ جديد في اللوجات،
+  health gate الرسمي `passes=16`. تفاصيل كاملة (checksums، rollback
+  manifest، smoke tests حقيقية بدون معاملات وهمية) في §10 من
+  `docs/agent-workflow/handoffs/2026-08-16_REL-16_payment-channels-beach-cashier_claude_handoff.md`.
+- **Migration:** `a7b3f2c8e9d1` — إضافية بحتة فوق `e2f3a4b5c6d7`، head
+  واحد. تُنشئ `payment_channels` + 4 أعمدة snapshot على
+  `payments`/`beach_transactions`، وتزرع default واحد لكل (فرع، طريقة)
+  فقط لو الحساب المطابق (1100/1120/1130) موجود ونشط بالفعل. `downgrade()`
+  اتأكد فعليًا على Postgres حقيقي (drop نظيف).
+- **قنوات تحصيل حقيقية** (`finance.PaymentChannel`): code فريد لكل فرع،
+  اسم عربي/إنجليزي، method (cash|card|wallet)، GL إلزامي (لازم active+
+  asset+نفس الفرع)، حساب بنكي اختياري (cash يُرفض لو مربوط ببنك)،
+  default واحد فقط لكل (فرع، method) عبر unique index جزئي، تعطيل بدل
+  حذف. API كامل + شاشة إدارة في `FinanceView.vue` (ar/en RTL/LTR).
+- **الربط**: نقطة موحّدة `dining.payment_policy.resolve_tender_channel`
+  يستخدمها الشاطئ والدايننج الاتنين — قناة حقيقية أولًا، fallback لمسار
+  الحساب القديم (env-based) فقط لو الفرع بلا أي قنوات معرّفة (توافق آمن
+  تام مع الفروع القديمة). اللقطة التاريخية (id/code/name/
+  settlement_account_code) محفوظة على `Payment`/`BeachTransaction`، وفي
+  `DiningSettlement.tender_breakdown` JSON للدايننج.
+- **باج محاسبي حقيقي اتصلح**: إلغاء بيع شاطئ كان بيرجع دايمًا لحساب
+  1100 (كاش) حتى لو البيع الأصلي كان بالكارت — كانت فجوة موثّقة صراحةً
+  في الكود القديم كـ"خارج النطاق". دلوقتي بيستخدم لقطة حساب الاستلام
+  الأصلي المحفوظة وقت البيع.
+- **⚠️ باج تقني حقيقي اتكشف واتصلح**: كل قيد محاسبي في الشاطئ كان بينادي
+  `post_taxed_sale_journal` بالافتراضي `commit_cost_centers=True`، اللي
+  بيعمل commit ضمني وسط أي عملية بيع — يعني كل بيع شاطئ من الأساس كان
+  بيقفل الـtransaction بدري من غير قصد. ظهر فعليًا وقت بناء سلة البيع
+  الـatomic الجديدة (أول صنف كان بيتثبّت في الداتابيز قبل ما نوصل
+  للصنف التاني، فرفض صنف لاحق ما كانش قادر يرجع الصنف الناجح). الحل:
+  `commit_cost_centers=False` في كل نداءات الشاطئ الأربعة — نفس النمط
+  اللي الدايننج بيستخدمه فعليًا من الأول (Gate 1B).
+- **باج race حقيقي اتصلح**: أول صف سعة يومي (`get_or_create_inventory`)
+  كان check-then-insert بلا حماية — أول بيعتين في نفس اللحظة بالظبط
+  كانوا ممكن يتصادموا بـIntegrityError خام (500). اتصلح بـSAVEPOINT
+  (`db.begin_nested()`) حوالين الـINSERT بس.
+- **سلة بيع atomic حقيقية**: `POST /beach/sell-cart` جديد — كل الأصناف
+  في transaction واحدة (إما كلهم ينجحوا أو ولا واحد)، idempotency على
+  مستوى السلة كلها. الفرونت إند بيستخدمه أونلاين بدل الحلقة القديمة
+  (طلب منفصل لكل صنف، بيع جزئي كان ممكن يحصل فعليًا). طابور الأوفلاين
+  لسه per-item عمدًا (قرار نطاق موثّق).
+- **شرط وردية مفتوحة إجباري** لأي دفع مباشر في الشاطئ (409
+  `NO_OPEN_SHIFT`، نفس شكل الدايننج بالظبط) — كان غايب تمامًا.
+- استلام كاش/فكة بالجنيه في كاشير الشاطئ، حد أقصى كمية (100)، واجهة
+  إلغاء حقيقية بسبب إجباري (`require_permission` مدير+ موجود بالفعل).
+- **تقرير الوردية (X/Z)**: `ShiftEndReport.channel_breakdown` جديد —
+  المبيعات مجمّعة حسب القناة الفعلية وقت البيع.
+- **مطابقة البنك**: الـauto-match بيقصر المرشحين على الدفعات اللي قناتها
+  مربوطة بنفس الحساب البنكي؛ دفعات legacy (بلا قناة) لسه بتترشح عادي.
+- **باج ترجمة اتصلح**: `paymentMethodLabel()` في الدايننج كانت بتقارن
+  `method === 'split'` حرفيًا، لكن القيمة الفعلية `"split:cash,card"` —
+  النص الخام كان بيظهر للمستخدم زي ما هو.
+- **باج حساب آجل اتصلح** (شاطئ ودايننج): تعديل رقم موظف بعد lookup ناجح
+  كان بيسيب الحساب القديم محمّل من غير مسح.
+- **اختبارات جديدة**: 33 اختبار خالص لقنوات التحصيل عبر 3 ملفات (شاطئ،
+  دايننج، finance HTTP) — شامل باج الـcommit الضمني وباج الـrace
+  والـvoid وmulti-channel split وbank matching.
+- **البوابات**: `agent-check.sh` PASS، `git diff --check` نظيف، backend
+  `pytest tests/ -v` → **2850 passed, 68 skipped, صفر failure** (2918
+  collected)، `alembic heads` → head واحد `a7b3f2c8e9d1`، frontend
+  `type-check:all` نظيف (el-kheima + owner)، `test:frontend` **106/106**،
+  `test:e2e:mock` **8/8**، owner `test:e2e` **12/12**، `build:all` نظيف،
+  docker compose (dev+prod) نظيف.
+- تفاصيل كاملة:
+  `docs/agent-workflow/handoffs/2026-08-16_REL-16_payment-channels-beach-cashier_claude_handoff.md`
+
+**السابق:** 2026-08-15 — REL-15B: سعر الشاطئ النهائي بلا VAT،
+ومطابقة الورديات، وأرشفة منافذ HIST، منشور ومتحقق فعليًا.
+
+- **Production:** الإصدار الفعال
+  `/opt/resort-os-releases/df27697d53a7ec93a10ed2f8898945ecb4a434a6`
+  من commit `df27697` على branch
+  `codex/rel-15-auth-ops-readiness`؛ Alembic
+  `e2f3a4b5c6d7 (head)`؛ PostgreSQL وRedis والخدمات سليمة.
+- **الشاطئ والوردية:** سعر تذكرة الشاطئ أصبح السعر النهائي المُحصّل بلا
+  ضريبة قيمة مضافة. تمت مصالحة 155 حركة نشطة و153 دفعة و130 قيدًا و60
+  وردية ذريًا؛ أزيل `20,284.60 EGP` من VAT التجريبي. لا توجد الآن حركة
+  نشطة بضريبة أو دفعة لا تطابق سعرها أو قيد شاطئ غير متزن. العينة الظاهرة
+  في البلاغ: الوردية `112` أصبحت متوقع `200`، معدود `200`، فرق `0`.
+- **منافذ البيع:** المنافذ التشغيلية النشطة هي `Restaurant / المطعم`
+  و`Cafe / الكافيه` فقط. أُرشف `Restaurant HIST` و`Cafe HIST` مع الحفاظ
+  على الطلبات التاريخية، وأُلغي الطلب الصفري المعلّق `192` فقط.
+- **حالة الوردية:** `GET /finance/shifts/current` يعيد `200 + null` عند
+  عدم وجود وردية مفتوحة بدل `404` المزعج في Console؛ الأخطاء الحقيقية
+  ما زالت تمر كما هي.
+- **تسجيل الدخول:** البريد أصبح case-insensitive، كلمة المرور تُعامل كسر
+  كامل بلا حذف مسافات، 2FA/الاسترداد/التسجيل الأول للمالك والمحاسب
+  والسوبر أدمن مكتملة، tabs المتزامنة لا تكسر refresh family، وحد شبكة
+  الموظفين المشتركة أصبح `60/5m` مع قفل محاولات مستقل لكل حساب.
+- **الفرع الوحيد:** الحقيقة التشغيلية المثبتة هي فرع واحد باسم
+  `El Kheima Beach Resort`. الحسابات الحية الآن 14: الحسابات الأربعة
+  المعتمدة سابقًا + 10 موظفين من الـroster الحقيقي؛ لكل حساب عضوية فعالة.
+  أُرشف 8 حسابات تجربة وأُلغيت عضوياتها وجلساتها وحالة 2FA/PIN والصلاحيات
+  وفُك ربطها من HR، مع Audit واحد؛ dry-run التالي وجد صفر أهداف.
+- **الأدوار:** عزل named-role للمالية وHR وCRM وPMS/POS والتشغيل؛ لا يرث
+  `timeshare_admin` صلاحيات كاشير/مالية بسبب رقمه، والمحاسب يهبط على
+  `/admin/finance` بلا redirect loop. اختبارات 403 السلبية ضمن البوابة.
+- **الملكية الجزئية:** إنشاء أول مدير وموظفي الوحدة يعمل، الزيارات وخدمة
+  العملاء وبوابة العميل العامة OTP/JWT منشورة. التحصيل الافتراضي لمدير
+  الوحدة فقط؛ استثناء الموظف named permission، وبطاقة/بنك فقط بلا cash.
+- **تطبيق المالك:** مسار أول دخول وكلمة المرور المؤقتة و2FA أُصلح كاملًا؛
+  الصفحة الرئيسية أصبحت decision-first، مع زمن تحديث القاهرة وتحذير
+  البيانات القديمة وفلترة تواريخ صحيحة. استجابة الهاتف والتابلت والكمبيوتر
+  محسنة، واختبار حي على `412×915` و`1280×800` ناجح بلا overflow أو خطأ JS.
+- **الحسابات الحالية:** 10 موظفين حقيقيين مرتبطون بملفات HR نشطة؛ 9 حسابات
+  جديدة، واستعادة حساب HR القديم بنفس ID، وإعادة استخدام سجل المحاسب
+  الموجود دون تكراره. لا يوجد email collision. المالكـان والمحاسبان لديهم
+  bootstrap لمرة واحدة صالح 24 ساعة؛ بقية الموظفين يغيرون كلمة المرور فقط.
+  صفوف الحسابات التجريبية المؤرشفة بقيت بأرقامها الداخلية لحماية المراجع.
+- **Full gates:** `agent-check.sh` ناجح وجمع 2874 اختبارًا؛ backend full
+  `2806 passed, 68 skipped`؛ Staff `106/106` وmock responsive
+  `8/8`؛ Owner responsive E2E `12/12`؛ type-check وبناء production ناجحان؛
+  migration نظيفة من قاعدة فارغة إلى head.
+- **Live acceptance:** 9 حاويات Resort تعمل، كل `RestartCount=0`؛ backend
+  وworker وbeat على image/revision واحدة؛ الموقع وwww وStaff وOwner وhealth
+  وبوابة العميل HTTP 200؛ المسار المحمي 401؛ TLS SAN يشمل الأربعة؛
+  health gate اليدوي `16/16`؛ السجلات بلا خطأ حقيقي بعد النشر.
+- **Rollback:** أرشيف المصدر SHA-256
+  `af66a3652e2d800c3d741740d547d579259f69c5fc96d20a8e09b8a8b29fcf6d`؛
+  dump متحقق بـ`pg_restore --list`:
+  `/opt/resort-os-releases/df27697d53a7ec93a10ed2f8898945ecb4a434a6/backups/resort_os_20260815_001751.dump`
+  (`751035` bytes، mode `0600`)؛
+  صور الرجوع في
+  `/var/backups/resort-os/source-releases/df27697d53a7ec93a10ed2f8898945ecb4a434a6-rollback-images.txt`.
+- **قرار التشغيل:** القبول التقني مكتمل. UAT البشري للمالك والموظفين
+  ما زال مطلوبًا حسب `docs/UAT_REL15_OWNER_STAFF_AR.md` باستخدام الحسابات
+  الشخصية التي جرى تجهيزها.
+
+**السابق:** 2026-08-13 — REL-14 (commit `95c30d9`)
 **البيئة:** Production — `elkheima.com` / VPS `191.218.161.133`
 **قائد التنفيذ والمراجع النهائي:** Codex
 
@@ -100,16 +581,16 @@
 
 | البند | القيمة المثبتة |
 |---|---|
-| فرع العمل الوحيد | `claude/CX-02C-frontend-auth-bootstrap` |
-| Resort OS source release (منشور) | `403bbd7` — REL-12: إغلاق فجوة تسوية checkout/folio (راجع REL-12 تحت) |
-| runtime code/config commit | `403bbd7` |
-| Marketing source release | `bc48f09` من المستودع المستقل (`main` يطابق الالتزام، مدفوعة بالكامل) |
-| `origin/main` | `598938e` — لم يُغيّر |
-| active Resort release | `/opt/resort-os-current -> /opt/resort-os-releases/403bbd7` |
-| active Marketing release | `/opt/elkheima-marketing-releases/bc48f09` |
-| Marketing current link | `/opt/elkheima-marketing-current -> /opt/elkheima-marketing-releases/bc48f09` |
+| فرع الإصدار المنشور | `codex/rel-15-auth-ops-readiness` |
+| Resort OS source release (منشور) | `df27697d53a7ec93a10ed2f8898945ecb4a434a6` — REL-15B Beach final-price no-VAT + shift/HIST reconciliation |
+| runtime code/config commit | `df27697d53a7ec93a10ed2f8898945ecb4a434a6` |
+| Marketing source release | `088cab4c5dc4de85953895abcf9247f7a3cb2773` — محفوظ ولم يُعد بناؤه في REL-15 |
+| `origin/main` وقت الإصدار | `2e74bce` — لم يُحرّك كجزء من النشر |
+| active Resort release | `/opt/resort-os-current -> /opt/resort-os-releases/df27697d53a7ec93a10ed2f8898945ecb4a434a6` |
+| active Marketing release | `/opt/elkheima-marketing-releases/088cab4c5dc4de85953895abcf9247f7a3cb2773` |
+| Marketing current link | `/opt/elkheima-marketing-current -> /opt/elkheima-marketing-releases/088cab4c5dc4de85953895abcf9247f7a3cb2773` |
 | Compose project / override | `resort-os-prod` / `docker-compose.prod.domain.yml` |
-| Alembic head (DB) | `d0e1f2a3b4c5` (real room inventory fields — مطبّق ✅) |
+| Alembic head (DB) | `e2f3a4b5c6d7` (canonical case-insensitive user email — مطبّق ✅) |
 
 ## Owner Cockpit Phase 6+7+7a — نشر 8 أغسطس 2026
 
@@ -151,7 +632,7 @@
 | 6 | Sales/Beach/Channel/Expense/Procurement analytics | ✅ مكتمل (2026-08-08) |
 | 7 | Shift monitoring + Exceptions engine | ✅ مكتمل (2026-08-08) |
 | 7a | PWA polish — icons + sparklines | ✅ مكتمل (2026-08-08) |
-| 8 | Security review + production gate | ⏳ التالي |
+| 8 | Security review + production gate | ✅ مكتمل في REL-15 (2026-08-14) |
 | ~~9~~ | ~~Unit economics~~ | محذوف بقرار محمد |
 | ~~10~~ | ~~Scenario sandbox~~ | محذوف بقرار محمد |
 

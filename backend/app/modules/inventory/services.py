@@ -15,12 +15,13 @@ from app.resort_os.timezone_utils import local_today
 
 from app.modules.inventory import crud
 from app.modules.inventory.models import (
-    Product, PurchaseOrder, PurchaseRequest, StockCount, StockCountLine, StockMovement, Supplier, Warehouse,
+    Product, PurchaseOrder, PurchaseRequest, StockCount, StockCountLine, StockMovement,
+    Supplier, SupplierPayment, Warehouse,
 )
 from app.modules.inventory.schemas import (
     CategoryCreate, ProductCreate, ProductUpdate,
     PurchaseOrderCreate, PurchaseOrderItemCreate, ReceiveItemsRequest,
-    StockMovementCreate, SupplierCreate, SupplierUpdate, WarehouseCreate,
+    StockMovementCreate, SupplierCreate, SupplierPaymentCreate, SupplierUpdate, WarehouseCreate,
     PurchaseRequestCreate, StockCountCreate,
 )
 
@@ -375,6 +376,127 @@ def get_po_or_404(db: Session, po_id: int) -> PurchaseOrder:
     return po
 
 
+def pay_purchase_order(
+    db: Session, po_id: int, data: SupplierPaymentCreate, recorded_by: int,
+) -> PurchaseOrder:
+    """سداد فعلي لمورد (2026-08-16، طلب Mohamed صراحةً) — يقفل حلقة الذمم
+    الدائنة اللي receive_purchase_order فتحها (Dr.1200/Cr.2200 وقت
+    الاستلام، راجع _post_purchase_receipt_journal). بيترحّل Dr.2200
+    (موردون) / Cr. حساب التسوية (كاش/بنك) لكل دفعة، ويحدّث amount_paid/
+    payment_status على أمر الشراء نفسه.
+
+    مقصور عمدًا على أمر شراء received بالكامل — دفعة على أمر لسه partial
+    مش متأكد قيمته النهائية، وده تبسيط متعمد (مفيش سيناريو دفع مقدّم قبل
+    الاستلام في النطاق المطلوب حاليًا)."""
+    from app.modules.finance import crud as finance_crud  # noqa: PLC0415
+    from app.modules.finance.services import (  # noqa: PLC0415
+        post_simple_revenue_journal, validate_period_open,
+    )
+
+    po = get_po_or_404(db, po_id)
+    if po.status != "received":
+        raise ValueError(f"أمر الشراء {po.order_number} لازم يكون received بالكامل قبل تسجيل دفعة له")
+    if not po.supplier_id:
+        raise ValueError(f"أمر الشراء {po.order_number} بدون مورد مسجَّل — لا يمكن تسجيل دفعة")
+
+    remaining = po.total_amount - po.amount_paid
+    if data.amount > remaining + Decimal("0.01"):
+        raise ValueError(
+            f"المبلغ ({data.amount}) أكبر من المتبقي على أمر الشراء ({remaining})"
+        )
+
+    settlement_account = finance_crud.get_account(db, data.settlement_account_id)
+    if not settlement_account or settlement_account.branch_id != po.branch_id:
+        raise ValueError(f"حساب التسوية {data.settlement_account_id} غير موجود في هذا الفرع")
+    if settlement_account.account_type != "asset":
+        raise ValueError(f"حساب التسوية «{settlement_account.name}» لازم يكون حساب أصول")
+    if not settlement_account.is_active:
+        raise ValueError(f"حساب التسوية «{settlement_account.name}» معطّل")
+
+    validate_period_open(db, po.branch_id, data.paid_at)
+
+    entry = post_simple_revenue_journal(
+        db, po.branch_id, data.paid_at,
+        debit_account_code="2200", credit_account_code=settlement_account.code,
+        amount=data.amount,
+        reference=data.reference or f"PO-{po.order_number}-PAY",
+        description=f"سداد مورد — أمر شراء {po.order_number}"
+                    + (f" ({po.supplier.name})" if po.supplier else ""),
+        source="supplier_payment", source_id=po.id,
+        created_by=recorded_by,
+        strict=True,
+    )
+
+    payment = crud.create_supplier_payment(
+        db, po.branch_id, po.supplier_id, po, data,
+        journal_entry_id=entry.id, recorded_by=recorded_by,
+    )
+    po.amount_paid = po.amount_paid + data.amount
+    po.payment_status = "paid" if po.amount_paid >= po.total_amount - Decimal("0.01") else "partial"
+    db.commit()
+    db.refresh(po)
+    return po
+
+
+def void_supplier_payment(
+    db: Session, payment_id: int, voided_by: int, reason: str = "voided via API",
+) -> SupplierPayment:
+    """إلغاء سند دفع مورد اتسجّل بالفعل (2026-08-19، طلب Mohamed) — عكس
+    Dr.2200/Cr.تسوية اللي pay_purchase_order رحّله، وبيرجّع amount_paid/
+    payment_status لأمر الشراء لحالته قبل الدفعة دي. نفس نمط
+    finance.services.void_expense بالظبط (نفس فئة الخطورة — قيد اتسجّل
+    فعليًا في الدفاتر، مش قبل الحفظ)."""
+    from app.modules.finance import crud as finance_crud  # noqa: PLC0415
+    from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
+
+    payment = crud.get_supplier_payment(db, payment_id)
+    if not payment:
+        raise ValueError(f"سند دفع المورد {payment_id} غير موجود")
+    if payment.voided_at is not None:
+        raise ValueError(f"سند دفع المورد {payment_id} ملغى بالفعل")
+
+    po = crud.get_purchase_order(db, payment.purchase_order_id)
+    if not po:
+        raise ValueError(f"أمر الشراء {payment.purchase_order_id} غير موجود")
+
+    settlement_account = finance_crud.get_account(db, payment.settlement_account_id)
+    if not settlement_account:
+        raise ValueError(f"حساب التسوية {payment.settlement_account_id} غير موجود")
+
+    try:
+        original_amount = payment.amount
+        payment = crud.void_supplier_payment(db, payment, voided_by)
+        finance_crud.create_revenue_audit_log(
+            db, branch_id=payment.branch_id, entity_type="supplier_payment", entity_id=payment.id,
+            old_value=original_amount, new_value=Decimal("0.00"), reason=reason, changed_by=voided_by,
+        )
+        from app.resort_os.timezone_utils import business_today  # noqa: PLC0415
+        post_simple_revenue_journal(
+            db, payment.branch_id, business_today(settings.TIMEZONE),
+            debit_account_code=settlement_account.code, credit_account_code="2200",
+            amount=original_amount,
+            reference=f"PO-PAY-VOID-{payment.id}",
+            description=f"إلغاء سند دفع مورد — أمر شراء {po.order_number}",
+            source="supplier_payment_void", source_id=payment.id,
+            created_by=voided_by,
+            strict=True, commit_cost_centers=False,
+        )
+        po.amount_paid = po.amount_paid - original_amount
+        if po.amount_paid <= Decimal("0.01"):
+            po.amount_paid = Decimal("0")
+            po.payment_status = "unpaid"
+        elif po.amount_paid >= po.total_amount - Decimal("0.01"):
+            po.payment_status = "paid"
+        else:
+            po.payment_status = "partial"
+        db.commit()
+        db.refresh(payment)
+        return payment
+    except Exception:
+        db.rollback()
+        raise
+
+
 def create_purchase_order(db: Session, data: PurchaseOrderCreate) -> PurchaseOrder:
     po = crud.create_purchase_order(db, data)
     db.commit(); db.refresh(po)
@@ -387,12 +509,45 @@ def receive_purchase_order(
     req: ReceiveItemsRequest,
     received_by: int,
 ) -> PurchaseOrder:
-    po = get_po_or_404(db, po_id)
-    if po.status in ("received", "cancelled"):
-        raise ValueError(f"أمر الشراء في حالة '{po.status}' ولا يمكن استلامه")
+    """⚠️ 2 باجات حقيقيين اتصلحوا هنا (مراجعة Codex 2026-08-30، H-03):
+    1. أمر الشراء كان بيتقرا من غير أي قفل — استلامين متزامنين لنفس
+       الأمر كل واحد كان يقرا نفس `received_qty` القديم ويتحقق منه
+       بمفرده، فمجموعهم يقدر يتخطى الكمية المطلوبة فعليًا رغم إن كل
+       تحقق منفرد نجح. دلوقتي أمر الشراء بيتقفل الأول (نفس نمط
+       lock_product_for_update)، فأي استلام تاني لنفس الأمر بيستنى/
+       يترفض لحد ما ده يخلص.
+    2. مفيش تجميع لتكرار نفس item_id في نفس الطلب — طلب فيه سطرين
+       بنفس الصنف كان كل سطر يتحقق لوحده من `remaining` (نفس القيمة
+       القديمة الاتنين)، فمجموعهم يقدر يتخطاها رغم إن كل سطر فرادى
+       يبان صحيح. دلوقتي بيتجمّعوا بـitem_id قبل أي تحقق."""
     try:
+        po = crud.lock_purchase_order_for_update(db, po_id)
+        if not po:
+            raise ValueError(f"أمر الشراء {po_id} غير موجود")
+        if po.status in ("received", "cancelled"):
+            raise ValueError(f"أمر الشراء في حالة '{po.status}' ولا يمكن استلامه")
+
+        requested_by_item: dict[int, Decimal] = {}
+        for line in req.items:
+            requested_by_item[line.item_id] = (
+                requested_by_item.get(line.item_id, Decimal("0")) + line.received_qty
+            )
+
+        po_items_by_id = {item.id: item for item in po.items}
+        for item_id, total_requested in requested_by_item.items():
+            po_item = po_items_by_id.get(item_id)
+            if not po_item:
+                raise ValueError(f"الصنف {item_id} غير موجود في أمر الشراء ده")
+            remaining = po_item.ordered_qty - po_item.received_qty
+            if total_requested > remaining + Decimal("0.0001"):
+                raise ValueError(
+                    f"كمية الاستلام ({total_requested}) للصنف {item_id} "
+                    f"أكبر من المتبقي فعليًا ({remaining})"
+                )
+
         po, received_value, receipt_movement_id = crud.receive_purchase_order(
-            db, po, req.items, req.warehouse_id, req.received_at, received_by,
+            db, po, [item.model_dump() for item in req.items],
+            req.warehouse_id, req.received_at, received_by,
         )
         _post_purchase_receipt_journal(
             db, po, received_value, receipt_movement_id, received_by,
@@ -405,7 +560,7 @@ def receive_purchase_order(
         if not is_lock_not_available(exc):
             raise
         raise InventoryConcurrencyError(
-            "أحد الأصناف في أمر الشراء ده مشغول الآن بعملية مخزون أخرى — حاول تاني خلال لحظات"
+            "أمر الشراء ده مشغول الآن بعملية استلام أخرى — حاول تاني خلال لحظات"
         ) from exc
     except Exception:
         db.rollback()

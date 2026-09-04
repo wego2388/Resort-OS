@@ -7,7 +7,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
 
 from app.core.config import settings
-from app.core.deps import DbDep, get_cashier_user, get_current_active_user, get_manager_user
+from app.core.deps import (
+    DbDep, get_cashier_user, get_manager_user, get_operations_admin_user,
+)
 from app.modules.leasing import crud, services
 from app.modules.leasing.schemas import (
     ConfirmDepositRequest, LeaseContractCreate, LeaseContractRead, LeaseContractUpdate,
@@ -47,7 +49,7 @@ def _get_contract_or_404(db, contract_id: int):
 
 @router.get("/leasing/contracts", response_model=PaginatedResponse)
 def list_contracts(
-    db: DbDep, user=Depends(get_current_active_user),
+    db: DbDep, user=Depends(get_operations_admin_user),
     branch_id: int = Query(...),
     contract_status: Optional[str] = Query(None, alias="status"),
     search: Optional[str] = Query(None),
@@ -82,7 +84,7 @@ def create_contract(data: LeaseContractCreate, db: DbDep, user=Depends(get_manag
 
 
 @router.get("/leasing/contracts/{contract_id}", response_model=LeaseContractRead)
-def get_contract(contract_id: int, db: DbDep, user=Depends(get_current_active_user)):
+def get_contract(contract_id: int, db: DbDep, user=Depends(get_operations_admin_user)):
     c = _get_contract_or_404(db, contract_id)
     _assert_leasing_branch(db, user, c.branch_id, "عرض عقد إيجار")
     return _to_read(c, local_today(settings.TIMEZONE))
@@ -181,7 +183,7 @@ def create_cash_log(contract_id: int, data: TenantCashLogCreate, db: DbDep,
 
 
 @router.get("/leasing/contracts/{contract_id}/cash-logs", response_model=list[TenantCashLogRead])
-def list_cash_logs(contract_id: int, db: DbDep, user=Depends(get_current_active_user)):
+def list_cash_logs(contract_id: int, db: DbDep, user=Depends(get_operations_admin_user)):
     c = _get_contract_or_404(db, contract_id)
     _assert_leasing_branch(db, user, c.branch_id, "عرض حركات كاش مستأجر")
     try:
@@ -191,7 +193,7 @@ def list_cash_logs(contract_id: int, db: DbDep, user=Depends(get_current_active_
 
 
 @router.get("/leasing/payments/{payment_id}/receipt", response_model=None)
-def download_receipt(payment_id: int, db: DbDep, user=Depends(get_current_active_user)):
+def download_receipt(payment_id: int, db: DbDep, user=Depends(get_operations_admin_user)):
     payment = crud.get_payment(db, payment_id)
     if not payment:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"الدفعة {payment_id} غير موجودة")

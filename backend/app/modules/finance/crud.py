@@ -11,16 +11,21 @@ from app.core.config import settings
 from app.resort_os.timezone_utils import local_today
 
 from app.modules.finance.models import (
-    Account, AccountingPeriod, AssetDepreciationEntry, BankAccount, BankStatementLine,
-    CashierShift, CashierShiftCashCount, CashMovement, ConditionalDiscount,
-    CostCenter, ETAInvoice, ExchangeRate, Folio, FolioCharge, JournalEntry, JournalLine, Payment,
-    Check, CheckMovement, RevenueAuditLog,
+    Account, AccountingPeriod, AccountingYearClose, AssetDepreciationEntry, BankAccount, BankStatementLine,
+    CashierShift, CashierShiftCashCount, CashMovement, CashReceipt, ConditionalDiscount,
+    CostCenter, Custody, CustodySettlementLine, ETAInvoice, ExchangeRate, Expense,
+    ExpensePayment, Folio, FolioCharge,
+    JournalEntry, JournalLine, Payment,
+    PaymentChannel, Check, CheckMovement, RevenueAuditLog,
 )
 from app.modules.finance.schemas import (
     AccountCreate, BankAccountCreate, BankAccountUpdate, BankStatementLineCreate,
+    CashReceiptCreate,
     ConditionalDiscountCreate, ConditionalDiscountUpdate,
-    CostCenterCreate, ExchangeRateCreate, FolioCreate, FolioChargeCreate,
-    JournalEntryCreate, PaymentCreate,
+    CostCenterCreate, CustodyCreate, CustodySettlementLineCreate,
+    ExchangeRateCreate, ExpenseCreate, ExpensePaymentCreate,
+    FolioCreate, FolioChargeCreate,
+    JournalEntryCreate, PaymentChannelCreate, PaymentChannelUpdate, PaymentCreate,
 )
 
 
@@ -128,6 +133,32 @@ def increment_discount_uses(db: Session, discount_id: int) -> None:
 
 def get_folio(db: Session, folio_id: int) -> Optional[Folio]:
     return db.query(Folio).filter(Folio.id == folio_id).first()
+
+
+def list_open_folios_for_aging(db: Session, branch_id: int) -> list[Folio]:
+    """فوليوهات مفتوحة (لسه من غير تسوية) لتقرير أعمار الديون (2026-08-19،
+    طلب Mohamed) — راجع services.get_aging_report."""
+    return (
+        db.query(Folio)
+        .filter(Folio.branch_id == branch_id, Folio.status == "open")
+        .order_by(Folio.check_in)
+        .all()
+    )
+
+
+def list_unpaid_expenses_for_aging(db: Session, branch_id: int) -> list[Expense]:
+    """مصروفات آجلة لسه من غير سداد كامل، مش ملغاة — لتقرير أعمار الديون
+    (2026-08-19، طلب Mohamed)."""
+    return (
+        db.query(Expense)
+        .filter(
+            Expense.branch_id == branch_id,
+            Expense.payment_status.in_(("unpaid", "partial")),
+            Expense.voided_at.is_(None),
+        )
+        .order_by(Expense.expense_date)
+        .all()
+    )
 
 
 def list_folios(
@@ -305,6 +336,7 @@ def create_direct_payment(
     fx_rate: Optional[Decimal] = None,
     source: Optional[str] = None,
     original_payment_id: Optional[int] = None,
+    channel_snapshot: Optional[dict] = None,
 ) -> Payment:
     """يسجّل دفعة POS مباشرة (folio_id=None) — بيع نقدي/كارت فوري من موديول
     عمل تاني (شاطئ/دايننج) مش محمّل على فوليو غرفة، عشان يظهر في تقرير نهاية
@@ -315,13 +347,22 @@ def create_direct_payment(
 
     POS-03: currency/fx_rate — amount دايمًا EGP-equivalent؛ لو الكاشير استلم
     كاش بعملة أجنبية، amount = المعادل بالجنيه، currency = العملة الحقيقية،
-    fx_rate = سعر الصرف المستخدم. fx_rate=None تعني EGP (بيتحوّل لـ 1.0 تلقائيًا)."""
+    fx_rate = سعر الصرف المستخدم. fx_rate=None تعني EGP (بيتحوّل لـ 1.0 تلقائيًا).
+
+    ``channel_snapshot``: dict بـ payment_channel_id/code/name/
+    settlement_account_code (راجع finance.services.payment_channel_snapshot)
+    — لقطة تاريخية لقناة التحصيل وقت البيع، مش مرجع حي."""
     _fx = fx_rate if fx_rate is not None else Decimal("1")
+    _channel_fields = channel_snapshot or {}
     payment = Payment(
         folio_id=None, branch_id=branch_id, amount=amount, currency=currency,
         fx_rate=_fx, method=method, reference=reference, posted_at=posted_at,
         cashier_id=cashier_id, shift_id=shift_id, ref_order_id=ref_order_id,
         source=source, original_payment_id=original_payment_id,
+        payment_channel_id=_channel_fields.get("payment_channel_id"),
+        payment_channel_code=_channel_fields.get("payment_channel_code"),
+        payment_channel_name=_channel_fields.get("payment_channel_name"),
+        settlement_account_code=_channel_fields.get("settlement_account_code"),
     )
     db.add(payment)
     db.flush()
@@ -601,12 +642,213 @@ def create_account(db: Session, data: AccountCreate) -> Account:
     return account
 
 
+def get_account(db: Session, account_id: int) -> Optional[Account]:
+    return db.query(Account).filter(Account.id == account_id).first()
+
+
 def get_account_by_code(db: Session, branch_id: int, code: str) -> Optional[Account]:
     return (
         db.query(Account)
         .filter(Account.branch_id == branch_id, Account.code == code)
         .first()
     )
+
+
+# ── Expenses (2026-08-16) ────────────────────────────────────────────────
+
+def create_expense(
+    db: Session, branch_id: int, data: ExpenseCreate, journal_entry_id: int, recorded_by: int,
+    settlement_account_id: int, payment_status: str,
+) -> Expense:
+    """settlement_account_id/payment_status بيتحددوا هنا كباراميترز صريحة
+    (مش من data.settlement_account_id مباشرة) — لمصروف آجل (defer_payment)
+    الحساب الفعلي بيبقى 2180 (مستحقة) مش اللي العميل بعته، راجع
+    services.record_expense."""
+    expense = Expense(
+        branch_id=branch_id,
+        expense_date=data.expense_date,
+        expense_account_id=data.expense_account_id,
+        settlement_account_id=settlement_account_id,
+        amount=data.amount,
+        description=data.description,
+        reference=data.reference,
+        cost_center_id=data.cost_center_id,
+        journal_entry_id=journal_entry_id,
+        recorded_by=recorded_by,
+        payment_status=payment_status,
+    )
+    db.add(expense)
+    db.flush()
+    return expense
+
+
+def create_expense_payment(
+    db: Session, branch_id: int, expense_id: int, data: ExpensePaymentCreate,
+    journal_entry_id: int, recorded_by: int,
+) -> ExpensePayment:
+    payment = ExpensePayment(
+        branch_id=branch_id, expense_id=expense_id, amount=data.amount,
+        settlement_account_id=data.settlement_account_id,
+        reference=data.reference, notes=data.notes, paid_at=data.paid_at,
+        journal_entry_id=journal_entry_id, recorded_by=recorded_by,
+    )
+    db.add(payment)
+    db.flush()
+    return payment
+
+
+def list_expense_payments(db: Session, expense_id: int) -> list[ExpensePayment]:
+    return (
+        db.query(ExpensePayment)
+        .filter(ExpensePayment.expense_id == expense_id)
+        .order_by(ExpensePayment.paid_at.desc(), ExpensePayment.id.desc())
+        .all()
+    )
+
+
+def get_expense(db: Session, expense_id: int) -> Optional[Expense]:
+    return db.query(Expense).filter(Expense.id == expense_id).first()
+
+
+def void_expense(db: Session, expense: Expense, voided_by: int) -> Expense:
+    expense.voided_at = datetime.utcnow()
+    expense.voided_by = voided_by
+    db.flush()
+    return expense
+
+
+def list_expenses(
+    db: Session, branch_id: int,
+    date_from: Optional[object] = None, date_to: Optional[object] = None,
+    page: int = 1, size: int = 30,
+) -> tuple[list[Expense], int]:
+    q = db.query(Expense).filter(Expense.branch_id == branch_id)
+    if date_from:
+        q = q.filter(Expense.expense_date >= date_from)
+    if date_to:
+        q = q.filter(Expense.expense_date <= date_to)
+    total = q.count()
+    items = (
+        q.order_by(Expense.expense_date.desc(), Expense.id.desc())
+        .offset((page - 1) * size).limit(size).all()
+    )
+    return items, total
+
+
+def create_custody(
+    db: Session, branch_id: int, data: CustodyCreate,
+    custody_account_id: int, disbursement_entry_id: int, disbursed_by: int,
+) -> Custody:
+    custody = Custody(
+        branch_id=branch_id, holder_name=data.holder_name,
+        holder_employee_id=data.holder_employee_id, purpose=data.purpose,
+        amount=data.amount, disbursed_date=data.disbursed_date,
+        source_account_id=data.source_account_id, custody_account_id=custody_account_id,
+        disbursement_entry_id=disbursement_entry_id, disbursed_by=disbursed_by,
+    )
+    db.add(custody)
+    db.flush()
+    return custody
+
+
+def get_custody(db: Session, custody_id: int) -> Optional[Custody]:
+    return db.query(Custody).filter(Custody.id == custody_id).first()
+
+
+def list_custodies(
+    db: Session, branch_id: int, status: Optional[str] = None,
+    page: int = 1, size: int = 30,
+) -> tuple[list[Custody], int]:
+    q = db.query(Custody).filter(Custody.branch_id == branch_id)
+    if status:
+        q = q.filter(Custody.status == status)
+    total = q.count()
+    items = (
+        q.order_by(Custody.disbursed_date.desc(), Custody.id.desc())
+        .offset((page - 1) * size).limit(size).all()
+    )
+    return items, total
+
+
+def create_custody_settlement_lines(
+    db: Session, custody_id: int, lines: list[CustodySettlementLineCreate],
+) -> list[CustodySettlementLine]:
+    created = []
+    for line in lines:
+        row = CustodySettlementLine(
+            custody_id=custody_id, expense_account_id=line.expense_account_id,
+            cost_center_id=line.cost_center_id, amount=line.amount,
+            description=line.description, reference=line.reference,
+        )
+        db.add(row)
+        created.append(row)
+    db.flush()
+    return created
+
+
+def list_custody_settlement_lines(db: Session, custody_id: int) -> list[CustodySettlementLine]:
+    return (
+        db.query(CustodySettlementLine)
+        .filter(CustodySettlementLine.custody_id == custody_id)
+        .order_by(CustodySettlementLine.id)
+        .all()
+    )
+
+
+def void_custody(db: Session, custody: Custody, voided_by: int) -> Custody:
+    custody.voided_at = datetime.utcnow()
+    custody.voided_by = voided_by
+    db.flush()
+    return custody
+
+
+def create_cash_receipt(
+    db: Session, branch_id: int, data: CashReceiptCreate, journal_entry_id: int, recorded_by: int,
+) -> CashReceipt:
+    receipt = CashReceipt(
+        branch_id=branch_id,
+        receipt_date=data.receipt_date,
+        destination_account_id=data.destination_account_id,
+        source_account_id=data.source_account_id,
+        amount=data.amount,
+        description=data.description,
+        reference=data.reference,
+        cost_center_id=data.cost_center_id,
+        journal_entry_id=journal_entry_id,
+        recorded_by=recorded_by,
+    )
+    db.add(receipt)
+    db.flush()
+    return receipt
+
+
+def get_cash_receipt(db: Session, receipt_id: int) -> Optional[CashReceipt]:
+    return db.query(CashReceipt).filter(CashReceipt.id == receipt_id).first()
+
+
+def list_cash_receipts(
+    db: Session, branch_id: int,
+    date_from: Optional[object] = None, date_to: Optional[object] = None,
+    page: int = 1, size: int = 30,
+) -> tuple[list[CashReceipt], int]:
+    q = db.query(CashReceipt).filter(CashReceipt.branch_id == branch_id)
+    if date_from:
+        q = q.filter(CashReceipt.receipt_date >= date_from)
+    if date_to:
+        q = q.filter(CashReceipt.receipt_date <= date_to)
+    total = q.count()
+    items = (
+        q.order_by(CashReceipt.receipt_date.desc(), CashReceipt.id.desc())
+        .offset((page - 1) * size).limit(size).all()
+    )
+    return items, total
+
+
+def void_cash_receipt(db: Session, receipt: CashReceipt, voided_by: int) -> CashReceipt:
+    receipt.voided_at = datetime.utcnow()
+    receipt.voided_by = voided_by
+    db.flush()
+    return receipt
 
 
 def list_accounts(
@@ -691,6 +933,42 @@ def list_journal_entries(
 
 
 # ── AccountingPeriod ──────────────────────────────────────────────────
+
+def count_closed_months(db: Session, branch_id: int, year: int) -> int:
+    """عدد الشهور المقفولة/المؤمَّنة (closed/locked) لسنة معيّنة — لإقفال
+    السنة (2026-08-19، طلب Mohamed): لازم كل الاتناشر شهر مقفولين الأول.
+    راجع services.close_accounting_year."""
+    return (
+        db.query(AccountingPeriod)
+        .filter(
+            AccountingPeriod.branch_id == branch_id,
+            AccountingPeriod.year == year,
+            AccountingPeriod.status.in_(("closed", "locked")),
+        )
+        .count()
+    )
+
+
+def get_year_close(db: Session, branch_id: int, year: int) -> Optional[AccountingYearClose]:
+    return (
+        db.query(AccountingYearClose)
+        .filter(AccountingYearClose.branch_id == branch_id, AccountingYearClose.year == year)
+        .first()
+    )
+
+
+def create_year_close(
+    db: Session, branch_id: int, year: int, journal_entry_id: int,
+    net_income: Decimal, closed_by: int,
+) -> AccountingYearClose:
+    row = AccountingYearClose(
+        branch_id=branch_id, year=year, journal_entry_id=journal_entry_id,
+        net_income=net_income, closed_by=closed_by, closed_at=datetime.utcnow(),
+    )
+    db.add(row)
+    db.flush()
+    return row
+
 
 def get_period_status(
     db: Session,
@@ -805,6 +1083,10 @@ def create_cost_center(db: Session, data: CostCenterCreate) -> CostCenter:
     return obj
 
 
+def get_cost_center(db: Session, cost_center_id: int) -> Optional[CostCenter]:
+    return db.query(CostCenter).filter(CostCenter.id == cost_center_id).first()
+
+
 def get_cost_center_by_code(db: Session, branch_id: int, code: str) -> Optional[CostCenter]:
     return (
         db.query(CostCenter)
@@ -882,6 +1164,43 @@ def sum_journal_lines_by_account(
         row[0]: (row[1] or Decimal("0"), row[2] or Decimal("0"))
         for row in q.all()
     }
+
+
+def sum_account_before_date(db: Session, account_id: int, before_date: date) -> tuple[Decimal, Decimal]:
+    """إجمالي مدين/دائن على حساب واحد لكل القيود *قبل* تاريخ معيّن بالظبط
+    (مش <=) — لحساب الرصيد الافتتاحي لكشف حساب (2026-08-19)."""
+    from sqlalchemy import func  # noqa: PLC0415
+
+    row = (
+        db.query(
+            func.coalesce(func.sum(JournalLine.debit), 0),
+            func.coalesce(func.sum(JournalLine.credit), 0),
+        )
+        .join(JournalEntry, JournalEntry.id == JournalLine.entry_id)
+        .filter(JournalLine.account_id == account_id, JournalEntry.entry_date < before_date)
+        .one()
+    )
+    return row[0] or Decimal("0"), row[1] or Decimal("0")
+
+
+def list_account_ledger_lines(
+    db: Session, account_id: int, date_from: date, date_to: date,
+) -> list[tuple[JournalLine, JournalEntry]]:
+    """كل سطور دفتر اليومية على حساب واحد خلال مدى تاريخ — لكشف الحساب
+    (2026-08-19). بدون pagination عمدًا (راجع services.get_account_ledger)
+    عشان الرصيد المتحرّك (running balance) لازم يتحسب على التسلسل الكامل
+    مش صفحة بصفحة."""
+    return (
+        db.query(JournalLine, JournalEntry)
+        .join(JournalEntry, JournalEntry.id == JournalLine.entry_id)
+        .filter(
+            JournalLine.account_id == account_id,
+            JournalEntry.entry_date >= date_from,
+            JournalEntry.entry_date <= date_to,
+        )
+        .order_by(JournalEntry.entry_date, JournalEntry.id, JournalLine.id)
+        .all()
+    )
 
 
 # ── Exchange Rates (Multi-Currency) ───────────────────────────────────
@@ -1091,14 +1410,21 @@ def list_bank_statement_lines(
 
 def find_matching_payment_candidates(
     db: Session, branch_id: int, amount: Decimal, target_date, window_days: int = 3,
+    bank_account_id: Optional[int] = None,
 ) -> list[Payment]:
     """دفعات غير مربوطة بأي سطر كشف حساب حتى الآن، بنفس المبلغ (± قرش) وفي
-    نطاق تاريخ قريب — أساس المطابقة الأوتوماتيكية."""
+    نطاق تاريخ قريب — أساس المطابقة الأوتوماتيكية.
+
+    ``bank_account_id``: لو موجود، بيقصر المرشحين على الدفعات اللي قناة
+    تحصيلها مربوطة *بنفس* الحساب البنكي ده — دفعة كاش من الصندوق مايترشحش
+    كمطابقة لسطر تحويل بنكي حتى لو المبلغ اتفق بالصدفة. توافق آمن للحركات
+    القديمة (قبل payment_channels): payment_channel_id فارغ لسه بيترشّح
+    عادي، مش مستبعد."""
     from datetime import timedelta  # noqa: PLC0415
     already_matched = db.query(BankStatementLine.matched_payment_id).filter(
         BankStatementLine.matched_payment_id.isnot(None),
     )
-    return (
+    q = (
         db.query(Payment)
         .filter(
             Payment.branch_id == branch_id,
@@ -1108,8 +1434,13 @@ def find_matching_payment_candidates(
             Payment.posted_at <= target_date + timedelta(days=window_days),
             Payment.id.notin_(already_matched),
         )
-        .all()
     )
+    if bank_account_id is not None:
+        q = q.outerjoin(PaymentChannel, Payment.payment_channel_id == PaymentChannel.id).filter(
+            (Payment.payment_channel_id.is_(None))
+            | (PaymentChannel.bank_account_id == bank_account_id),
+        )
+    return q.all()
 
 
 def match_statement_line(
@@ -1186,3 +1517,84 @@ def unmatched_payments_summary(db: Session, branch_id: int, as_of) -> tuple[int,
         Payment.id.notin_(already_matched),
     ).scalar()
     return count, Decimal(total or 0)
+
+
+# ── Payment Channels ─────────────────────────────────────────────────────
+
+def _payment_channel_query(db: Session):
+    return db.query(PaymentChannel).options(
+        joinedload(PaymentChannel.gl_account),
+        joinedload(PaymentChannel.bank_account),
+    )
+
+
+def get_payment_channel(db: Session, channel_id: int) -> Optional[PaymentChannel]:
+    return _payment_channel_query(db).filter(PaymentChannel.id == channel_id).first()
+
+
+def get_payment_channel_by_code(db: Session, branch_id: int, code: str) -> Optional[PaymentChannel]:
+    return (
+        _payment_channel_query(db)
+        .filter(PaymentChannel.branch_id == branch_id, PaymentChannel.code == code)
+        .first()
+    )
+
+
+def list_payment_channels(
+    db: Session, branch_id: int, active_only: bool = False, method: Optional[str] = None,
+) -> list[PaymentChannel]:
+    q = _payment_channel_query(db).filter(PaymentChannel.branch_id == branch_id)
+    if active_only:
+        q = q.filter(PaymentChannel.is_active.is_(True))
+    if method:
+        q = q.filter(PaymentChannel.method == method)
+    return q.order_by(PaymentChannel.sort_order, PaymentChannel.id).all()
+
+
+def get_default_payment_channel(db: Session, branch_id: int, method: str) -> Optional[PaymentChannel]:
+    return (
+        _payment_channel_query(db)
+        .filter(
+            PaymentChannel.branch_id == branch_id,
+            PaymentChannel.method == method,
+            PaymentChannel.is_default.is_(True),
+            PaymentChannel.is_active.is_(True),
+        )
+        .first()
+    )
+
+
+def clear_default_payment_channel(db: Session, branch_id: int, method: str, exclude_id: Optional[int] = None) -> None:
+    """يشيل is_default من أي قناة تانية لنفس (branch, method) قبل ما نعيّن
+    default جديدة — الـUNIQUE index الجزئي بيمنع اتنين default في نفس
+    اللحظة، فلازم نفضي القديمة أولًا داخل نفس المعاملة."""
+    q = db.query(PaymentChannel).filter(
+        PaymentChannel.branch_id == branch_id,
+        PaymentChannel.method == method,
+        PaymentChannel.is_default.is_(True),
+    )
+    if exclude_id is not None:
+        q = q.filter(PaymentChannel.id != exclude_id)
+    q.update({"is_default": False}, synchronize_session=False)
+    db.flush()
+
+
+def create_payment_channel(db: Session, data: PaymentChannelCreate) -> PaymentChannel:
+    if data.is_default:
+        clear_default_payment_channel(db, data.branch_id, data.method)
+    channel = PaymentChannel(**data.model_dump())
+    db.add(channel)
+    db.flush()
+    return channel
+
+
+def update_payment_channel(db: Session, channel: PaymentChannel, data: PaymentChannelUpdate) -> PaymentChannel:
+    updates = data.model_dump(exclude_unset=True, exclude={"clear_bank_account"})
+    if updates.get("is_default"):
+        clear_default_payment_channel(db, channel.branch_id, channel.method, exclude_id=channel.id)
+    for field, value in updates.items():
+        setattr(channel, field, value)
+    if data.clear_bank_account:
+        channel.bank_account_id = None
+    db.flush()
+    return channel

@@ -35,7 +35,7 @@ watch(() => props.open, (isOpen) => {
       >
         <Transition name="sheet-slide" appear>
           <div
-            class="absolute inset-x-0 bottom-0 max-h-[85vh] flex flex-col bg-owner-bg rounded-t-2xl border-t border-owner-border shadow-2xl"
+            class="absolute inset-x-0 bottom-0 max-h-[85vh] flex flex-col bg-owner-bg rounded-t-2xl border-t border-owner-border shadow-2xl lg:mx-auto lg:max-w-2xl lg:bottom-8 lg:rounded-2xl lg:border"
             style="padding-bottom: env(safe-area-inset-bottom);"
             role="dialog"
             aria-modal="true"

@@ -1,7 +1,16 @@
 # ── Core ──────────────────────────────────────────────────────────────────────
-fastapi==0.115.6
+# مراجعة Codex 2026-08-31 (SEC-05): fastapi/starlette اترقّوا معًا (starlette
+# محدود بقيد fastapi نفسه) — starlette==0.41.3 القديمة كانت فيها 9 CVE
+# (تفصيل كامل في docs/agent-workflow/handoffs/2026-08-31_SEC-fixes_claude_
+# handoff.md) — أخطرهم Range-header ReDoS في FileResponse (DoS غير مصادَق).
+# باقي الـCVEs (Host-header URL confusion، HTTPEndpoint method dispatch،
+# Windows UNC SSRF) غير مستغَلّة فعليًا هنا (المشروع بيعتمد JWT+role
+# checks مش request.url، بيستخدم FastAPI routers مش raw HTTPEndpoint،
+# وبينشر على Linux مش Windows) — لكن التحديث بيقفلهم كلهم برضو.
+fastapi==0.122.0
+starlette==0.50.0
 uvicorn[standard]==0.32.1
-python-multipart==0.0.12
+python-multipart==0.0.32
 
 # ── Database ──────────────────────────────────────────────────────────────────
 sqlalchemy==2.0.36
@@ -13,7 +22,11 @@ pydantic==2.10.4
 pydantic-settings==2.6.1
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
-python-jose[cryptography]==3.3.0
+# مراجعة Codex 2026-08-31 (SEC-04): python-jose==3.3.0 عندها CVE-2024-33663
+# حرجة (algorithm confusion في تحقق JWT) — نفس المكتبة المستخدمة لكل طلب
+# مصادَق في auth chain المشروع كله. 3.5.0 هي أحدث نسخة مستقرة (الإصلاح
+# نفسه موجود من 3.4.0).
+python-jose[cryptography]==3.5.0
 passlib[bcrypt]==1.7.4
 bcrypt==5.0.0
 pyotp==2.10.0
@@ -28,7 +41,10 @@ loguru==0.7.3
 sentry-sdk[fastapi]==2.19.2
 
 # ── Encryption ────────────────────────────────────────────────────────────────
-cryptography==44.0.0
+# مراجعة Codex 2026-08-31 (SEC-05): 8 CVE على 44.0.0 (pip-audit) — أحدث
+# نسخة مستقرة بتقفلهم كلهم. مستخدمة هنا أساسًا لـFernet (تشفير PII)، مش
+# مسارات X.509/PKCS#7 اللي كانت أغلب الثغرات فيها.
+cryptography==50.0.1
 
 # ── HTTP & Utils ──────────────────────────────────────────────────────────────
 httpx==0.28.1

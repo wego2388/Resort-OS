@@ -629,6 +629,28 @@ class TestCheckinCheckout:
         with pytest.raises(ValueError):
             services.cancel_booking(db, booking.id, cancelled_by=1)
 
+    def test_cannot_cancel_checked_in_booking(self, db):
+        """مراجعة Codex 2026-08-30 (H-06): كان الحارس القديم بيرفض بس
+        checked_out/cancelled — حجز checked_in (ضيف نازل فعليًا) كان يقدر
+        يتلغي بمسار الإلغاء العادي، فترجع الغرفة available وهي لسه مشغولة،
+        والفوليو يفضل مفتوح من غير تسوية. المسار الصح هو checkout."""
+        branch = make_branch(db)
+        rt = make_room_type(db, branch)
+        room = make_room(db, branch, rt)
+        booking = make_booking(db, branch, room)
+        services.checkin_booking(db, booking.id)
+        db.refresh(room)
+        assert room.status == "occupied"
+
+        with pytest.raises(ValueError, match="checked_in"):
+            services.cancel_booking(db, booking.id, cancelled_by=1)
+
+        # الحجز والغرفة لازم يفضلوا زي ما هما — الإلغاء المرفوض مبيغيّرش حاجة
+        db.refresh(booking)
+        db.refresh(room)
+        assert booking.status == "checked_in"
+        assert room.status == "occupied"
+
 
 class TestRatePlanBookingIntegration:
     """باج "الموديل موجود، الـ API صفر" (RatePlan) اتصلح جزئيًا بربط

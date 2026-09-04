@@ -8,8 +8,8 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
-    Boolean, Date, DateTime, ForeignKey, Integer,
-    Numeric, String, Text,
+    Boolean, Date, DateTime, ForeignKey, Index, Integer,
+    Numeric, String, Text, text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -50,6 +50,23 @@ class DailyStats(Base, TimestampMixin):
 class GuestReview(Base, TimestampMixin):
     """تقييم ضيف — يُربط بحجز أو يُدخل يدوياً."""
     __tablename__ = "guest_reviews"
+    __table_args__ = (
+        # مراجعة Codex 2026-08-30 (M-03): survey token صالح 7 أيام بلا أي
+        # تتبع "تم استهلاكه" — من غيرها نفس اللينك يقدر يتبعت عدد غير
+        # محدود من المرات. راجع migration 6449668eb81a للنسخة الحقيقية
+        # على قاعدة بيانات موجودة بالفعل — هنا نفس التعريف عشان تستات
+        # الوحدة (create_all على SQLite) تفحص السلوك ده كمان.
+        Index(
+            "uq_guest_review_booking", "booking_id", unique=True,
+            postgresql_where=text("booking_id IS NOT NULL"),
+            sqlite_where=text("booking_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_guest_review_timeshare_visit", "timeshare_visit_id", unique=True,
+            postgresql_where=text("timeshare_visit_id IS NOT NULL"),
+            sqlite_where=text("timeshare_visit_id IS NOT NULL"),
+        ),
+    )
 
     id:              Mapped[int]           = mapped_column(primary_key=True)
     branch_id:       Mapped[int]           = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"))

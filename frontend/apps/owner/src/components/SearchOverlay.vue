@@ -7,6 +7,7 @@
 import { ref, nextTick, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useOwnerSearch, useDetailSheet } from '../composables/useOwnerData'
+import { formatApiDateTime } from '../composables/useFormat'
 import { fetchDiningItemDetail, fetchSupplierDetail, fetchExpenseDetail, fetchProductDetail } from '../api/owner'
 import type {
   SearchResultItem,
@@ -68,7 +69,7 @@ function handleResultClick(r: SearchResultItem) {
 }
 
 function formatDateTime(iso: string) {
-  return new Date(iso).toLocaleString('ar-EG', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+  return formatApiDateTime(iso)
 }
 function formatDate(d: string) {
   return new Date(d).toLocaleDateString('ar-EG', { month: 'short', day: 'numeric' })

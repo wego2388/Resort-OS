@@ -27,6 +27,14 @@ def get_password_hash(password: str) -> str:
 
 
 def validate_password_strength(password: str) -> Tuple[bool, str]:
+    # مراجعة Codex 2026-08-31 (SEC-09): bcrypt.hashpw بترمي ValueError غير
+    # معالجة لأي باسورد أطول من 72 بايت (مش حرف) — 500 قبيح بدل رسالة خطأ
+    # واضحة. باسورد عربي حقيقي (~40 حرف) بيتخطى 72 بايت UTF-8 بسهولة، فده
+    # مش حالة نظرية لموظفين بيكتبوا بالعربي. الفحص هنا قبل bcrypt خالص —
+    # نفس البوابة المستخدمة فعليًا في كل نقاط دخول الباسورد (تسجيل، تغيير،
+    # استرجاع، admin bootstrap).
+    if len(password.encode("utf-8")) > 72:
+        return False, "Password must not exceed 72 bytes (bcrypt limit) — try a shorter password"
     if len(password) < 8:
         return False, "Password must be at least 8 characters"
     if not any(c.isupper() for c in password):

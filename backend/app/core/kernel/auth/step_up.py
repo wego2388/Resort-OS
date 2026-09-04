@@ -104,6 +104,19 @@ def user_force_2fa_reset_scope(*, user_id: int, reason: str) -> str:
     })
 
 
+def staff_credentials_reset_scope(*, user_id: int, reason: str) -> str:
+    """2026-08-16: باسورد+2FA مؤقتين جداد لموظف عادي نسي/غلط بيانات
+    دخوله — بديل ويب لـ`admin_bootstrap recover` الـCLI (اللي فضل
+    الطريقة الوحيدة قبل كده، محتاج SSH فعلي على السيرفر). أوسع من
+    user_force_2fa_reset (بتلمس الباسورد كمان مش الـ2FA بس)، فمحتاجة
+    نفس مستوى reason+step-up، وservices.reset_staff_credentials بترفض
+    super_admin/owner صراحةً بغض النظر عن نتيجة الـstep-up."""
+    return build_step_up_scope("staff_credentials_reset", {
+        "user_id": user_id,
+        "reason_sha256": sha256_text(reason),
+    })
+
+
 def permission_override_upsert_scope(
     *,
     user_id: int,
@@ -185,6 +198,45 @@ def dining_refund_scope(*, order_id: int, item_id: int, reason: str) -> str:
     return build_step_up_scope("dining_refund", {
         "order_id": order_id,
         "item_id": item_id,
+        "reason_sha256": sha256_text(reason),
+    })
+
+
+def expense_void_scope(*, expense_id: int, reason: str) -> str:
+    """2026-08-19 (طلب Mohamed — إلغاء سند مصروفات) — نفس فئة خطورة
+    payment_void_scope فوق بالظبط: بيعكس قيد رحّل فعليًا في الدفاتر
+    (Dr.5xxx/Cr.تسوية) بعد إتمامه، مش قبل الحفظ. مربوط بنفس السند والسبب."""
+    return build_step_up_scope("expense_void", {
+        "expense_id": expense_id,
+        "reason_sha256": sha256_text(reason),
+    })
+
+
+def custody_void_scope(*, custody_id: int, reason: str) -> str:
+    """2026-08-19 (طلب Mohamed — إلغاء عهدة نقدية لسه open) — نفس فئة
+    خطورة expense_void_scope فوق بالظبط: بيعكس Dr.مصدر/Cr.1190 اتسجّل
+    فعليًا. مربوط بنفس العهدة والسبب."""
+    return build_step_up_scope("custody_void", {
+        "custody_id": custody_id,
+        "reason_sha256": sha256_text(reason),
+    })
+
+
+def cash_receipt_void_scope(*, receipt_id: int, reason: str) -> str:
+    """2026-08-19 (طلب Mohamed — إلغاء إذن قبض عام) — نفس فئة خطورة
+    expense_void_scope فوق بالظبط. مربوط بنفس الإذن والسبب."""
+    return build_step_up_scope("cash_receipt_void", {
+        "receipt_id": receipt_id,
+        "reason_sha256": sha256_text(reason),
+    })
+
+
+def supplier_payment_void_scope(*, payment_id: int, reason: str) -> str:
+    """2026-08-19 (طلب Mohamed — إلغاء سند دفع مورد) — نفس فئة خطورة
+    payment_void_scope فوق بالظبط: بيعكس Dr.2200/Cr.تسوية اتسجّل فعليًا،
+    وبيقلّل amount_paid على أمر الشراء. مربوط بنفس السند والسبب."""
+    return build_step_up_scope("supplier_payment_void", {
+        "payment_id": payment_id,
         "reason_sha256": sha256_text(reason),
     })
 

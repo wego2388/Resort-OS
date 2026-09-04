@@ -105,6 +105,23 @@ from app.resort_os.timezone_utils import business_today
 router = APIRouter(tags=["dining"])
 
 
+def _assert_outlet_branch(db, user, outlet_id: int, action_desc: str):
+    """مراجعة Codex 2026-08-31 (SEC-06): مسارات إنشاء الطلب (create_order/
+    hold_order/list_held_orders/sync_offline_order) كانت بتاخد outlet_id
+    وتنفّذ من غير ما تتأكد إن النادل/الكاشير فعلاً من فرع المنفذ ده —
+    نادل فرع A كان يقدر ينشئ/يعلّق/يزامن طلبات على منفذ في فرع B بمجرد
+    تخمين outlet_id. نفس نمط _assert_order_branch بالظبط، بس على مستوى
+    المنفذ قبل ما الطلب يتعمل أصلاً."""
+    outlet = crud.get_outlet(db, outlet_id)
+    if not outlet:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "المنفذ غير موجود")
+    try:
+        core_services.assert_branch_access(db, user, outlet.branch_id, action_desc)
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+    return outlet
+
+
 def _assert_order_branch(db, user, order_id: int, action_desc: str):
     """Gate 4 (جولة مراجعة Codex الأولى — High 5): branch isolation على أي
     mutation branch-scoped على طلب دايننج. قبل الجولة دي، endpoints زي
@@ -230,7 +247,15 @@ dining_manager = ConnectionManager()
 
 @router.websocket("/dining/ws/kds/{branch_id}")
 async def kds_websocket(ws: WebSocket, branch_id: int, db: DbDep):
-    user = await get_websocket_user(ws, db)
+    user = await get_websocket_user(
+        ws,
+        db,
+        min_level=30,
+        allowed_roles={
+            "waiter", "chef", "kitchen", "cashier", "receptionist",
+            "supervisor", "manager", "admin", "super_admin",
+        },
+    )
     if not user:
         return
     try:
@@ -249,7 +274,15 @@ async def kds_websocket(ws: WebSocket, branch_id: int, db: DbDep):
 
 @router.websocket("/dining/ws/tables/{branch_id}")
 async def tables_websocket(ws: WebSocket, branch_id: int, db: DbDep):
-    user = await get_websocket_user(ws, db)
+    user = await get_websocket_user(
+        ws,
+        db,
+        min_level=30,
+        allowed_roles={
+            "waiter", "cashier", "receptionist", "supervisor",
+            "manager", "admin", "super_admin",
+        },
+    )
     if not user:
         return
     try:
@@ -665,9 +698,7 @@ def list_orders(
 async def create_order(outlet_id: int, data: OrderCreate, db: DbDep, user=Depends(get_waiter_user)):
     if data.outlet_id != outlet_id:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "outlet_id في الجسم لازم يطابق المسار")
-    outlet = crud.get_outlet(db, outlet_id)
-    if not outlet:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "المنفذ غير موجود")
+    outlet = _assert_outlet_branch(db, user, outlet_id, "إنشاء طلب في هذا المنفذ")
     try:
         order = services.create_order(db, outlet.branch_id, data, waiter_id=user.id, allow_cross_outlet=True)
     except ValueError as exc:
@@ -685,9 +716,7 @@ def hold_order(outlet_id: int, data: OrderCreate, db: DbDep, user=Depends(get_wa
     """طلب معلّق — راجع restaurant.hold_order. ⚠️ مسجّل قبل /{order_id} عمداً."""
     if data.outlet_id != outlet_id:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "outlet_id في الجسم لازم يطابق المسار")
-    outlet = crud.get_outlet(db, outlet_id)
-    if not outlet:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "المنفذ غير موجود")
+    outlet = _assert_outlet_branch(db, user, outlet_id, "تعليق طلب في هذا المنفذ")
     try:
         return services.create_order(db, outlet.branch_id, data, waiter_id=user.id, hold=True, allow_cross_outlet=True)
     except ValueError as exc:
@@ -695,10 +724,8 @@ def hold_order(outlet_id: int, data: OrderCreate, db: DbDep, user=Depends(get_wa
 
 
 @router.get("/dining/outlets/{outlet_id}/orders/held", response_model=list[OrderRead])
-def list_held_orders(outlet_id: int, db: DbDep, _=Depends(get_waiter_user)):
-    outlet = crud.get_outlet(db, outlet_id)
-    if not outlet:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "المنفذ غير موجود")
+def list_held_orders(outlet_id: int, db: DbDep, user=Depends(get_waiter_user)):
+    outlet = _assert_outlet_branch(db, user, outlet_id, "عرض الطلبات المعلّقة لهذا المنفذ")
     items, _total = crud.list_orders(db, outlet.branch_id, outlet_id, status="held", limit=100)
     return [OrderRead.model_validate(o) for o in items]
 
@@ -709,9 +736,7 @@ def sync_offline_order(outlet_id: int, data: OrderSyncRequest, db: DbDep, user=D
     ⚠️ مسجّل قبل /{order_id} عمداً."""
     if data.outlet_id != outlet_id:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "outlet_id في الجسم لازم يطابق المسار")
-    outlet = crud.get_outlet(db, outlet_id)
-    if not outlet:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "المنفذ غير موجود")
+    outlet = _assert_outlet_branch(db, user, outlet_id, "مزامنة طلب أوفلاين لهذا المنفذ")
     result = services.sync_offline_order(db, outlet.branch_id, data, waiter_id=user.id)
     return OrderSyncResponse(
         order_id=result["order_id"],
@@ -758,6 +783,7 @@ async def update_order_status(
             credit_account_id=data.credit_account_id,
             payment_currency=data.payment_currency,
             payment_fx_rate=data.payment_fx_rate,
+            payment_channel_id=data.payment_channel_id,
             settled_by=user.id,
             acting_user_level=user_level(user),
             approver_user_id=data.approver_user_id,
@@ -1559,7 +1585,7 @@ def hotel_consumption_report(
     لكل فندق يعرض:
     - إجمالي الطلبات، عدد الضيوف، الإيراد
     - تفصيل لكل منفذ (مطعم/كافيه) بشكل منفصل
-    - بيانات العقد (daily_quota + entry_price) للمقارنة
+    - بيانات العقد (المبلغ الشهري الثابت + الحد الأقصى الاسترشادي) للمقارنة
 
     يتطلب مستوى مدير+.
     """
@@ -1577,8 +1603,8 @@ def hotel_consumption_report(
             total_orders=r["total_orders"],
             total_guests=r["total_guests"],
             total_revenue=r["total_revenue"],
-            contract_daily_quota=r["contract_daily_quota"],
-            contract_entry_price=r["contract_entry_price"],
+            contract_monthly_guest_cap=r["contract_monthly_guest_cap"],
+            contract_monthly_fee=r["contract_monthly_fee"],
             by_outlet=[
                 HotelOutletBreakdown(**outlet_row)
                 for outlet_row in r["by_outlet"]

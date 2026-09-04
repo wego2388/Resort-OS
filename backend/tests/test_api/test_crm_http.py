@@ -18,6 +18,7 @@ from __future__ import annotations
 import uuid
 from datetime import date, timedelta
 
+import pytest
 from fastapi.testclient import TestClient
 
 from tests.test_api.test_pms import make_room, make_room_type
@@ -256,7 +257,7 @@ class TestLeadConvertHttp:
     """wagdy.md C-03 — POST /crm/leads/{id}/convert عبر التوجيه الحقيقي
     (permission dependency + الاستدعاء المتقاطع لـ pms.services.create_booking)."""
 
-    def test_convert_lead_success(self, client: TestClient, db, fake_redis, cashier_headers):
+    def test_convert_lead_success(self, client: TestClient, db, fake_redis, cashier_headers, manager_headers):
         branch = make_branch_committed(db)
         room_type = make_room_type(db, branch)
         room = make_room(db, branch, room_type)
@@ -265,7 +266,7 @@ class TestLeadConvertHttp:
             "/api/v1/crm/leads",
             json={"branch_id": branch.id, "full_name": "غادة سمير",
                   "phone": "01066677788", "interest": "booking"},
-            headers=cashier_headers,
+            headers=manager_headers,
         )
         assert lead_resp.status_code == 201, lead_resp.text
         lead_id = lead_resp.json()["id"]
@@ -285,7 +286,7 @@ class TestLeadConvertHttp:
 
         # الـ lead بقى نهائي — أي محاولة تعديل تانية لازم تترفض
         stage_resp = client.patch(
-            f"/api/v1/crm/leads/{lead_id}", json={"stage": "contacted"}, headers=cashier_headers,
+            f"/api/v1/crm/leads/{lead_id}", json={"stage": "contacted"}, headers=manager_headers,
         )
         assert stage_resp.status_code == 400
 
@@ -341,6 +342,16 @@ def _create_lead_direct(db, branch):
 
 
 class TestCRMPermissions:
+    @pytest.mark.parametrize("path", ["/api/v1/crm/leads", "/api/v1/crm/customers"])
+    def test_specialist_roles_do_not_inherit_crm_access(
+        self, client: TestClient, db, fake_redis,
+        accountant_headers, timeshare_admin_headers, path,
+    ):
+        branch = make_branch_committed(db)
+        for headers in (accountant_headers, timeshare_admin_headers):
+            resp = client.get(path, params={"branch_id": branch.id}, headers=headers)
+            assert resp.status_code == 403
+
     def test_blacklist_customer_requires_manager(self, client: TestClient, db, fake_redis):
         """Any authenticated user (waiter) must not be able to blacklist a
         customer — manager+ required, unlike most other CRM endpoints."""

@@ -88,6 +88,43 @@ class FolioCharge(Base, TimestampMixin):
     folio: Mapped["Folio"] = relationship("Folio", back_populates="charges")
 
 
+class PaymentChannel(Base, TimestampMixin):
+    """قناة تحصيل يختارها الكاشير وتُرحَّل إلى حساب GL محدد.
+
+    ``method`` يظل التصنيف التشغيلي العام (cash/card/wallet)، بينما السجل ده
+    يحدد الوجهة الفعلية مثل «صندوق الاستقبال»، «Visa CIB» أو «Vodafone Cash».
+    التعطيل يحافظ على التاريخ؛ لا يوجد مسار حذف من الـAPI.
+    """
+    __tablename__ = "payment_channels"
+    __table_args__ = (
+        UniqueConstraint("branch_id", "code", name="uq_payment_channel_branch_code"),
+        Index(
+            "uq_payment_channel_default_method",
+            "branch_id", "method",
+            unique=True,
+            postgresql_where=text("is_default = true"),
+            sqlite_where=text("is_default = 1"),
+        ),
+    )
+
+    id:              Mapped[int]        = mapped_column(primary_key=True)
+    branch_id:       Mapped[int]        = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"), index=True)
+    code:            Mapped[str]        = mapped_column(String(50))
+    name:            Mapped[str]        = mapped_column(String(200))
+    name_ar:         Mapped[str | None] = mapped_column(String(200), nullable=True)
+    method:          Mapped[str]        = mapped_column(String(20), index=True)  # cash|card|wallet
+    gl_account_id:   Mapped[int]        = mapped_column(ForeignKey("accounts.id", ondelete="RESTRICT"), index=True)
+    bank_account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("bank_accounts.id", ondelete="SET NULL"), nullable=True, index=True,
+    )
+    is_default:      Mapped[bool]       = mapped_column(Boolean, default=False, server_default=text("false"))
+    is_active:       Mapped[bool]       = mapped_column(Boolean, default=True, server_default=text("true"))
+    sort_order:      Mapped[int]        = mapped_column(Integer, default=0, server_default="0")
+
+    gl_account:   Mapped["Account"]           = relationship("Account")
+    bank_account: Mapped["BankAccount | None"] = relationship("BankAccount")
+
+
 class Payment(Base, TimestampMixin):
     # ⚠️ باج حقيقي اتصلح: migration 504f42d2c755 (2026-07-15) عمل
     # folio_id nullable + ضاف عمود ref_order_id على جدول payments فعليًا
@@ -137,9 +174,20 @@ class Payment(Base, TimestampMixin):
     # منطقي، بدون FK حقيقي عشان مايكسرش أي حذف نظري للأصل) — بيدّي أثر مالي
     # قابل للتتبّع من العكس للأصل. NULL لأي tender أصلي (مش عكس).
     original_payment_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    # قناة التحصيل المختارة وقت البيع + snapshot مقروء يحافظ على التاريخ حتى
+    # لو القناة اتعطلت/اتغير اسمها. settlement_account_code هو حساب GL الفعلي
+    # الذي استُخدم في القيد ويُعاد استخدامه في المرتجع بدل حل إعداد حالي قد
+    # يكون تغيّر بعد البيع.
+    payment_channel_id: Mapped[int | None] = mapped_column(
+        ForeignKey("payment_channels.id", ondelete="SET NULL"), nullable=True, index=True,
+    )
+    payment_channel_code: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    payment_channel_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    settlement_account_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     folio: Mapped["Folio | None"] = relationship("Folio", back_populates="payments")
     shift: Mapped["CashierShift"] = relationship("CashierShift", back_populates="payments")
+    payment_channel: Mapped["PaymentChannel | None"] = relationship("PaymentChannel")
 
 
 class CashierShift(Base, TimestampMixin):
@@ -342,6 +390,25 @@ class AccountingPeriod(Base, TimestampMixin):
     closed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
+class AccountingYearClose(Base, TimestampMixin):
+    """إقفال سنة محاسبية (2026-08-19، طلب Mohamed صراحةً) — سجل لمرة واحدة
+    بس لكل (branch_id, year)، مربوط بقيد الإقفال الحقيقي اللي صفّر كل
+    حسابات الإيرادات/المصروفات في 3200 (أرباح مرحّلة). راجع
+    services.close_accounting_year. عكس AccountingPeriod (بتتقفل شهر شهر
+    وممكن تتكرر)، الجدول ده تسجيل نهائي لمرة واحدة — مفيش "إعادة فتح سنة"
+    في النطاق الحالي."""
+    __tablename__ = "accounting_year_closes"
+    __table_args__ = (UniqueConstraint("branch_id", "year", name="uq_year_close_branch_year"),)
+
+    id:               Mapped[int]      = mapped_column(primary_key=True)
+    branch_id:        Mapped[int]      = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"), index=True)
+    year:             Mapped[int]      = mapped_column(Integer)
+    journal_entry_id: Mapped[int]      = mapped_column(ForeignKey("journal_entries.id", ondelete="RESTRICT"))
+    net_income:       Mapped[Decimal]  = mapped_column(Numeric(12, 2))
+    closed_by:        Mapped[int]      = mapped_column(Integer)
+    closed_at:        Mapped[datetime] = mapped_column(DateTime)
+
+
 class Check(Base, TimestampMixin):
     __tablename__ = "checks"
 
@@ -505,3 +572,166 @@ class ETAInvoice(Base, TimestampMixin):
     response_json:    Mapped[str | None]   = mapped_column(Text, nullable=True)
     error_message:    Mapped[str | None]   = mapped_column(String(1000), nullable=True)
     submitted_at:     Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class Expense(Base, TimestampMixin):
+    """سند مصروفات حقيقي (2026-08-16، طلب Mohamed صراحةً) — قبل كده المحاسب
+    مكانش قدامه غير قيد يدوي عام (بلا فئة/تتبّع مخصص) أو مفيش حاجة خالص.
+    expense_account_id: حساب المصروف (5xxx) — الفئة هي اختيار الحساب نفسه،
+    مفيش taxonomy موازية منفصلة عن دليل الحسابات. settlement_account_id: أي
+    حساب أصول نشط (كاش/بنك) اتدفع منه المصروف — اختيار مباشر من المحاسب،
+    مش عبر منظومة payment_channel (دي مخصوصة لتحصيل نقاط البيع، مش لصرف
+    خلفي). راجع services.record_expense للقيد المحاسبي (Dr. المصروف /
+    Cr. التسوية)."""
+    __tablename__ = "expenses"
+
+    id:                     Mapped[int]           = mapped_column(primary_key=True)
+    branch_id:              Mapped[int]           = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"), index=True)
+    expense_date:           Mapped[date]          = mapped_column(Date)
+    expense_account_id:     Mapped[int]           = mapped_column(ForeignKey("accounts.id", ondelete="RESTRICT"))
+    settlement_account_id:  Mapped[int]           = mapped_column(ForeignKey("accounts.id", ondelete="RESTRICT"))
+    amount:                 Mapped[Decimal]       = mapped_column(Numeric(12, 2))
+    description:            Mapped[str]           = mapped_column(String(300))
+    reference:              Mapped[str | None]    = mapped_column(String(100), nullable=True)
+    cost_center_id:         Mapped[int | None]    = mapped_column(ForeignKey("cost_centers.id", ondelete="SET NULL"), nullable=True)
+    journal_entry_id:       Mapped[int]           = mapped_column(ForeignKey("journal_entries.id", ondelete="RESTRICT"))
+    recorded_by:            Mapped[int]           = mapped_column(Integer)
+    # 2026-08-19 (طلب Mohamed صراحةً — مصروف آجل): لو المصروف اتسجّل مؤجَّل
+    # (defer_payment=True وقت الإنشاء)، settlement_account_id بيبقى حساب
+    # "مصروفات مستحقة" (2180، دائمًا) بدل كاش/بنك فعلي — القيد وقتها
+    # Dr.expense/Cr.2180، amount_paid=0. لسداده لاحقًا راجع
+    # services.pay_expense + ExpensePayment تحت (نفس نمط
+    # PurchaseOrder.amount_paid/payment_status + SupplierPayment بالظبط).
+    # للمصروفات الفورية (الافتراضي، الغالبية) amount_paid=amount دايمًا.
+    payment_status:         Mapped[str]           = mapped_column(String(20), default="paid")
+    # paid | unpaid | partial
+    amount_paid:            Mapped[Decimal]       = mapped_column(Numeric(12, 2), default=Decimal("0"))
+    # 2026-08-19: إلغاء/عكس (Expense/SupplierPayment كانا الوحيدين من غير
+    # void بينما Payment عنده void_payment من قبل — فجوة حقيقية، أي غلطة
+    # إدخال (حساب غلط/مبلغ غلط) كانت عالقة للأبد بلا طريقة تصحيح إلا
+    # بمعرفة قاعدة البيانات مباشرة). راجع services.void_expense.
+    voided_at:              Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    voided_by:              Mapped[int | None]      = mapped_column(Integer, nullable=True)
+
+    expense_account:     Mapped["Account"] = relationship("Account", foreign_keys=[expense_account_id])
+    settlement_account:  Mapped["Account"] = relationship("Account", foreign_keys=[settlement_account_id])
+
+
+class ExpensePayment(Base, TimestampMixin):
+    """سداد فعلي لمصروف آجل (2026-08-19) — نظير SupplierPayment بالظبط،
+    لكن بيقفل حساب «مصروفات مستحقة» (2180) العام بدل ذمة مورد مسجَّل
+    محدَّد؛ الأنسب لتاجر/عامل غير مسجَّل كمورد رسمي (حالة نادرة عمدًا —
+    مفيش هنا كيان "مورد غير رسمي" منفصل، ده تبسيط متعمد). راجع
+    services.pay_expense."""
+    __tablename__ = "expense_payments"
+
+    id:                     Mapped[int]        = mapped_column(primary_key=True)
+    branch_id:              Mapped[int]        = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"), index=True)
+    expense_id:             Mapped[int]        = mapped_column(ForeignKey("expenses.id", ondelete="RESTRICT"), index=True)
+    amount:                 Mapped[Decimal]    = mapped_column(Numeric(12, 2))
+    settlement_account_id:  Mapped[int]        = mapped_column(ForeignKey("accounts.id", ondelete="RESTRICT"))
+    reference:              Mapped[str | None] = mapped_column(String(100), nullable=True)
+    notes:                  Mapped[str | None] = mapped_column(String(500), nullable=True)
+    paid_at:                Mapped[date]       = mapped_column(Date)
+    journal_entry_id:       Mapped[int]        = mapped_column(ForeignKey("journal_entries.id", ondelete="RESTRICT"))
+    recorded_by:            Mapped[int]        = mapped_column(Integer)
+
+    expense: Mapped["Expense"] = relationship("Expense")
+
+
+class Custody(Base, TimestampMixin):
+    """عهدة نقدية (2026-08-19، طلب Mohamed صراحةً — مقاولة/تجديد: مبلغ
+    مقدَّم لشخص (موظف مسجَّل أو حتى غير مسجَّل — معلّم مقاولة مثلًا) يصرف
+    منه على شغلانة معيّنة وبعدين يسوّي بإيصالات + إرجاع أي فرق. مختلفة
+    عمدًا عن SalaryAdvance/AdvancePayment (سلفة على الراتب) — العهدة مش
+    قرض شخصي، هي أصل (ذمة) بيتقفل بتسوية موثّقة (فواتير حقيقية) مش خصم من
+    راتب. تصميم متعمد "تسوية واحدة نهائية" (single-shot) بدل تسويات جزئية
+    متتالية — الحالة النادرة (تسوية على أكتر من دفعة) مؤجَّلة، لو احتجتها
+    قولّي. راجع services.disburse_custody / settle_custody."""
+    __tablename__ = "custodies"
+
+    id:                  Mapped[int]           = mapped_column(primary_key=True)
+    branch_id:           Mapped[int]           = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"), index=True)
+    holder_name:         Mapped[str]           = mapped_column(String(200))
+    holder_employee_id:  Mapped[int | None]    = mapped_column(ForeignKey("employees.id", ondelete="SET NULL"), nullable=True)
+    # nullable — العهدة ممكن تتدّي لحد مش موظف مسجَّل خالص (عامل يومية/معلّم
+    # مقاولة)، مطابقة تمامًا لطلب Mohamed. لو موظف مسجَّل، اربطه هنا لتقارير
+    # أفضل لاحقًا.
+    purpose:             Mapped[str]           = mapped_column(String(300))
+    amount:               Mapped[Decimal]       = mapped_column(Numeric(12, 2))
+    disbursed_date:       Mapped[date]          = mapped_column(Date)
+    source_account_id:    Mapped[int]           = mapped_column(ForeignKey("accounts.id", ondelete="RESTRICT"))
+    # الحساب اللي العهدة طلعت منه (كاش/بنك) — نفسه بيستقبل أي مبلغ مرتجع
+    # وقت التسوية.
+    custody_account_id:   Mapped[int]           = mapped_column(ForeignKey("accounts.id", ondelete="RESTRICT"))
+    # حساب الذمة (أصل) اللي بيتقفل وقت التسوية — راجع "1190 عهد نقدية تحت
+    # التسوية" في seed.py's _seed_chart_of_accounts.
+    status:               Mapped[str]           = mapped_column(String(20), default="open")
+    # open (اتصرفت، لسه معلّقة) | settled (اتسوّت بالكامل)
+    disbursement_entry_id: Mapped[int]          = mapped_column(ForeignKey("journal_entries.id", ondelete="RESTRICT"))
+    settlement_entry_id:  Mapped[int | None]    = mapped_column(ForeignKey("journal_entries.id", ondelete="SET NULL"), nullable=True)
+    returned_amount:      Mapped[Decimal]       = mapped_column(Numeric(12, 2), default=Decimal("0"))
+    disbursed_by:         Mapped[int]           = mapped_column(Integer)
+    settled_by:           Mapped[int | None]    = mapped_column(Integer, nullable=True)
+    settled_at:           Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    voided_at:            Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    voided_by:            Mapped[int | None]      = mapped_column(Integer, nullable=True)
+
+    # مفيش relationship() لـ holder_employee_id عمدًا — Employee في موديول
+    # hr منفصل، وfinance/models.py ماليهوش import لموديولات تانية (نفس قاعدة
+    # المعمارية العامة). الـ FK كافية؛ أي عرض لاسم الموظف بيحصل عبر lookup
+    # منفصل في services لو احتجته (نفس نمط CashMovement.performed_by، اللي
+    # هو Integer عادي مش FK حتى).
+    source_account:   Mapped["Account"] = relationship("Account", foreign_keys=[source_account_id])
+    custody_account:  Mapped["Account"] = relationship("Account", foreign_keys=[custody_account_id])
+    lines: Mapped[list["CustodySettlementLine"]] = relationship(
+        "CustodySettlementLine", back_populates="custody", lazy="select", cascade="all, delete-orphan",
+    )
+
+
+class CustodySettlementLine(Base, TimestampMixin):
+    """سطر تسوية واحد داخل تسوية عهدة — كل سطر بيمثّل مصروف فعلي حقيقي
+    (فاتورة/إيصال) اتصرف من العهدة، بمركز تكلفة اختياري (وسم المشروع —
+    "تجديد شاليه ١٢" مثلًا — عشان تقرير مركز التكلفة الموجود بالفعل
+    يقدر يجمّع تكلفة المشروع المباشرة من غير أي كود جديد)."""
+    __tablename__ = "custody_settlement_lines"
+
+    id:              Mapped[int]           = mapped_column(primary_key=True)
+    custody_id:      Mapped[int]           = mapped_column(ForeignKey("custodies.id", ondelete="CASCADE"), index=True)
+    expense_account_id: Mapped[int]        = mapped_column(ForeignKey("accounts.id", ondelete="RESTRICT"))
+    cost_center_id:  Mapped[int | None]    = mapped_column(ForeignKey("cost_centers.id", ondelete="SET NULL"), nullable=True)
+    amount:          Mapped[Decimal]       = mapped_column(Numeric(12, 2))
+    description:     Mapped[str]           = mapped_column(String(300))
+    reference:       Mapped[str | None]    = mapped_column(String(100), nullable=True)
+
+    custody:         Mapped["Custody"] = relationship("Custody", back_populates="lines")
+    expense_account: Mapped["Account"] = relationship("Account", foreign_keys=[expense_account_id])
+
+
+class CashReceipt(Base, TimestampMixin):
+    """إذن قبض عام (2026-08-19، طلب Mohamed صراحةً) — نظير Expense تمامًا
+    لكن بالعكس: فلوس داخلة لحساب كاش/بنك من مصدر مش بيع ضيف عادي (استرداد
+    من مورد، ضخ رأس مال، سداد قرض...). destination_account_id (مدين) —
+    الكاش/البنك اللي الفلوس دخلت فيه فعليًا. source_account_id (دائن) —
+    الحساب اللي بيمثّل مصدر الفلوس دي (رأس المال 3100، أو حساب مصروف
+    بيتعكس جزء منه لو استرداد، أو أي حساب مناسب تاني — اختيار المحاسب
+    الحر زي باقي السندات هنا، مفيش قيد على نوع الحساب عدا كونه نشط).
+    راجع services.record_cash_receipt."""
+    __tablename__ = "cash_receipts"
+
+    id:                     Mapped[int]           = mapped_column(primary_key=True)
+    branch_id:              Mapped[int]           = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"), index=True)
+    receipt_date:           Mapped[date]          = mapped_column(Date)
+    destination_account_id: Mapped[int]           = mapped_column(ForeignKey("accounts.id", ondelete="RESTRICT"))
+    source_account_id:      Mapped[int]           = mapped_column(ForeignKey("accounts.id", ondelete="RESTRICT"))
+    amount:                 Mapped[Decimal]       = mapped_column(Numeric(12, 2))
+    description:            Mapped[str]           = mapped_column(String(300))
+    reference:              Mapped[str | None]    = mapped_column(String(100), nullable=True)
+    cost_center_id:         Mapped[int | None]    = mapped_column(ForeignKey("cost_centers.id", ondelete="SET NULL"), nullable=True)
+    journal_entry_id:       Mapped[int]           = mapped_column(ForeignKey("journal_entries.id", ondelete="RESTRICT"))
+    recorded_by:            Mapped[int]           = mapped_column(Integer)
+    voided_at:              Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    voided_by:              Mapped[int | None]      = mapped_column(Integer, nullable=True)
+
+    destination_account: Mapped["Account"] = relationship("Account", foreign_keys=[destination_account_id])
+    source_account:      Mapped["Account"] = relationship("Account", foreign_keys=[source_account_id])

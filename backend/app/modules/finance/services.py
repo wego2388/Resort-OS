@@ -12,8 +12,9 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.modules.finance import crud
 from app.modules.finance.models import (
-    AccountingPeriod, BankAccount, BankStatementLine, CashierShift, Check, CostCenter, ETAInvoice,
-    ExchangeRate, Folio, FolioCharge, JournalEntry, Payment,
+    AccountingPeriod, AccountingYearClose, BankAccount, BankStatementLine, CashierShift, CashReceipt,
+    Check, CostCenter,
+    Custody, ETAInvoice, ExchangeRate, Expense, Folio, FolioCharge, JournalEntry, Payment,
 )
 from app.modules.finance.schemas import (
     ActiveShiftSummary, ActiveShiftsResponse,
@@ -24,10 +25,17 @@ from app.modules.finance.schemas import (
     ConditionalDiscountCreate,
     ForeignCurrencySummary,
     CostCenterCreate,
-    CostCenterReport, CostCenterReportLine, DepreciationRunResult, ExchangeRateCreate, FolioChargeCreate,
+    AccountLedgerLine, AccountLedgerReport,
+    AgingBucket, AgingReport, PayableAgingLine, ReceivableAgingLine,
+    CashReceiptCreate,
+    CostCenterReport, CostCenterReportLine, CustodyCreate, CustodySettleRequest,
+    DepreciationRunResult, ExchangeRateCreate, ExpenseCreate,
+    ExpensePaymentCreate,
+    ExpenseRead, FolioChargeCreate,
     FolioCreate,
     IncomeStatementLine, IncomeStatementReport,
-    JournalEntryCreate, JournalLineCreate, PaymentCreate, ShiftEndReport, ShiftInvoiceLine,
+    JournalEntryCreate, JournalLineCreate, PaymentChannelCreate, PaymentChannelUpdate, PaymentCreate,
+    ShiftChannelSummary, ShiftEndReport, ShiftInvoiceLine,
     TrialBalanceLine, TrialBalanceReport,
 )
 from app.resort_os.discount_engine import (
@@ -590,6 +598,7 @@ def record_cash_movement(
         db, "cash_movement",
         acting_user_level=acting_user_level,
         approver_user_id=data.approver_user_id, approver_pin=data.approver_pin,
+        target_branch_id=shift.branch_id,
     )
 
     movement = crud.create_cash_movement(
@@ -769,6 +778,24 @@ def build_shift_end_report(db: Session, shift_id: int, requesting_user=None) -> 
 
     foreign_summary = [ForeignCurrencySummary(**v) for v in foreign.values()]
 
+    # تفصيل حسب قناة التحصيل الفعلية — لقطة payment_channel_id/code وقت
+    # البيع نفسه (تغيير القناة بعد كده ميأثّرش على تقارير ورديات قديمة).
+    # دفعات legacy (بلا قناة) بتتجمّع تحت الطريقة الخام، مش بتختفي.
+    channel_groups: dict[tuple, dict] = {}
+    for p in positive:
+        key = (p.payment_channel_id, p.payment_channel_code or p.method)
+        group = channel_groups.setdefault(key, {
+            "payment_channel_id": p.payment_channel_id,
+            "payment_channel_code": p.payment_channel_code,
+            "label": p.payment_channel_name or p.method,
+            "method": p.method,
+            "amount": Decimal("0"),
+            "count": 0,
+        })
+        group["amount"] += p.amount
+        group["count"] += 1
+    channel_breakdown = [ShiftChannelSummary(**v) for v in channel_groups.values()]
+
     return ShiftEndReport(
         shift_id=shift.id,
         branch_id=shift.branch_id,
@@ -793,6 +820,7 @@ def build_shift_end_report(db: Session, shift_id: int, requesting_user=None) -> 
         variance=shift.variance,
         cash_count=[CashCountLineRead.model_validate(line) for line in cash_count_lines],
         foreign_currency_summary=foreign_summary,
+        channel_breakdown=channel_breakdown,
         # لو الوردية مقفولة وعندها cash_count_lines، نستخدم المجموع المحسوب منها.
         # لو الوردية مقفولة بـ counted_cash مباشر (بدون فئات)، نستخدمه.
         # لو الوردية لسه مفتوحة وما فيش عدّ بعد، نرجع Decimal("0") بدل None
@@ -941,7 +969,7 @@ def close_shift(
         from app.modules.core.services import resolve_pin_approval  # noqa: PLC0415
         other_close_approved_by = resolve_pin_approval(
             db, acting_user_level, data.approver_user_id, data.approver_pin,
-            min_approver_level=60,
+            min_approver_level=60, target_branch_id=shift.branch_id,
         )
 
     # نحسب الكاش المتوقع (expected_cash) الأول — قبل أي تعديل فعلي على
@@ -1144,6 +1172,7 @@ def list_shift_invoices(
         db, "view_other_cashier_shift_invoices",
         acting_user_level=acting_level,
         approver_user_id=approver_user_id, approver_pin=approver_pin,
+        target_branch_id=shift.branch_id,
     )
 
     payments = crud.list_shift_payments_with_folio(db, shift_id)
@@ -1235,10 +1264,507 @@ def post_journal_entry(db: Session, data: JournalEntryCreate, user_id: int) -> J
     total_credit = sum((ln.credit for ln in data.lines), Decimal("0"))
     if abs(total_debit - total_credit) > Decimal("0.01"):
         raise ValueError(f"القيد غير متوازن: مدين={total_debit}, دائن={total_credit}")
+    # ⚠️ باج حقيقي كان هنا (مراجعة Codex المستقلة قبل الإطلاق، 2026-08-30،
+    # C-01): مفيش أي تحقق إن account_id/cost_center_id في كل سطر فعلاً
+    # بيتبعوا نفس فرع القيد — قيد على فرع A كان يقدر يستخدم حساب أو مركز
+    # تكلفة فرع B، فيلوّث أرصدة الفرعين مع بعض. هذه الدالة هي المسار الوحيد
+    # اللي بيقبل account_id من المستخدم مباشرة (post_simple_revenue_journal
+    # بتبني حساباتها هي بنفسها بـget_account_by_code(branch_id, code) —
+    # آمنة بالبناء، مش محتاجة نفس التحقق).
+    for line in data.lines:
+        account = crud.get_account(db, line.account_id)
+        if not account or account.branch_id != data.branch_id:
+            raise ValueError(f"الحساب {line.account_id} غير موجود في فرع القيد")
+        if line.cost_center_id is not None:
+            cost_center = crud.get_cost_center(db, line.cost_center_id)
+            if not cost_center or cost_center.branch_id != data.branch_id:
+                raise ValueError(f"مركز التكلفة {line.cost_center_id} غير موجود في فرع القيد")
     entry = crud.create_journal_entry(db, data, user_id)
     db.commit()
     db.refresh(entry)
     return entry
+
+
+def record_expense(
+    db: Session, branch_id: int, data: ExpenseCreate, recorded_by: int,
+    acting_user_level: int = 100,
+) -> Expense:
+    """سند مصروفات حقيقي (2026-08-16، طلب Mohamed صراحةً) — بديل القيد
+    اليدوي العام (بلا فئة/تتبّع) اللي كان الخيار الوحيد قبل كده. الفئة هي
+    اختيار expense_account_id نفسه (حساب 5xxx). يرحّل Dr. حساب المصروف /
+    Cr. حساب التسوية (كاش/بنك)، بنفس مسار post_simple_revenue_journal
+    الموحّد (strict=True — فشل تجهيز الحساب لازم يظهر بوضوح للمحاسب، مش
+    يتبلع بصمت زي مسارات البيع التلقائية).
+
+    حد الموافقة (2026-08-19، طلب Mohamed): مبلغ >= EXPENSE_APPROVAL_
+    THRESHOLD محتاج موافقة PIN مدير حاضر فعليًا (core.policy_engine،
+    نفس نمط إلغاء صنف/تطبيق خصم دايننج بالظبط) — تحت الحد، أي محاسب+
+    يسجّله لوحده زي ما كان بالظبط. acting_user_level افتراضيًا 100
+    (زي apply_order_discount) عشان استدعاءات الاختبار المباشرة القديمة
+    تفضل شغالة من غير تعديل — الـ router الحقيقي دايمًا بيمرر المستوى
+    الفعلي (راجع user_level(user))."""
+    approved_by = None
+    if data.amount >= settings.EXPENSE_APPROVAL_THRESHOLD:
+        from app.modules.core import policy_engine  # noqa: PLC0415
+        approved_by = policy_engine.require_approval(
+            db, "record_expense",
+            acting_user_level=acting_user_level,
+            approver_user_id=data.approver_user_id, approver_pin=data.approver_pin,
+            target_branch_id=branch_id,
+        )
+
+    validate_period_open(db, branch_id, data.expense_date)
+
+    expense_account = crud.get_account(db, data.expense_account_id)
+    if not expense_account or expense_account.branch_id != branch_id:
+        raise ValueError(f"حساب المصروف {data.expense_account_id} غير موجود في هذا الفرع")
+    if expense_account.account_type != "expense":
+        raise ValueError(f"الحساب «{expense_account.name}» ليس حساب مصروفات")
+    if not expense_account.is_active:
+        raise ValueError(f"الحساب «{expense_account.name}» معطّل")
+
+    if data.defer_payment:
+        # مصروف آجل (2026-08-19، طلب Mohamed) — الحساب الفعلي دايمًا 2180
+        # (مصروفات مستحقة)، settlement_account_id من العميل بيتجاهل عمدًا.
+        settlement_account = crud.get_account_by_code(db, branch_id, "2180")
+        if not settlement_account:
+            raise FinancialConfigurationError(
+                "حساب المصروفات المستحقة (2180) غير معرَّف لهذا الفرع"
+            )
+        if settlement_account.account_type != "liability":
+            raise FinancialConfigurationError("حساب 2180 لازم يكون حساب التزامات")
+    else:
+        if not data.settlement_account_id:
+            raise ValueError("حساب التسوية مطلوب لسند مصروفات غير آجل")
+        settlement_account = crud.get_account(db, data.settlement_account_id)
+        if not settlement_account or settlement_account.branch_id != branch_id:
+            raise ValueError(f"حساب التسوية {data.settlement_account_id} غير موجود في هذا الفرع")
+        if settlement_account.account_type != "asset":
+            raise ValueError(f"حساب التسوية «{settlement_account.name}» لازم يكون حساب أصول")
+        if not settlement_account.is_active:
+            raise ValueError(f"حساب التسوية «{settlement_account.name}» معطّل")
+
+    cost_center_code = None
+    if data.cost_center_id:
+        cc = crud.get_cost_center(db, data.cost_center_id)
+        if not cc or cc.branch_id != branch_id:
+            raise ValueError(f"مركز التكلفة {data.cost_center_id} غير موجود في هذا الفرع")
+        cost_center_code = cc.code
+
+    entry = post_simple_revenue_journal(
+        db, branch_id, data.expense_date,
+        debit_account_code=expense_account.code,
+        credit_account_code=settlement_account.code,
+        amount=data.amount,
+        reference=data.reference or f"EXP-{data.expense_date.isoformat()}",
+        description=data.description,
+        source="manual_expense",
+        source_id=None,
+        created_by=recorded_by,
+        cost_center_code=cost_center_code,
+        commit_cost_centers=False,
+        strict=True,
+    )
+    expense = crud.create_expense(
+        db, branch_id, data, journal_entry_id=entry.id, recorded_by=recorded_by,
+        settlement_account_id=settlement_account.id,
+        payment_status="unpaid" if data.defer_payment else "paid",
+    )
+    if approved_by is not None:
+        from app.modules.core import policy_engine  # noqa: PLC0415
+        policy_engine.record_policy_audit(
+            db, "record_expense", user_id=recorded_by, approved_by=approved_by,
+            branch_id=branch_id, entity_type="expense", entity_id=expense.id,
+            data={"amount": str(data.amount), "expense_account_id": data.expense_account_id},
+        )
+    db.commit()
+    db.refresh(expense)
+    return expense
+
+
+def void_expense(db: Session, expense_id: int, voided_by: int, reason: str = "voided via API") -> Expense:
+    """إلغاء سند مصروفات اتسجّل بالفعل (2026-08-19، طلب Mohamed) — نفس نمط
+    void_payment فوق بالظبط (عكس Dr/Cr، سجل تدقيق، commit ذري). مقصور
+    عمدًا على سند من غير أي سداد مسجّل عليه بعد (amount_paid == 0) — سند
+    آجل (راجع pay_expense لاحقًا) بعد ما يتسدد جزئيًا/كليًا يحتاج مراجعة
+    يدوية أوسع (حالة نادرة مؤجَّلة، مش جزء من هذه الدفعة)."""
+    expense = crud.get_expense(db, expense_id)
+    if not expense:
+        raise ValueError(f"سند المصروفات {expense_id} غير موجود")
+    if expense.voided_at is not None:
+        raise ValueError(f"سند المصروفات {expense_id} ملغى بالفعل")
+    if expense.amount_paid and expense.amount_paid > 0:
+        raise ValueError(
+            f"سند المصروفات {expense_id} عليه سداد مسجّل بالفعل — لا يمكن إلغاؤه مباشرة"
+        )
+    expense_account = crud.get_account(db, expense.expense_account_id)
+    settlement_account = crud.get_account(db, expense.settlement_account_id)
+    if not expense_account or not settlement_account:
+        raise ValueError(f"حسابات سند المصروفات {expense_id} غير مكتملة")
+    try:
+        original_amount = expense.amount
+        expense = crud.void_expense(db, expense, voided_by)
+        crud.create_revenue_audit_log(
+            db, branch_id=expense.branch_id, entity_type="expense", entity_id=expense.id,
+            old_value=original_amount, new_value=Decimal("0.00"), reason=reason, changed_by=voided_by,
+        )
+        # عكس القيد اللي record_expense رحّله (Dr.مصروف/Cr.تسوية) — التسوية
+        # ترجع لحسابها والمصروف يتصفّر. strict=True زي void_payment بالظبط.
+        from app.resort_os.timezone_utils import business_today  # noqa: PLC0415
+        post_simple_revenue_journal(
+            db, expense.branch_id, business_today(settings.TIMEZONE),
+            debit_account_code=settlement_account.code, credit_account_code=expense_account.code,
+            amount=original_amount,
+            reference=f"EXP-VOID-{expense.id}",
+            description=f"إلغاء سند مصروفات #{expense.id}",
+            source="expense_void", source_id=expense.id,
+            created_by=voided_by,
+            strict=True, commit_cost_centers=False,
+        )
+        db.commit()
+        db.refresh(expense)
+        return expense
+    except Exception:
+        db.rollback()
+        raise
+
+
+def pay_expense(
+    db: Session, expense_id: int, data: ExpensePaymentCreate, recorded_by: int,
+) -> Expense:
+    """سداد فعلي لسند مصروفات آجل (2026-08-19، طلب Mohamed) — يقفل حلقة
+    2180 (مصروفات مستحقة) اللي record_expense فتحها لما defer_payment=True.
+    نفس نمط inventory.services.pay_purchase_order بالظبط (Dr.الحساب
+    الآجل/Cr.حساب التسوية لكل دفعة، تحديث amount_paid/payment_status)."""
+    expense = crud.get_expense(db, expense_id)
+    if not expense:
+        raise ValueError(f"سند المصروفات {expense_id} غير موجود")
+    if expense.voided_at is not None:
+        raise ValueError(f"سند المصروفات {expense_id} ملغى — لا يمكن تسجيل سداد عليه")
+    if expense.payment_status == "paid":
+        raise ValueError(f"سند المصروفات {expense_id} مسدد بالكامل بالفعل")
+
+    remaining = expense.amount - expense.amount_paid
+    if data.amount > remaining + Decimal("0.01"):
+        raise ValueError(f"المبلغ ({data.amount}) أكبر من المتبقي على السند ({remaining})")
+
+    settlement_account = crud.get_account(db, data.settlement_account_id)
+    if not settlement_account or settlement_account.branch_id != expense.branch_id:
+        raise ValueError(f"حساب التسوية {data.settlement_account_id} غير موجود في هذا الفرع")
+    if settlement_account.account_type != "asset":
+        raise ValueError(f"حساب التسوية «{settlement_account.name}» لازم يكون حساب أصول")
+    if not settlement_account.is_active:
+        raise ValueError(f"حساب التسوية «{settlement_account.name}» معطّل")
+
+    validate_period_open(db, expense.branch_id, data.paid_at)
+
+    accrued_account = crud.get_account(db, expense.settlement_account_id)
+    if not accrued_account:
+        raise ValueError(f"حساب المصروفات المستحقة لسند {expense_id} غير موجود")
+
+    entry = post_simple_revenue_journal(
+        db, expense.branch_id, data.paid_at,
+        debit_account_code=accrued_account.code, credit_account_code=settlement_account.code,
+        amount=data.amount,
+        reference=data.reference or f"EXP-{expense.id}-PAY",
+        description=f"سداد سند مصروفات #{expense.id} — {expense.description}",
+        source="expense_payment", source_id=expense.id,
+        created_by=recorded_by,
+        strict=True,
+    )
+
+    crud.create_expense_payment(
+        db, expense.branch_id, expense.id, data,
+        journal_entry_id=entry.id, recorded_by=recorded_by,
+    )
+    expense.amount_paid = expense.amount_paid + data.amount
+    expense.payment_status = "paid" if expense.amount_paid >= expense.amount - Decimal("0.01") else "partial"
+    db.commit()
+    db.refresh(expense)
+    return expense
+
+
+def disburse_custody(db: Session, branch_id: int, data: CustodyCreate, disbursed_by: int) -> Custody:
+    """صرف عهدة نقدية (2026-08-19، طلب Mohamed) — سلفة لموظف/مقاول لصرف
+    بند معيّن (مقاولة/عمالة يومية...). يرحّل Dr.1190 (عهد نقدية تحت
+    التسوية) / Cr.حساب المصدر، بنفس نمط record_expense (strict=True)."""
+    validate_period_open(db, branch_id, data.disbursed_date)
+
+    source_account = crud.get_account(db, data.source_account_id)
+    if not source_account or source_account.branch_id != branch_id:
+        raise ValueError(f"حساب المصدر {data.source_account_id} غير موجود في هذا الفرع")
+    if source_account.account_type != "asset":
+        raise ValueError(f"حساب المصدر «{source_account.name}» لازم يكون حساب أصول")
+    if not source_account.is_active:
+        raise ValueError(f"حساب المصدر «{source_account.name}» معطّل")
+
+    custody_account = crud.get_account_by_code(db, branch_id, "1190")
+    if not custody_account:
+        raise FinancialConfigurationError("حساب العهد النقدية تحت التسوية (1190) غير معرَّف لهذا الفرع")
+    if custody_account.account_type != "asset":
+        raise FinancialConfigurationError("حساب 1190 لازم يكون حساب أصول")
+
+    entry = post_simple_revenue_journal(
+        db, branch_id, data.disbursed_date,
+        debit_account_code=custody_account.code, credit_account_code=source_account.code,
+        amount=data.amount,
+        reference=data.reference or f"CUST-{data.disbursed_date.isoformat()}",
+        description=f"صرف عهدة نقدية — {data.holder_name} ({data.purpose})",
+        source="custody_disbursement", source_id=None,
+        created_by=disbursed_by,
+        commit_cost_centers=False,
+        strict=True,
+    )
+    custody = crud.create_custody(
+        db, branch_id, data, custody_account_id=custody_account.id,
+        disbursement_entry_id=entry.id, disbursed_by=disbursed_by,
+    )
+    db.commit()
+    db.refresh(custody)
+    return custody
+
+
+def settle_custody(
+    db: Session, custody_id: int, data: CustodySettleRequest, settled_by: int,
+) -> Custody:
+    """تسوية عهدة (2026-08-19، طلب Mohamed) — توزيع فعلي دفعة واحدة
+    (single-shot) لمبلغ العهدة على حسابات مصروفات حقيقية + مرتجع اختياري.
+    مجموع lines + returned_amount لازم يساوي مبلغ العهدة بالظبط — تسوية
+    جزئية عبر أكتر من جلسة حالة نادرة مؤجَّلة عمدًا.
+
+    بيستخدم crud.create_journal_entry مباشرة (مش post_journal_entry) عشان
+    post_journal_entry بتعمل commit داخلي بيكسر الذرّية مع تحديث حالة
+    العهدة/بنود التسوية اللي لازم يحصلوا في نفس المعاملة — كل التحقق من
+    الحسابات (موجودة/في نفس الفرع/نوعها Expense/مفعّلة) بيتعمل هنا يدويًا
+    لأن crud.create_journal_entry نفسها زيرو تحقق (راجع record_expense
+    لنفس النمط)."""
+    custody = crud.get_custody(db, custody_id)
+    if not custody:
+        raise ValueError(f"العهدة {custody_id} غير موجودة")
+    if custody.voided_at is not None:
+        raise ValueError(f"العهدة {custody_id} ملغاة")
+    if custody.status != "open":
+        raise ValueError(f"العهدة {custody_id} متسواة بالفعل")
+    if not data.lines and data.returned_amount <= 0:
+        raise ValueError("لازم بند تسوية واحد على الأقل أو مبلغ مرتجع")
+
+    lines_total = sum((line.amount for line in data.lines), Decimal("0"))
+    total = lines_total + data.returned_amount
+    if abs(total - custody.amount) > Decimal("0.01"):
+        raise ValueError(
+            f"مجموع بنود التسوية ({lines_total}) + المرتجع ({data.returned_amount}) "
+            f"لازم يساوي مبلغ العهدة ({custody.amount}) بالظبط"
+        )
+
+    validate_period_open(db, custody.branch_id, data.settlement_date)
+
+    journal_lines: list[JournalLineCreate] = []
+    for line in data.lines:
+        account = crud.get_account(db, line.expense_account_id)
+        if not account or account.branch_id != custody.branch_id:
+            raise ValueError(f"حساب المصروف {line.expense_account_id} غير موجود في هذا الفرع")
+        if account.account_type != "expense":
+            raise ValueError(f"الحساب «{account.name}» ليس حساب مصروفات")
+        if not account.is_active:
+            raise ValueError(f"الحساب «{account.name}» معطّل")
+        if line.cost_center_id:
+            cc = crud.get_cost_center(db, line.cost_center_id)
+            if not cc or cc.branch_id != custody.branch_id:
+                raise ValueError(f"مركز التكلفة {line.cost_center_id} غير موجود في هذا الفرع")
+        journal_lines.append(JournalLineCreate(
+            account_id=account.id, debit=line.amount, credit=Decimal("0"),
+            description=line.description, cost_center_id=line.cost_center_id,
+        ))
+
+    if data.returned_amount > 0:
+        source_account = crud.get_account(db, custody.source_account_id)
+        if not source_account:
+            raise ValueError(f"حساب مصدر العهدة {custody_id} غير موجود")
+        journal_lines.append(JournalLineCreate(
+            account_id=source_account.id, debit=data.returned_amount, credit=Decimal("0"),
+            description=f"مرتجع عهدة #{custody.id}",
+        ))
+
+    journal_lines.append(JournalLineCreate(
+        account_id=custody.custody_account_id, debit=Decimal("0"), credit=custody.amount,
+        description=f"تسوية عهدة #{custody.id}",
+    ))
+
+    total_debit = sum((ln.debit for ln in journal_lines), Decimal("0"))
+    total_credit = sum((ln.credit for ln in journal_lines), Decimal("0"))
+    if abs(total_debit - total_credit) > Decimal("0.01"):
+        raise ValueError(f"القيد غير متوازن: مدين={total_debit}, دائن={total_credit}")
+
+    entry_data = JournalEntryCreate(
+        branch_id=custody.branch_id, entry_date=data.settlement_date,
+        reference=f"CUST-{custody.id}-SETTLE",
+        description=(f"تسوية عهدة #{custody.id} — {custody.holder_name}")[:500],
+        source="custody_settlement", source_id=custody.id,
+        lines=journal_lines,
+    )
+
+    try:
+        entry = crud.create_journal_entry(db, entry_data, settled_by)
+        crud.create_custody_settlement_lines(db, custody.id, data.lines)
+        custody.settlement_entry_id = entry.id
+        custody.returned_amount = data.returned_amount
+        custody.status = "settled"
+        custody.settled_by = settled_by
+        custody.settled_at = datetime.utcnow()
+        db.commit()
+        db.refresh(custody)
+        return custody
+    except Exception:
+        db.rollback()
+        raise
+
+
+def void_custody(db: Session, custody_id: int, voided_by: int, reason: str = "voided via API") -> Custody:
+    """إلغاء عهدة لسه open (لسه من غير أي تسوية) — نفس نمط void_expense
+    بالظبط. عهدة متسواة بالفعل حالة نادرة مؤجَّلة (تحتاج مراجعة يدوية
+    أوسع، مش إلغاء مباشر)."""
+    custody = crud.get_custody(db, custody_id)
+    if not custody:
+        raise ValueError(f"العهدة {custody_id} غير موجودة")
+    if custody.voided_at is not None:
+        raise ValueError(f"العهدة {custody_id} ملغاة بالفعل")
+    if custody.status != "open":
+        raise ValueError(f"العهدة {custody_id} متسواة بالفعل — لا يمكن إلغاؤها مباشرة")
+
+    source_account = crud.get_account(db, custody.source_account_id)
+    custody_account = crud.get_account(db, custody.custody_account_id)
+    if not source_account or not custody_account:
+        raise ValueError(f"حسابات العهدة {custody_id} غير مكتملة")
+
+    try:
+        original_amount = custody.amount
+        custody = crud.void_custody(db, custody, voided_by)
+        crud.create_revenue_audit_log(
+            db, branch_id=custody.branch_id, entity_type="custody", entity_id=custody.id,
+            old_value=original_amount, new_value=Decimal("0.00"), reason=reason, changed_by=voided_by,
+        )
+        from app.resort_os.timezone_utils import business_today  # noqa: PLC0415
+        post_simple_revenue_journal(
+            db, custody.branch_id, business_today(settings.TIMEZONE),
+            debit_account_code=source_account.code, credit_account_code=custody_account.code,
+            amount=original_amount,
+            reference=f"CUST-VOID-{custody.id}",
+            description=f"إلغاء عهدة نقدية #{custody.id} — {custody.holder_name}",
+            source="custody_void", source_id=custody.id,
+            created_by=voided_by,
+            strict=True, commit_cost_centers=False,
+        )
+        db.commit()
+        db.refresh(custody)
+        return custody
+    except Exception:
+        db.rollback()
+        raise
+
+
+def record_cash_receipt(db: Session, branch_id: int, data: CashReceiptCreate, recorded_by: int) -> CashReceipt:
+    """إذن قبض عام (2026-08-19، طلب Mohamed) — تحصيل نقدية من مصدر متنوع
+    مش مرتبط بمسار بيع قائم (سلفة عائدة، تعويض، إيراد متفرّق...). يرحّل
+    Dr.destination_account (كاش/بنك) / Cr.source_account، نفس نمط
+    record_expense بالظبط بس مقلوب الاتجاه. مفيش قيد على نوع
+    source_account عمدًا (عكس expense_account في سند المصروفات)."""
+    validate_period_open(db, branch_id, data.receipt_date)
+
+    destination_account = crud.get_account(db, data.destination_account_id)
+    if not destination_account or destination_account.branch_id != branch_id:
+        raise ValueError(f"حساب الوجهة {data.destination_account_id} غير موجود في هذا الفرع")
+    if destination_account.account_type != "asset":
+        raise ValueError(f"حساب الوجهة «{destination_account.name}» لازم يكون حساب أصول (كاش/بنك)")
+    if not destination_account.is_active:
+        raise ValueError(f"حساب الوجهة «{destination_account.name}» معطّل")
+
+    source_account = crud.get_account(db, data.source_account_id)
+    if not source_account or source_account.branch_id != branch_id:
+        raise ValueError(f"حساب المصدر {data.source_account_id} غير موجود في هذا الفرع")
+    if not source_account.is_active:
+        raise ValueError(f"حساب المصدر «{source_account.name}» معطّل")
+
+    cost_center_code = None
+    if data.cost_center_id:
+        cc = crud.get_cost_center(db, data.cost_center_id)
+        if not cc or cc.branch_id != branch_id:
+            raise ValueError(f"مركز التكلفة {data.cost_center_id} غير موجود في هذا الفرع")
+        cost_center_code = cc.code
+
+    entry = post_simple_revenue_journal(
+        db, branch_id, data.receipt_date,
+        debit_account_code=destination_account.code, credit_account_code=source_account.code,
+        amount=data.amount,
+        reference=data.reference or f"RCV-{data.receipt_date.isoformat()}",
+        description=data.description,
+        source="manual_cash_receipt", source_id=None,
+        created_by=recorded_by,
+        cost_center_code=cost_center_code,
+        commit_cost_centers=False,
+        strict=True,
+    )
+    receipt = crud.create_cash_receipt(db, branch_id, data, journal_entry_id=entry.id, recorded_by=recorded_by)
+    db.commit()
+    db.refresh(receipt)
+    return receipt
+
+
+def void_cash_receipt(
+    db: Session, receipt_id: int, voided_by: int, reason: str = "voided via API",
+) -> CashReceipt:
+    """إلغاء إذن قبض اتسجّل بالفعل — نفس نمط void_expense بالظبط بس مقلوب
+    الاتجاه (Dr.source/Cr.destination بدل العكس)."""
+    receipt = crud.get_cash_receipt(db, receipt_id)
+    if not receipt:
+        raise ValueError(f"إذن القبض {receipt_id} غير موجود")
+    if receipt.voided_at is not None:
+        raise ValueError(f"إذن القبض {receipt_id} ملغى بالفعل")
+
+    destination_account = crud.get_account(db, receipt.destination_account_id)
+    source_account = crud.get_account(db, receipt.source_account_id)
+    if not destination_account or not source_account:
+        raise ValueError(f"حسابات إذن القبض {receipt_id} غير مكتملة")
+
+    try:
+        original_amount = receipt.amount
+        receipt = crud.void_cash_receipt(db, receipt, voided_by)
+        crud.create_revenue_audit_log(
+            db, branch_id=receipt.branch_id, entity_type="cash_receipt", entity_id=receipt.id,
+            old_value=original_amount, new_value=Decimal("0.00"), reason=reason, changed_by=voided_by,
+        )
+        from app.resort_os.timezone_utils import business_today  # noqa: PLC0415
+        post_simple_revenue_journal(
+            db, receipt.branch_id, business_today(settings.TIMEZONE),
+            debit_account_code=source_account.code, credit_account_code=destination_account.code,
+            amount=original_amount,
+            reference=f"RCV-VOID-{receipt.id}",
+            description=f"إلغاء إذن قبض #{receipt.id}",
+            source="cash_receipt_void", source_id=receipt.id,
+            created_by=voided_by,
+            strict=True, commit_cost_centers=False,
+        )
+        db.commit()
+        db.refresh(receipt)
+        return receipt
+    except Exception:
+        db.rollback()
+        raise
+
+
+def list_expenses(
+    db: Session, branch_id: int,
+    date_from: Optional[date] = None, date_to: Optional[date] = None,
+    page: int = 1, size: int = 30,
+) -> tuple[list[dict], int]:
+    items, total = crud.list_expenses(db, branch_id, date_from, date_to, page, size)
+    enriched = []
+    for exp in items:
+        row = ExpenseRead.model_validate(exp).model_dump()
+        row["expense_account_code"] = exp.expense_account.code if exp.expense_account else ""
+        row["expense_account_name"] = exp.expense_account.name if exp.expense_account else ""
+        row["settlement_account_code"] = exp.settlement_account.code if exp.settlement_account else ""
+        enriched.append(row)
+    return enriched, total
 
 
 def post_simple_revenue_journal(
@@ -1645,6 +2171,96 @@ def close_accounting_period(
     return period
 
 
+def close_accounting_year(db: Session, branch_id: int, year: int, closed_by: int) -> AccountingYearClose:
+    """إقفال سنة محاسبية (2026-08-19، طلب Mohamed صراحةً) — يترحّل قيد
+    إقفال حقيقي يصفّر كل حسابات الإيرادات/المصروفات في 3200 (أرباح
+    مرحّلة)، بعد التأكد إن الاتناشر شهر كلهم مقفولين الأول. عملية لمرة
+    واحدة بس لكل (فرع، سنة) — مفيش "إعادة فتح سنة" في النطاق الحالي.
+
+    بيستخدم crud.create_journal_entry مباشرة (مش post_journal_entry) —
+    نفس سبب settle_custody بالظبط: القيد نفسه لازم يترحّل بتاريخ آخر يوم
+    في السنة (31 ديسمبر)، وهو تاريخ جوه شهر لازم يكون *مقفول بالفعل*
+    كشرط مسبق — لو استخدمنا post_journal_entry (بينادي validate_period_
+    open داخليًا) كان هيرفض القيد على أساس إن الفترة مقفولة، بينما إقفال
+    الفترة دي هو بالظبط سبب وجود القيد ده."""
+    if crud.get_year_close(db, branch_id, year):
+        raise ValueError(f"السنة المحاسبية {year} مقفولة بالفعل")
+
+    closed_months = crud.count_closed_months(db, branch_id, year)
+    if closed_months < 12:
+        raise ValueError(
+            f"لازم تقفل كل شهور سنة {year} الاتناشر الأول قبل إقفال السنة "
+            f"(مقفول حاليًا {closed_months}/12)"
+        )
+
+    retained_earnings_account = crud.get_account_by_code(db, branch_id, "3200")
+    if not retained_earnings_account:
+        raise FinancialConfigurationError("حساب الأرباح المحتجزة (3200) غير معرَّف لهذا الفرع")
+
+    year_start = date(year, 1, 1)
+    year_end = date(year, 12, 31)
+    accounts, _total = crud.list_accounts(db, branch_id, active_only=False, limit=1000)
+    sums = crud.sum_journal_lines_by_account(db, branch_id, year_start, year_end)
+
+    lines: list[JournalLineCreate] = []
+    total_revenue = Decimal("0")
+    total_expense = Decimal("0")
+    for acc in accounts:
+        debit_sum, credit_sum = sums.get(acc.id, (Decimal("0"), Decimal("0")))
+        if acc.account_type == "revenue":
+            balance = credit_sum - debit_sum
+            if balance != 0:
+                lines.append(JournalLineCreate(
+                    account_id=acc.id, debit=balance, credit=Decimal("0"),
+                    description=f"إقفال سنة {year}",
+                ))
+                total_revenue += balance
+        elif acc.account_type == "expense":
+            balance = debit_sum - credit_sum
+            if balance != 0:
+                lines.append(JournalLineCreate(
+                    account_id=acc.id, debit=Decimal("0"), credit=balance,
+                    description=f"إقفال سنة {year}",
+                ))
+                total_expense += balance
+
+    if not lines:
+        raise ValueError(f"لا يوجد نشاط مالي (إيرادات/مصروفات) لسنة {year} — لا يوجد ما يُقفل")
+
+    net_income = total_revenue - total_expense
+    if net_income > 0:
+        lines.append(JournalLineCreate(
+            account_id=retained_earnings_account.id, debit=Decimal("0"), credit=net_income,
+            description=f"صافي ربح سنة {year}",
+        ))
+    elif net_income < 0:
+        lines.append(JournalLineCreate(
+            account_id=retained_earnings_account.id, debit=abs(net_income), credit=Decimal("0"),
+            description=f"صافي خسارة سنة {year}",
+        ))
+
+    total_debit = sum((ln.debit for ln in lines), Decimal("0"))
+    total_credit = sum((ln.credit for ln in lines), Decimal("0"))
+    if abs(total_debit - total_credit) > Decimal("0.01"):
+        raise ValueError(f"قيد الإقفال غير متوازن: مدين={total_debit}, دائن={total_credit}")
+
+    entry_data = JournalEntryCreate(
+        branch_id=branch_id, entry_date=year_end,
+        reference=f"YEAR-CLOSE-{year}", description=f"قيد إقفال سنة {year}",
+        source="year_close", source_id=None, lines=lines,
+    )
+
+    try:
+        entry = crud.create_journal_entry(db, entry_data, closed_by)
+        year_close = crud.create_year_close(db, branch_id, year, entry.id, net_income, closed_by)
+        db.commit()
+        db.refresh(year_close)
+        return year_close
+    except Exception:
+        db.rollback()
+        raise
+
+
 # ── ETA E-Invoice ────────────────────────────────────────────────────
 
 async def submit_eta_invoice(db: Session, settings, data) -> ETAInvoice:
@@ -1879,6 +2495,134 @@ def get_cost_center_report(db: Session, branch_id: int, date_from: date, date_to
 # بالضرورة — وده اللي بيخلي trial balance وbalance sheet بيوازنوا تلقائياً
 # من غير ما نحتاج قيد "إقفال" فعلي لنقل الأرباح لحساب حقوق ملكية.
 
+def get_account_ledger(
+    db: Session, branch_id: int, account_id: int, date_from: date, date_to: date,
+) -> AccountLedgerReport:
+    """كشف حساب (2026-08-19، طلب Mohamed) — كل حركات حساب واحد خلال مدى
+    تاريخي، برصيد متحرّك. بدون pagination عمدًا (راجع crud.list_account_
+    ledger_lines) — لازم الرصيد المتحرّك يتحسب على التسلسل الكامل، والمدى
+    التاريخي بطبيعته بيحصر حجم البيانات (شهر/فترة، مش كل تاريخ الحساب)."""
+    account = crud.get_account(db, account_id)
+    if not account or account.branch_id != branch_id:
+        raise ValueError(f"الحساب {account_id} غير موجود في هذا الفرع")
+    if date_from > date_to:
+        raise ValueError("تاريخ البداية لازم يكون قبل تاريخ النهاية")
+
+    debit_normal = account.account_type in ("asset", "expense")
+
+    opening_debit, opening_credit = crud.sum_account_before_date(db, account_id, date_from)
+    opening_balance = (opening_debit - opening_credit) if debit_normal else (opening_credit - opening_debit)
+
+    rows = crud.list_account_ledger_lines(db, account_id, date_from, date_to)
+
+    lines: list[AccountLedgerLine] = []
+    running = opening_balance
+    total_debit = Decimal("0")
+    total_credit = Decimal("0")
+    for line, entry in rows:
+        delta = (line.debit - line.credit) if debit_normal else (line.credit - line.debit)
+        running += delta
+        total_debit += line.debit
+        total_credit += line.credit
+        lines.append(AccountLedgerLine(
+            entry_id=entry.id, entry_date=entry.entry_date,
+            reference=entry.reference, description=line.description or entry.description,
+            debit=line.debit, credit=line.credit, running_balance=running,
+        ))
+
+    return AccountLedgerReport(
+        account_id=account.id, account_code=account.code, account_name=account.name,
+        account_type=account.account_type, date_from=date_from, date_to=date_to,
+        opening_balance=opening_balance, closing_balance=running,
+        total_debit=total_debit, total_credit=total_credit, lines=lines,
+    )
+
+
+_AGING_BUCKETS = (
+    ("0-30", 0, 30),
+    ("31-60", 31, 60),
+    ("61-90", 61, 90),
+    ("90+", 91, None),
+)
+
+
+def _aging_bucket_label(days: int) -> str:
+    for label, lo, hi in _AGING_BUCKETS:
+        if days >= lo and (hi is None or days <= hi):
+            return label
+    return "90+"
+
+
+def get_aging_report(db: Session, branch_id: int, as_of: Optional[date] = None) -> AgingReport:
+    """تقرير أعمار الديون (2026-08-19، طلب Mohamed) — مين مديون لنا (فوليوهات
+    مفتوحة برصيد مستحق، عمرها من check_in) ومين إحنا مديونين له (أوامر شراء
+    + مصروفات آجلة لسه من غير سداد كامل، عمرها من تاريخ الأمر/المصروف).
+    مفيش منطق مالي جديد هنا — بس تجميع وترتيب بيانات موجودة أصلاً."""
+    if as_of is None:
+        as_of = date.today()
+
+    receivables: list[ReceivableAgingLine] = []
+    receivables_total = Decimal("0")
+    for folio in crud.list_open_folios_for_aging(db, branch_id):
+        paid = sum((p.amount for p in folio.payments if p.voided_at is None), Decimal("0"))
+        balance_due = folio.total - paid
+        if balance_due <= Decimal("0.01"):
+            continue
+        days = (as_of - folio.check_in.date()).days
+        receivables_total += balance_due
+        receivables.append(ReceivableAgingLine(
+            folio_id=folio.id, guest_name=folio.guest_name, check_in=folio.check_in.date(),
+            days_outstanding=days, balance_due=balance_due, bucket=_aging_bucket_label(days),
+        ))
+
+    payables: list[PayableAgingLine] = []
+    payables_total = Decimal("0")
+
+    from app.modules.inventory import crud as inventory_crud  # noqa: PLC0415
+    for po in inventory_crud.list_unpaid_purchase_orders_for_aging(db, branch_id):
+        remaining = po.total_amount - po.amount_paid
+        if remaining <= Decimal("0.01"):
+            continue
+        days = (as_of - po.ordered_at).days
+        payables_total += remaining
+        payables.append(PayableAgingLine(
+            source_type="purchase_order", source_id=po.id, reference=po.order_number,
+            counterparty=po.supplier.name if po.supplier else (po.supplier_name or "—"),
+            due_date=po.ordered_at, days_outstanding=days, remaining=remaining,
+            bucket=_aging_bucket_label(days),
+        ))
+
+    for exp in crud.list_unpaid_expenses_for_aging(db, branch_id):
+        remaining = exp.amount - exp.amount_paid
+        if remaining <= Decimal("0.01"):
+            continue
+        days = (as_of - exp.expense_date).days
+        payables_total += remaining
+        payables.append(PayableAgingLine(
+            source_type="expense", source_id=exp.id, reference=exp.reference or f"EXP-{exp.id}",
+            counterparty=exp.description, due_date=exp.expense_date,
+            days_outstanding=days, remaining=remaining, bucket=_aging_bucket_label(days),
+        ))
+
+    def _bucketize(lines, amount_attr) -> list[AgingBucket]:
+        result = []
+        for label, _lo, _hi in _AGING_BUCKETS:
+            matching = [l for l in lines if l.bucket == label]
+            result.append(AgingBucket(
+                label=label, count=len(matching),
+                amount=sum((getattr(l, amount_attr) for l in matching), Decimal("0")),
+            ))
+        return result
+
+    return AgingReport(
+        branch_id=branch_id, as_of=as_of,
+        receivables=receivables, receivables_total=receivables_total,
+        receivables_buckets=_bucketize(receivables, "balance_due"),
+        payables=payables, payables_total=payables_total,
+        payables_buckets=_bucketize(payables, "remaining"),
+    )
+
+
 def get_trial_balance(
     db: Session, branch_id: int, as_of: date, group_by_parent: bool = False,
 ) -> TrialBalanceReport:
@@ -2037,6 +2781,161 @@ def get_balance_sheet(db: Session, branch_id: int, as_of: date) -> BalanceSheetR
         total_assets=total_assets, total_liabilities=total_liabilities, total_equity=total_equity,
         total_liabilities_and_equity=total_liabilities_and_equity,
         is_balanced=abs(total_assets - total_liabilities_and_equity) <= Decimal("0.01"),
+    )
+
+
+# ── تصدير التقارير المالية الرئيسية PDF/Excel (2026-08-19، طلب Mohamed) ──
+# ميزان المراجعة/قائمة الدخل/الميزانية العمومية كانت شاشة/JSON بس، مفيش
+# ملف قابل للتنزيل يتسلّم لمحاسب خارجي أو بنك. نفس نمط generate_folios_
+# report_excel فوق بالظبط — بيعيد استخدام get_trial_balance/get_income_
+# statement/get_balance_sheet المحسوبة أصلاً، صفر منطق مالي جديد هنا.
+
+def generate_trial_balance_pdf(
+    db: Session, branch_id: int, as_of: date, group_by_parent: bool = False,
+) -> bytes:
+    from app.resort_os.report_builder import builder  # noqa: PLC0415
+
+    report = get_trial_balance(db, branch_id, as_of, group_by_parent)
+    headers = ["الكود", "الحساب", "النوع", "مدين", "دائن"]
+    rows = [
+        [l.account_code, l.account_name, l.account_type,
+         f"{l.debit:,.2f}" if l.debit else "—", f"{l.credit:,.2f}" if l.credit else "—"]
+        for l in report.lines
+    ]
+    summary = [
+        ("إجمالي المدين", f"{report.total_debit:,.2f} EGP"),
+        ("إجمالي الدائن", f"{report.total_credit:,.2f} EGP"),
+        ("متوازن؟", "نعم ✓" if report.is_balanced else "لا ✗"),
+    ]
+    return builder.table_pdf(
+        title="ميزان المراجعة", subtitle=f"حتى تاريخ {as_of:%Y-%m-%d}",
+        headers=headers, rows=rows, summary=summary,
+    )
+
+
+def generate_trial_balance_excel(
+    db: Session, branch_id: int, as_of: date, group_by_parent: bool = False,
+) -> bytes:
+    from app.resort_os.report_builder import builder  # noqa: PLC0415
+
+    report = get_trial_balance(db, branch_id, as_of, group_by_parent)
+    rows = [[l.account_code, l.account_name, l.account_type, float(l.debit), float(l.credit)] for l in report.lines]
+    return builder.excel(
+        sheets=[{
+            "name": "ميزان المراجعة",
+            "headers": ["الكود", "الحساب", "النوع", "مدين", "دائن"],
+            "rows": rows,
+            "col_types": ["text", "text", "text", "currency", "currency"],
+            "summary": {
+                "إجمالي المدين": float(report.total_debit),
+                "إجمالي الدائن": float(report.total_credit),
+            },
+        }],
+        title=f"ميزان المراجعة حتى {as_of:%Y-%m-%d}",
+    )
+
+
+def generate_income_statement_pdf(db: Session, branch_id: int, date_from: date, date_to: date) -> bytes:
+    from app.resort_os.report_builder import builder  # noqa: PLC0415
+
+    report = get_income_statement(db, branch_id, date_from, date_to)
+    headers = ["الكود", "الحساب", "المبلغ"]
+    rows = [["", "— الإيرادات —", ""]]
+    rows += [[l.account_code, l.account_name, f"{l.amount:,.2f}"] for l in report.revenue_lines]
+    rows += [["", "— المصروفات —", ""]]
+    rows += [[l.account_code, l.account_name, f"{l.amount:,.2f}"] for l in report.expense_lines]
+    summary = [
+        ("إجمالي الإيرادات", f"{report.total_revenue:,.2f} EGP"),
+        ("إجمالي المصروفات", f"{report.total_expense:,.2f} EGP"),
+        ("صافي الربح/الخسارة", f"{report.net_income:,.2f} EGP"),
+    ]
+    return builder.table_pdf(
+        title="قائمة الدخل", subtitle=f"من {date_from:%Y-%m-%d} إلى {date_to:%Y-%m-%d}",
+        headers=headers, rows=rows, summary=summary,
+    )
+
+
+def generate_income_statement_excel(db: Session, branch_id: int, date_from: date, date_to: date) -> bytes:
+    from app.resort_os.report_builder import builder  # noqa: PLC0415
+
+    report = get_income_statement(db, branch_id, date_from, date_to)
+    rev_rows = [[l.account_code, l.account_name, float(l.amount)] for l in report.revenue_lines]
+    exp_rows = [[l.account_code, l.account_name, float(l.amount)] for l in report.expense_lines]
+    return builder.excel(
+        sheets=[
+            {
+                "name": "الإيرادات",
+                "headers": ["الكود", "الحساب", "المبلغ"],
+                "rows": rev_rows, "col_types": ["text", "text", "currency"],
+                "summary": {"إجمالي الإيرادات": float(report.total_revenue)},
+            },
+            {
+                "name": "المصروفات",
+                "headers": ["الكود", "الحساب", "المبلغ"],
+                "rows": exp_rows, "col_types": ["text", "text", "currency"],
+                "summary": {
+                    "إجمالي المصروفات": float(report.total_expense),
+                    "صافي الربح/الخسارة": float(report.net_income),
+                },
+            },
+        ],
+        title=f"قائمة الدخل {date_from:%Y-%m-%d} — {date_to:%Y-%m-%d}",
+    )
+
+
+def generate_balance_sheet_pdf(db: Session, branch_id: int, as_of: date) -> bytes:
+    from app.resort_os.report_builder import builder  # noqa: PLC0415
+
+    report = get_balance_sheet(db, branch_id, as_of)
+    headers = ["الكود", "الحساب", "المبلغ"]
+    rows = [["", "— الأصول —", ""]]
+    rows += [[l.account_code, l.account_name, f"{l.amount:,.2f}"] for l in report.asset_lines]
+    rows += [["", "— الخصوم —", ""]]
+    rows += [[l.account_code, l.account_name, f"{l.amount:,.2f}"] for l in report.liability_lines]
+    rows += [["", "— حقوق الملكية —", ""]]
+    rows += [[l.account_code, l.account_name, f"{l.amount:,.2f}"] for l in report.equity_lines]
+    summary = [
+        ("إجمالي الأصول", f"{report.total_assets:,.2f} EGP"),
+        ("إجمالي الخصوم", f"{report.total_liabilities:,.2f} EGP"),
+        ("إجمالي حقوق الملكية", f"{report.total_equity:,.2f} EGP"),
+        ("الأرباح المحتجزة", f"{report.retained_earnings:,.2f} EGP"),
+        ("متوازنة؟", "نعم ✓" if report.is_balanced else "لا ✗"),
+    ]
+    return builder.table_pdf(
+        title="الميزانية العمومية", subtitle=f"حتى تاريخ {as_of:%Y-%m-%d}",
+        headers=headers, rows=rows, summary=summary,
+    )
+
+
+def generate_balance_sheet_excel(db: Session, branch_id: int, as_of: date) -> bytes:
+    from app.resort_os.report_builder import builder  # noqa: PLC0415
+
+    report = get_balance_sheet(db, branch_id, as_of)
+    asset_rows = [[l.account_code, l.account_name, float(l.amount)] for l in report.asset_lines]
+    liability_rows = [[l.account_code, l.account_name, float(l.amount)] for l in report.liability_lines]
+    equity_rows = [[l.account_code, l.account_name, float(l.amount)] for l in report.equity_lines]
+    return builder.excel(
+        sheets=[
+            {
+                "name": "الأصول", "headers": ["الكود", "الحساب", "المبلغ"],
+                "rows": asset_rows, "col_types": ["text", "text", "currency"],
+                "summary": {"إجمالي الأصول": float(report.total_assets)},
+            },
+            {
+                "name": "الخصوم", "headers": ["الكود", "الحساب", "المبلغ"],
+                "rows": liability_rows, "col_types": ["text", "text", "currency"],
+                "summary": {"إجمالي الخصوم": float(report.total_liabilities)},
+            },
+            {
+                "name": "حقوق الملكية", "headers": ["الكود", "الحساب", "المبلغ"],
+                "rows": equity_rows, "col_types": ["text", "text", "currency"],
+                "summary": {
+                    "إجمالي حقوق الملكية": float(report.total_equity),
+                    "الأرباح المحتجزة": float(report.retained_earnings),
+                },
+            },
+        ],
+        title=f"الميزانية العمومية حتى {as_of:%Y-%m-%d}",
     )
 
 
@@ -2200,7 +3099,9 @@ def auto_match_bank_statement_lines(db: Session, bank_account_id: int, matched_b
     for line in lines:
         if line.amount <= 0:
             continue  # مطابقة السحوبات/العمولات البنكية يدوية دايمًا (مفيش Payment مقابل)
-        candidates = crud.find_matching_payment_candidates(db, account.branch_id, line.amount, line.line_date)
+        candidates = crud.find_matching_payment_candidates(
+            db, account.branch_id, line.amount, line.line_date, bank_account_id=account.id,
+        )
         if len(candidates) == 1:
             crud.match_statement_line(db, line, candidates[0].id, matched_by)
             matched_count += 1
@@ -2269,3 +3170,128 @@ def get_bank_reconciliation_summary(db: Session, bank_account_id: int, as_of: da
         unmatched_payments_count=unmatched_pay_count,
         unmatched_payments_total=unmatched_pay_total,
     )
+
+
+# ── Payment Channels ─────────────────────────────────────────────────────
+#
+# قناة تحصيل = وجهة GL حقيقية يختارها الكاشير (صندوق/Visa CIB/Vodafone
+# Cash...). التصميم بالكامل مبني على قاعدتين لا يجوز كسرهما:
+#   1. لا حذف أبدًا — تعطيل فقط (is_active=False)، عشان أي بيع/قيد تاريخي
+#      يفضل يقدر يرجع لنفس القناة اللي استُخدمت وقته.
+#   2. أي بيع بيسجّل *لقطة* (snapshot) من القناة وقت الحركة (id/code/name +
+#      حساب GL) — مش مرجع حي بيتغيّر لو القناة اتعدّلت بعد كده. المرتجع/الـ
+#      void لازم يستخدم اللقطة المحفوظة وقت البيع، مش إعداد القناة الحالي.
+
+def get_payment_channel_or_404(db: Session, channel_id: int):
+    channel = crud.get_payment_channel(db, channel_id)
+    if not channel:
+        raise ValueError(f"قناة التحصيل {channel_id} غير موجودة")
+    return channel
+
+
+def _validate_payment_channel_accounts(
+    db: Session, branch_id: int, gl_account_id: int,
+    bank_account_id: Optional[int], method: str,
+) -> None:
+    gl = crud.get_account(db, gl_account_id)
+    if not gl or gl.branch_id != branch_id:
+        raise ValueError(f"حساب GL {gl_account_id} غير موجود في هذا الفرع")
+    if not gl.is_active:
+        raise ValueError(f"حساب GL «{gl.name}» غير نشط")
+    if gl.account_type != "asset":
+        raise ValueError(f"حساب GL «{gl.name}» يجب أن يكون من نوع أصل (Asset) ليصلح لتحصيل قناة دفع")
+
+    if bank_account_id is None:
+        return
+    if method == "cash":
+        raise ValueError("قناة تحصيل نقدية (cash) لا يمكن ربطها بحساب بنكي")
+    bank = crud.get_bank_account(db, bank_account_id)
+    if not bank or bank.branch_id != branch_id:
+        raise ValueError(f"الحساب البنكي {bank_account_id} غير موجود في هذا الفرع")
+    if not bank.is_active:
+        raise ValueError(f"الحساب البنكي «{bank.account_name}» غير نشط")
+
+
+def list_payment_channels(
+    db: Session, branch_id: int, active_only: bool = False, method: Optional[str] = None,
+):
+    return crud.list_payment_channels(db, branch_id, active_only, method)
+
+
+def create_payment_channel(db: Session, data: PaymentChannelCreate):
+    _validate_payment_channel_accounts(db, data.branch_id, data.gl_account_id, data.bank_account_id, data.method)
+    if crud.get_payment_channel_by_code(db, data.branch_id, data.code):
+        raise ValueError(f"كود القناة «{data.code}» مستخدم بالفعل في هذا الفرع")
+    channel = crud.create_payment_channel(db, data)
+    db.commit()
+    return crud.get_payment_channel(db, channel.id)
+
+
+def update_payment_channel(db: Session, channel_id: int, data: PaymentChannelUpdate):
+    channel = get_payment_channel_or_404(db, channel_id)
+    gl_account_id = data.gl_account_id if data.gl_account_id is not None else channel.gl_account_id
+    if data.clear_bank_account:
+        bank_account_id = None
+    elif data.bank_account_id is not None:
+        bank_account_id = data.bank_account_id
+    else:
+        bank_account_id = channel.bank_account_id
+    _validate_payment_channel_accounts(db, channel.branch_id, gl_account_id, bank_account_id, channel.method)
+    channel = crud.update_payment_channel(db, channel, data)
+    db.commit()
+    return crud.get_payment_channel(db, channel.id)
+
+
+def resolve_payment_channel(
+    db: Session, branch_id: int, method: str, channel_id: Optional[int] = None,
+):
+    """يحل القناة الفعلية المستخدمة لحركة بيع (Beach/Dining).
+
+    - ``channel_id`` محدد صراحةً → لازم يكون نشط، لنفس الفرع، ولنفس
+      ``method``، وإلا يترفض بوضوح.
+    - غير محدد وفيه قنوات مُعرَّفة لهذا الفرع/الطريقة → يستخدم الـdefault
+      النشط؛ عدم وجود default صالح خطأ صريح (مايترحّلش لحساب عشوائي).
+    - غير محدد ومفيش أي قناة مُعرَّفة خالص لهذا الفرع/الطريقة → ``None``
+      (توافق مؤقت مع الفروع/البيئات اللي لسه معملتش channels — المسار
+      القديم القائم على متغيرات البيئة يفضل شغّال زي ما هو).
+    """
+    if channel_id is not None:
+        channel = crud.get_payment_channel(db, channel_id)
+        if not channel or channel.branch_id != branch_id:
+            raise ValueError(f"قناة التحصيل {channel_id} غير موجودة في هذا الفرع")
+        if not channel.is_active:
+            raise ValueError(f"قناة التحصيل «{channel.name}» معطّلة، اختر قناة نشطة")
+        if channel.method != method:
+            raise ValueError(f"قناة التحصيل «{channel.name}» لا تدعم طريقة الدفع «{method}»")
+        return channel
+
+    existing = crud.list_payment_channels(db, branch_id, method=method)
+    if not existing:
+        return None
+
+    default = crud.get_default_payment_channel(db, branch_id, method)
+    if not default:
+        raise ValueError(
+            f"لا توجد قناة تحصيل افتراضية صالحة لطريقة الدفع «{method}» في هذا الفرع — "
+            "اختر قناة يدويًا أو اضبط قناة افتراضية من إدارة قنوات التحصيل",
+        )
+    return default
+
+
+def payment_channel_snapshot(channel) -> dict:
+    """لقطة تُخزَّن على الحركة نفسها (Payment/BeachTransaction) — مش مرجع
+    حي. ``channel=None`` (مسار legacy بلا قنوات مُعرَّفة) يرجّع لقطة فاضية،
+    والمرتجع/الـvoid وقتها بيفضل يستخدم حساب البيئة القديم زي ما هو."""
+    if channel is None:
+        return {
+            "payment_channel_id": None,
+            "payment_channel_code": None,
+            "payment_channel_name": None,
+            "settlement_account_code": None,
+        }
+    return {
+        "payment_channel_id": channel.id,
+        "payment_channel_code": channel.code,
+        "payment_channel_name": channel.name,
+        "settlement_account_code": channel.gl_account.code,
+    }

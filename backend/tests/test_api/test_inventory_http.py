@@ -261,6 +261,176 @@ class TestPurchaseOrderFlow:
         assert Decimal(bs["total_liabilities"]) == Decimal("1000.00")
 
 
+class TestSupplierPaymentHTTP:
+    """2026-08-16 — سند دفع لمورد عبر الـAPI الفعلي (يقفل حلقة 2200)."""
+
+    def _received_po(self, client: TestClient, db, branch, manager_headers):
+        from app.modules.inventory.models import Supplier
+        warehouse = make_warehouse_committed(db, branch)
+        product = make_product_committed(db, branch)
+        make_account_committed(db, branch, "1200", "مخزون البضاعة", "asset")
+        make_account_committed(db, branch, "2200", "موردون — ذمم دائنة", "liability")
+        supplier = Supplier(branch_id=branch.id, name="شركة التوريد المصرية")
+        db.add(supplier); db.commit()
+
+        po = client.post(
+            "/api/v1/inventory/purchase-orders",
+            json={
+                "branch_id": branch.id, "supplier_id": supplier.id,
+                "ordered_at": str(date.today()),
+                "items": [{"product_id": product.id, "ordered_qty": "100.00", "unit_cost": "18.00"}],
+            },
+            headers=manager_headers,
+        ).json()
+        receive_resp = client.post(
+            f"/api/v1/inventory/purchase-orders/{po['id']}/receive",
+            json={
+                "items": [{"item_id": po["items"][0]["id"], "received_qty": "100.00"}],
+                "warehouse_id": warehouse.id, "received_at": str(date.today()),
+            },
+            headers=manager_headers,
+        )
+        assert receive_resp.status_code == 200, receive_resp.text
+        return receive_resp.json(), supplier
+
+    def test_pay_purchase_order_http(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        po, _supplier = self._received_po(client, db, branch, manager_headers)
+        cash = make_account_committed(db, branch, "1100", "Cash", "asset")
+
+        pay_resp = client.post(
+            f"/api/v1/inventory/purchase-orders/{po['id']}/pay",
+            json={"amount": "1800.00", "settlement_account_id": cash.id, "paid_at": str(date.today())},
+            headers=manager_headers,
+        )
+        assert pay_resp.status_code == 200, pay_resp.text
+        body = pay_resp.json()
+        assert body["amount_paid"] == "1800.00"
+        assert body["payment_status"] == "paid"
+
+        payments_resp = client.get(
+            f"/api/v1/inventory/purchase-orders/{po['id']}/payments", headers=manager_headers,
+        )
+        assert payments_resp.status_code == 200
+        assert len(payments_resp.json()) == 1
+
+    def test_pay_purchase_order_requires_manager(self, client: TestClient, db, manager_headers, cashier_headers):
+        branch = make_branch_committed(db)
+        po, _supplier = self._received_po(client, db, branch, manager_headers)
+        cash = make_account_committed(db, branch, "1100", "Cash", "asset")
+
+        pay_resp = client.post(
+            f"/api/v1/inventory/purchase-orders/{po['id']}/pay",
+            json={"amount": "100.00", "settlement_account_id": cash.id, "paid_at": str(date.today())},
+            headers=cashier_headers,
+        )
+        assert pay_resp.status_code == 403
+
+    def _void_supplier_payment_headers(self, client, headers, *, payment_id, reason):
+        """2026-08-19 — راجع app.core.kernel.auth.step_up.supplier_payment_void_scope
+        ونفس نمط _void_payment_headers في test_finance_http.py."""
+        from tests.conftest import _issue_step_up
+        token = _issue_step_up(
+            client, headers, purpose="supplier_payment_void",
+            intent={"payment_id": payment_id, "reason": reason},
+        )
+        return {**headers, "X-Step-Up-Token": token}
+
+    def _paid_po(self, client, db, branch, manager_headers, amount="1800.00"):
+        po, _supplier = self._received_po(client, db, branch, manager_headers)
+        cash = make_account_committed(db, branch, "1100", "Cash", "asset")
+        pay_resp = client.post(
+            f"/api/v1/inventory/purchase-orders/{po['id']}/pay",
+            json={"amount": amount, "settlement_account_id": cash.id, "paid_at": str(date.today())},
+            headers=manager_headers,
+        )
+        assert pay_resp.status_code == 200, pay_resp.text
+        payments = client.get(
+            f"/api/v1/inventory/purchase-orders/{po['id']}/payments", headers=manager_headers,
+        ).json()
+        return po, payments[0]
+
+    def test_void_supplier_payment_reverses_po_amount_paid(
+        self, client: TestClient, db, manager_headers,
+    ):
+        branch = make_branch_committed(db)
+        po, payment = self._paid_po(client, db, branch, manager_headers)
+
+        reason = "سداد اتسجّل بالخطأ على أمر شراء تاني"
+        resp = client.post(
+            f"/api/v1/inventory/purchase-orders/{po['id']}/payments/{payment['id']}/void",
+            json={"reason": reason},
+            headers=self._void_supplier_payment_headers(
+                client, manager_headers, payment_id=payment["id"], reason=reason,
+            ),
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["voided_at"] is not None
+
+        po_resp = client.get(f"/api/v1/inventory/purchase-orders/{po['id']}", headers=manager_headers)
+        assert po_resp.status_code == 200, po_resp.text
+        po_body = po_resp.json()
+        assert po_body["amount_paid"] == "0.00"
+        assert po_body["payment_status"] == "unpaid"
+
+        logs_resp = client.get(
+            "/api/v1/finance/revenue-audit-logs",
+            params={"branch_id": branch.id, "entity_type": "supplier_payment", "entity_id": payment["id"]},
+            headers=manager_headers,
+        )
+        assert logs_resp.status_code == 200, logs_resp.text
+        assert len(logs_resp.json()) == 1
+
+    def test_cannot_void_already_voided_supplier_payment(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        _po, payment = self._paid_po(client, db, branch, manager_headers)
+        po = _po
+
+        first = client.post(
+            f"/api/v1/inventory/purchase-orders/{po['id']}/payments/{payment['id']}/void",
+            json={"reason": "إلغاء أول مرة"},
+            headers=self._void_supplier_payment_headers(
+                client, manager_headers, payment_id=payment["id"], reason="إلغاء أول مرة",
+            ),
+        )
+        assert first.status_code == 200, first.text
+
+        second = client.post(
+            f"/api/v1/inventory/purchase-orders/{po['id']}/payments/{payment['id']}/void",
+            json={"reason": "محاولة إلغاء تانية"},
+            headers=self._void_supplier_payment_headers(
+                client, manager_headers, payment_id=payment["id"], reason="محاولة إلغاء تانية",
+            ),
+        )
+        assert second.status_code == 400, second.text
+        assert "ملغى بالفعل" in second.json()["detail"]
+
+    def test_void_supplier_payment_requires_manager(
+        self, client: TestClient, db, manager_headers, cashier_headers,
+    ):
+        branch = make_branch_committed(db)
+        po, payment = self._paid_po(client, db, branch, manager_headers)
+        resp = client.post(
+            f"/api/v1/inventory/purchase-orders/{po['id']}/payments/{payment['id']}/void",
+            json={"reason": "محاولة كاشير"},
+            headers=cashier_headers,
+        )
+        assert resp.status_code == 403
+
+    def test_void_supplier_payment_without_step_up_token_rejected(
+        self, client: TestClient, db, manager_headers,
+    ):
+        branch = make_branch_committed(db)
+        po, payment = self._paid_po(client, db, branch, manager_headers)
+        resp = client.post(
+            f"/api/v1/inventory/purchase-orders/{po['id']}/payments/{payment['id']}/void",
+            json={"reason": "من غير step-up"},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 428
+        assert resp.json()["detail"]["error_code"] == "STEP_UP_REQUIRED"
+
+
 class TestInventoryPermissions:
     def test_create_product_requires_manager(self, client: TestClient, db, cashier_headers):
         """cashier (40) must not create products — manager (60) required."""

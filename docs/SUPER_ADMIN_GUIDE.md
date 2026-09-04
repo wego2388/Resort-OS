@@ -1,12 +1,10 @@
 # Super Admin Guide — El Kheima Resort OS
 
-> **Audience:** Resort owner and designated super-admin operators.
-> **Version:** 2026-07 — not updated since; several screens described here
-> are now outdated (account unlock, force-2FA-reset, admin session
-> management, audit log date filters, timeshare staff accounts).
+> **Audience:** Named super-admin operators. The read-only `owner` account is
+> a separate role and application.
+> **Version:** 14 August 2026.
 > **Authoritative current guide:** `manual/01-دليل-السوبر-أدمن.md` (Arabic,
-> updated 3 August 2026). This English file is not kept in sync — follow the
-> Arabic guide.
+> updated 14 August 2026). Follow the Arabic guide when wording differs.
 
 ---
 
@@ -145,7 +143,8 @@ Legacy account and permission bookmarks redirect into this same control center.
 
 ### Creating a new staff account
 
-1. Confirm HR created the employee record in the active branch.
+1. Confirm HR created the employee record in **El Kheima Beach Resort**.
+   The deployment has one branch and never asks staff to choose one.
 2. Select that active, unlinked employee record. Name, email, and phone are
    prefilled; review the email and choose the role and language.
 3. Click **Create Account Securely**.
@@ -154,7 +153,9 @@ Legacy account and permission bookmarks redirect into this same control center.
    atomically. Cross-branch and terminated employee records are rejected.
 6. A credentials panel appears showing:
    - **Temporary password** — the employee must change it on first login.
-   - **Enrollment token** — required to complete TOTP setup on first login.
+   - **Enrollment token** — shown only for mandatory-2FA roles
+     (`accountant`; privileged `super_admin`/`owner` accounts are created by
+     the server bootstrap). Other staff receive only a temporary password.
 7. **Copy and send these credentials securely to the employee. They are shown
    exactly once.** After closing the panel they cannot be recovered from the
    UI.
@@ -163,7 +164,8 @@ Legacy account and permission bookmarks redirect into this same control center.
 
 | Role | Level | Typical use |
 |---|---|---|
-| `super_admin` | 100 | Resort owner / IT head — assigned only via bootstrap script |
+| `super_admin` | 100 | System administration — assigned only via bootstrap script |
+| `owner` | 10 | Read-only Owner Cockpit — assigned only via bootstrap script |
 | `admin` | 80 | Resort manager, full back-office |
 | `accountant` | 70 | Finance team — mandatory 2FA |
 | `hr_manager` | 70 | HR module |
@@ -173,12 +175,28 @@ Legacy account and permission bookmarks redirect into this same control center.
 | `cashier` | 40 | POS / shift cashier |
 | `waiter` | 30 | Floor service, order entry |
 | `chef` / `kitchen` | 30 | Kitchen display |
-| `timeshare_agent` | 25 | Specialist role when technically provisioned; not offered by the current UI form |
+| `timeshare_admin` | 55 | Timeshare administration; the first named account is created from an HR record here |
+| `timeshare_agent` | 25 | Visits/support agent; created by a timeshare admin from an unlinked HR record |
 | `employee` | 20 | Self-service portal only |
 
 The web UI cannot create `super_admin`. A named account with that role is
 created only through the audited server-side bootstrap by the technical
 operator.
+
+### Force-resetting 2FA
+
+Force reset revokes the target's refresh sessions and recovery codes. For a
+mandatory role (`super_admin`, `accountant`, or `owner`) the result panel shows
+a fresh one-time enrollment token; copy it securely before closing. The user
+then signs in with the existing password and completes TOTP enrollment again.
+Optional staff roles can continue with password-only login.
+
+### Timeshare collection policy
+
+Collection is available to `timeshare_admin` by default, by card or bank
+transfer only. A `timeshare_agent` may collect only after a super-admin grants
+that exact user the collection permission. Never grant collection to the
+whole agent group and never use cash in the timeshare workspace.
 
 ### Changing a role
 

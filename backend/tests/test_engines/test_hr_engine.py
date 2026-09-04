@@ -262,8 +262,12 @@ class TestCalculateGratuity:
         assert result == Decimal("60000.00")  # 5000 × 12
 
     def test_zero_years_service(self):
-        """أقل من سنة → صفر"""
-        hire = date.today().replace(month=max(1, date.today().month - 6))
+        """أقل من سنة → صفر. باج حقيقي كان هنا (مكتشف أثناء تدقيق ما قبل
+        الإطلاق 2026-08-28): `.replace(month=...)` بيرمي ValueError لو
+        اليوم الحالي أكبر من عدد أيام الشهر الهدف (مثلاً يوم 31 وشهر فبراير)
+        — تست يفشل عشوائيًا حسب تاريخ التشغيل، مش باج في الكود المُختبَر
+        نفسه. `timedelta` آمن دايمًا."""
+        hire = date.today() - timedelta(days=180)
         result = calculate_gratuity(Decimal("5000"), hire, "termination")
         assert result == Decimal("0.00")
 
@@ -354,15 +358,30 @@ class TestCalculatePayroll:
         assert result.unpaid_leave_deduction == Decimal("400.00")  # 200 × 2
 
     def test_net_salary_never_negative_with_extreme_deductions(self):
-        """رغم الخصومات الكبيرة، الصافي ≥ 0"""
+        """رغم الخصومات الكبيرة، الصافي ≥ 0 فعليًا — باج حقيقي كان هنا
+        (2026-08-28): الاختبار ده كان بيتأكد إن net_salary مجرد Decimal
+        صحيح بس، مش إنه فعليًا ≥ 0 كما يوحي اسمه — يعني الباج (صافي سالب)
+        كان يعدّي التست ده بصمت. تأكيد صريح دلوقتي، زائد سيناريو أقسى
+        بيضيف سلفة كمان عشان يتأكد الـcap النسبي شغال لكل الخصومات مع
+        بعض مش بس واحدة."""
         emp = _basic_employee(
             basic_salary=Decimal("1000"),
             penalty_days=5,
             unpaid_leave_days=30,
         )
         result = calculate_payroll(emp, _si_config(), _tax_brackets(), max_penalty_days=5)
-        # لا يُفرض أن الصافي صفر بالضبط لكن يجب أن يكون رقم حقيقي
-        assert isinstance(result.net_salary, Decimal)
+        assert result.net_salary >= Decimal("0")
+
+        emp_with_advance = _basic_employee(
+            basic_salary=Decimal("1000"),
+            penalty_days=5,
+            unpaid_leave_days=30,
+        )
+        emp_with_advance.advance_deduction_amount = Decimal("500")
+        result_with_advance = calculate_payroll(
+            emp_with_advance, _si_config(), _tax_brackets(), max_penalty_days=5
+        )
+        assert result_with_advance.net_salary >= Decimal("0")
 
     def test_journal_entry_structure(self):
         """القيد المحاسبي يحتوي على debits و credits"""

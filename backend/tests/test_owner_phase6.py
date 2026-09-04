@@ -33,14 +33,25 @@ def _tok(email: str, branch_id: int = 1) -> str:
 import uuid
 
 def _branch(db, code: str = None):
+    """⚠️ حسابات 1165/4300 لازم تتزرع هنا دايمًا: test_owner_channel_
+    analytics_structure بتنشئ عقد B2B نشط على الفرع، وpost_b2b_monthly_
+    fees بتفحص كل عقود B2B النشطة عبر كل الفروع بتصميم — أي تست تاني بعدها
+    في نفس الـsuite بينادي الترحيل هيلاقيها ويفشل بـ
+    FinancialConfigurationError لو الحسابات مش موجودة."""
     from app.modules.core.models import Branch
+    from app.modules.finance.models import Account
     if code is None:
         code = f"T6-{uuid.uuid4().hex[:6].upper()}"
     b = db.query(Branch).filter(Branch.code == code).first()
     if b:
         return b
     b = Branch(name="Branch6", name_ar="فرع6", code=code, gm_phone="+201000000000")
-    db.add(b); db.flush(); return b
+    db.add(b); db.flush()
+    existing = {a.code for a in db.query(Account).filter(Account.branch_id == b.id).all()}
+    wanted = [("1165", "ذمم فنادق شريكة (B2B)", "asset"), ("4300", "Beach Revenue", "revenue")]
+    db.add_all([Account(branch_id=b.id, code=c, name=n, account_type=t) for c, n, t in wanted if c not in existing])
+    db.flush()
+    return b
 
 
 def _owner(db, email: str, branch_id: int):
@@ -360,23 +371,33 @@ def test_owner_channel_analytics_no_guest_data(client, db, setup_db):
 
 
 def test_owner_channel_analytics_structure(client, db, setup_db):
-    """هيكل channel analytics يحتوي على الحقول المطلوبة."""
-    branch = _branch(db)
+    """هيكل channel analytics يحتوي على الحقول المطلوبة.
+
+    2026-08-20: العقد بقى مبلغ شهري ثابت (monthly_fee/monthly_guest_cap
+    بدل daily_quota/entry_price)، وإيراد القناة (period_revenue) بقى مبني
+    على B2BContractMonth.amount المُرحَّل فعليًا (راجع
+    owner.services.get_channel_analytics) بدل B2BContractDay.total_amount
+    القديمة — بنولّد الرصيد ده بنفس آلية الترحيل الحقيقية
+    (services.post_b2b_monthly_fees)، مش صف مصطنع."""
+    branch = _branch(db)  # حسابات 1165/4300 مزروعة بالفعل هنا
     owner  = _owner(db, "channel2@test.local", branch.id)
 
-    # ننشئ B2B contract
+    from app.modules.beach import services as beach_services
     from app.modules.beach.models import B2BContract, B2BContractDay
+
     contract = B2BContract(
         branch_id=branch.id, hotel_name="فندق النيل",
-        daily_quota=30, entry_price=Decimal("80"),
+        monthly_fee=Decimal("400"), monthly_guest_cap=30,
         valid_from=date(2026, 1, 1), valid_until=date(2026, 12, 31),
         is_active=True, is_overdue=False,
     )
     db.add(contract); db.flush()
     db.add(B2BContractDay(
         contract_id=contract.id, day=date.today(),
-        checked_in_count=5, total_amount=Decimal("400"),
+        checked_in_count=5,
     ))
+    db.commit()
+    beach_services.post_b2b_monthly_fees(db, date.today())
     db.commit()
 
     resp = client.get(
@@ -388,6 +409,8 @@ def test_owner_channel_analytics_structure(client, db, setup_db):
     assert len(data["contracts"]) >= 1
     c = next(x for x in data["contracts"] if x["contract_id"] == contract.id)
     assert c["hotel_name"] == "فندق النيل"
+    assert c["period_checkins"] == 5
+    assert Decimal(str(c["period_revenue"])) == Decimal("400")
     assert "fnb_attach" in c
     assert "outstanding" in c
     assert "is_overdue" in c

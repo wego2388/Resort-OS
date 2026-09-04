@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, reactive } from 'vue'
+import { ref, computed, onMounted, reactive, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api, useAuthStore } from '@resort-os/core'
 import { useStaffFormat } from '@resort-os/core/i18n/staff'
@@ -20,6 +20,7 @@ import {
   useToast,
   type SelectOption,
 } from '@resort-os/ui'
+import TimeshareUnitPicker from '../../components/TimeshareUnitPicker.vue'
 
 const toast = useToast()
 const { confirm } = useConfirm()
@@ -27,6 +28,11 @@ const { t, locale } = useI18n()
 const { formatDate, formatMoney } = useStaffFormat()
 const auth = useAuthStore()
 const branchId = computed(() => auth.branchId)
+const canCollectInstallments = computed(() => auth.hasPermission('timeshare.installments:collect'))
+const canCollectMaintenance = computed(() => auth.hasPermission('timeshare.maintenance_dues:collect'))
+const canScheduleVisits = computed(() => auth.hasPermission('timeshare.visits:create'))
+const canEditVisits = computed(() => auth.hasPermission('timeshare.visits:edit'))
+const canAddWaitlist = computed(() => auth.hasPermission('timeshare.waitlist:create'))
 
 // ── Types ──────────────────────────────────────────────────────────────────
 interface Installment {
@@ -51,6 +57,7 @@ interface Contract {
   maintenance_dues_list: MaintenanceDue[]
   collected?: number; overdue_amount?: number
   unit_id: number | null
+  unit_capacity?: number | null
 }
 interface CalendarWeek { week: number; start_date: string; end_date: string; is_current: boolean; is_past: boolean; contracts: CalendarContract[] }
 interface CalendarContract { id: number; customer_name: string; rci_included: boolean; status: string; contract_number?: string; room_type: string }
@@ -359,6 +366,8 @@ const scheduleModal = reactive({
   checkOut: '',
   notes: '',
   error: '',
+  // 2026-08-16: اختيار يدوي من خريطة الوحدات — راجع TimeshareUnitPicker.vue
+  unitId: null as number | null,
 })
 
 function openScheduleVisit() {
@@ -369,6 +378,7 @@ function openScheduleVisit() {
   scheduleModal.checkOut = ''
   scheduleModal.notes    = ''
   scheduleModal.error    = ''
+  scheduleModal.unitId   = null
   scheduleModal.open     = true
 }
 
@@ -378,6 +388,11 @@ const contractOptions = computed<SelectOption[]>(() =>
     label: `${c.contract_number ?? '#' + c.id} — ${c.nights_per_year ?? ''}n/yr`,
   })),
 )
+
+// السلوك اليدوي (unit_id) بيحتاج نوع الغرفة/الوحدة الثابتة/سعة العقد
+// الحاليين — راجع TimeshareUnitPicker.vue.
+const scheduleModalContract = computed(() => profileModal.contracts.find(c => c.id === scheduleModal.contractId) ?? null)
+watch(() => scheduleModal.contractId, () => { scheduleModal.unitId = null })
 
 async function confirmScheduleVisit() {
   if (scheduleModal.contractId == null || !scheduleModal.checkIn || !scheduleModal.checkOut) {
@@ -393,6 +408,7 @@ async function confirmScheduleVisit() {
       check_in:    scheduleModal.checkIn,
       check_out:   scheduleModal.checkOut,
       notes:       scheduleModal.notes || undefined,
+      unit_id:     scheduleModal.unitId ?? undefined,
     })
     toast.success(t('backoffice.timeshare.scheduleVisit.successToast'))
     scheduleModal.open = false
@@ -459,7 +475,7 @@ const installSearch = ref('')
 // ── Pay Modal ────────────────────────────────────────────────────────────
 const payModal = reactive({
   open: false, saving: false, inst_id: 0, customer_name: '', due_amount: 0,
-  amount: 0, method: 'cash', receipt_number: '',
+  amount: 0, method: 'bank_transfer', receipt_number: '',
 })
 
 // ── Maintenance Dues ─────────────────────────────────────────────────────
@@ -472,7 +488,7 @@ const maintSearch = ref('')
 // ── Maintenance Pay Modal ────────────────────────────────────────────────
 const maintPayModal = reactive({
   open: false, saving: false, due_id: 0, customer_name: '', due_amount: 0,
-  amount: 0, method: 'cash', receipt_number: '',
+  amount: 0, method: 'bank_transfer', receipt_number: '',
 })
 
 // ── Import Modal ─────────────────────────────────────────────────────────
@@ -483,16 +499,26 @@ interface VisitRequestItem {
   id: number; contract_id: number; preferred_start: string; preferred_end: string
   notes: string | null; status: string; rejection_reason: string | null
   customer_name?: string; customer_phone?: string; contract_number?: string
+  // 2026-08-16: عشان خريطة الوحدات (TimeshareUnitPicker) تعرف تفلتر صح —
+  // راجع backend TimeshareVisitRequestRead.
+  room_type?: string | null; contract_unit_id?: number | null; unit_capacity?: number | null
 }
 const visitRequests = ref<VisitRequestItem[]>([])
 const requestsLoading = ref(false)
 const requestsStatus = ref('pending')
-const approveModal = reactive({ open: false, request: null as VisitRequestItem | null, check_in: '', check_out: '', saving: false, error: '' })
+const approveModal = reactive({
+  open: false, request: null as VisitRequestItem | null, check_in: '', check_out: '', saving: false, error: '',
+  unitId: null as number | null,
+})
 const rejectModal = reactive({ open: false, request: null as VisitRequestItem | null, reason: '', saving: false, error: '' })
 
 function openApproveModal(r: VisitRequestItem) {
-  Object.assign(approveModal, { open: true, request: r, check_in: r.preferred_start, check_out: r.preferred_end, saving: false, error: '' })
+  Object.assign(approveModal, {
+    open: true, request: r, check_in: r.preferred_start, check_out: r.preferred_end, saving: false, error: '',
+    unitId: null,
+  })
 }
+watch(() => [approveModal.check_in, approveModal.check_out], () => { approveModal.unitId = null })
 async function confirmApprove() {
   if (!approveModal.request) return
   approveModal.saving = true
@@ -500,6 +526,7 @@ async function confirmApprove() {
   try {
     await api.post(`/api/v1/timeshare/visit-requests/${approveModal.request.id}/approve`, {
       check_in: approveModal.check_in, check_out: approveModal.check_out,
+      unit_id: approveModal.unitId ?? undefined,
     })
     toast.success(t('backoffice.timeshare.msg.requestApproved'))
     approveModal.open = false
@@ -575,10 +602,12 @@ async function updateTicketStatus(tk: SupportTicket, status: string) {
 // ── Timeshare Staff (طلب Mohamed 2026-08-03: مدير الملكية الجزئية بيدير
 // موظفينه بنفسه، منعزل تمامًا عن شاشة الموظفين العامة) ─────────────────────
 interface StaffMember { id: number; email: string; full_name: string; phone: string | null; is_active: boolean; must_change_password: boolean }
+interface EligibleEmployee { id: number; employee_code: string; full_name: string; position: string; email: string | null; phone: string | null }
 const timeshareStaff = ref<StaffMember[]>([])
+const eligibleEmployees = ref<EligibleEmployee[]>([])
 const staffLoading = ref(false)
 const newStaffModal = reactive({
-  open: false, saving: false, email: '', full_name: '', phone: '', error: '',
+  open: false, saving: false, employee_id: null as number | null, email: '', full_name: '', phone: '', error: '',
   result: null as { email: string; temporary_password: string } | null,
 })
 
@@ -591,11 +620,27 @@ async function loadTimeshareStaff() {
   } catch { toast.error(t('backoffice.timeshare.msg.loadStaffError')) } finally { staffLoading.value = false }
 }
 
-function openNewStaffModal() {
-  Object.assign(newStaffModal, { open: true, saving: false, email: '', full_name: '', phone: '', error: '', result: null })
+async function openNewStaffModal() {
+  Object.assign(newStaffModal, { open: true, saving: false, employee_id: null, email: '', full_name: '', phone: '', error: '', result: null })
+  try {
+    const { data } = await api.get('/api/v1/timeshare/staff/eligible-employees', {
+      params: { branch_id: branchId.value },
+    })
+    eligibleEmployees.value = data
+  } catch {
+    eligibleEmployees.value = []
+    newStaffModal.error = t('backoffice.timeshare.msg.loadEligibleEmployeesError')
+  }
+}
+function selectStaffEmployee() {
+  const employee = eligibleEmployees.value.find(item => item.id === newStaffModal.employee_id)
+  if (!employee) return
+  newStaffModal.full_name = employee.full_name
+  newStaffModal.email = employee.email ?? ''
+  newStaffModal.phone = employee.phone ?? ''
 }
 async function createStaff() {
-  if (!newStaffModal.email.trim() || !newStaffModal.full_name.trim()) {
+  if (!newStaffModal.employee_id || !newStaffModal.email.trim() || !newStaffModal.full_name.trim()) {
     newStaffModal.error = t('backoffice.timeshare.staffFormRequired')
     return
   }
@@ -603,7 +648,8 @@ async function createStaff() {
   newStaffModal.error = ''
   try {
     const r = await api.post('/api/v1/timeshare/staff', {
-      branch_id: branchId.value, email: newStaffModal.email.trim(),
+      branch_id: branchId.value, employee_id: newStaffModal.employee_id,
+      email: newStaffModal.email.trim(),
       full_name: newStaffModal.full_name.trim(), phone: newStaffModal.phone.trim() || undefined,
       preferred_language: locale.value === 'en' ? 'en' : 'ar',
     })
@@ -886,7 +932,7 @@ function openPayModal(inst: Installment) {
     open: true, saving: false, inst_id: inst.id,
     customer_name: inst.customer_name ?? '',
     due_amount: inst.amount - inst.paid_amount,
-    amount: inst.amount - inst.paid_amount, method: 'cash', receipt_number: '',
+    amount: inst.amount - inst.paid_amount, method: 'bank_transfer', receipt_number: '',
   })
 }
 
@@ -917,7 +963,7 @@ function openMaintenancePayModal(due: MaintenanceDue) {
     open: true, saving: false, due_id: due.id,
     customer_name: due.customer_name ?? '',
     due_amount: due.amount - due.paid_amount,
-    amount: due.amount - due.paid_amount, method: 'cash', receipt_number: '',
+    amount: due.amount - due.paid_amount, method: 'bank_transfer', receipt_number: '',
   })
 }
 
@@ -1335,7 +1381,7 @@ onMounted(refreshAll)
                       <td class="py-1.5 font-bold">{{ fmt(p.amount) }}</td>
                       <td class="py-1.5"><AppBadge size="sm" :variant="payStatusVariant[p.status] ?? 'neutral'">{{ payLabel(p.status) }}</AppBadge></td>
                       <td class="py-1.5">
-                        <button v-if="p.status !== 'paid'" @click="openPayModal({ ...p, customer_name: c.customer_name })"
+                        <button v-if="p.status !== 'paid' && canCollectInstallments" @click="openPayModal({ ...p, customer_name: c.customer_name })"
                           class="min-h-[44px] px-3 py-2 rounded-lg bg-green-50 text-green-700 dark:bg-green-950/40 dark:text-green-300 text-xs font-bold border border-green-200 dark:border-green-800 hover:bg-green-100 dark:hover:bg-green-950/60">{{ t('backoffice.timeshare.pay') }}</button>
                       </td>
                     </tr>
@@ -1359,7 +1405,7 @@ onMounted(refreshAll)
                       <td class="py-1.5 font-bold">{{ fmt(d.amount) }}</td>
                       <td class="py-1.5"><AppBadge size="sm" :variant="payStatusVariant[d.status] ?? 'neutral'">{{ payLabel(d.status) }}</AppBadge></td>
                       <td class="py-1.5">
-                        <button v-if="d.status !== 'paid'" @click="openMaintenancePayModal({ ...d, customer_name: c.customer_name })"
+                        <button v-if="d.status !== 'paid' && canCollectMaintenance" @click="openMaintenancePayModal({ ...d, customer_name: c.customer_name })"
                           class="min-h-[44px] px-3 py-2 rounded-lg bg-green-50 text-green-700 dark:bg-green-950/40 dark:text-green-300 text-xs font-bold border border-green-200 dark:border-green-800 hover:bg-green-100 dark:hover:bg-green-950/60">{{ t('backoffice.timeshare.pay') }}</button>
                       </td>
                     </tr>
@@ -1369,8 +1415,8 @@ onMounted(refreshAll)
             </div>
 
             <div class="flex flex-wrap gap-2 pt-2 border-t border-stone-100 dark:border-border/50">
-              <button @click="openPayModalForContract(c)" class="min-h-[44px] px-4 py-2 rounded-xl bg-green-50 text-green-700 dark:bg-green-950/40 dark:text-green-300 text-sm font-bold border border-green-200 dark:border-green-800 hover:bg-green-100 dark:hover:bg-green-950/60">💰 {{ t('backoffice.timeshare.recordPayment') }}</button>
-              <button v-if="c.maintenance_dues_list?.some(d => d.status !== 'paid')" @click="openMaintenancePayModalForContract(c)" class="min-h-[44px] px-4 py-2 rounded-xl bg-teal-50 text-teal-700 dark:bg-teal-950/40 dark:text-teal-300 text-sm font-bold border border-teal-200 dark:border-teal-800 hover:bg-teal-100 dark:hover:bg-teal-950/60">🛠️ {{ t('backoffice.timeshare.recordMaintenancePayment') }}</button>
+              <button v-if="canCollectInstallments" @click="openPayModalForContract(c)" class="min-h-[44px] px-4 py-2 rounded-xl bg-green-50 text-green-700 dark:bg-green-950/40 dark:text-green-300 text-sm font-bold border border-green-200 dark:border-green-800 hover:bg-green-100 dark:hover:bg-green-950/60">💰 {{ t('backoffice.timeshare.recordPayment') }}</button>
+              <button v-if="canCollectMaintenance && c.maintenance_dues_list?.some(d => d.status !== 'paid')" @click="openMaintenancePayModalForContract(c)" class="min-h-[44px] px-4 py-2 rounded-xl bg-teal-50 text-teal-700 dark:bg-teal-950/40 dark:text-teal-300 text-sm font-bold border border-teal-200 dark:border-teal-800 hover:bg-teal-100 dark:hover:bg-teal-950/60">🛠️ {{ t('backoffice.timeshare.recordMaintenancePayment') }}</button>
               <a v-if="c.customer_phone" :href="`tel:${c.customer_phone}`" class="min-h-[44px] inline-flex items-center px-4 py-2 rounded-xl bg-sky-50 text-sky-700 dark:bg-sky-950/40 dark:text-sky-300 text-sm font-bold border border-sky-200 dark:border-sky-800 hover:bg-sky-100 dark:hover:bg-sky-950/60">📞 {{ t('backoffice.timeshare.call') }}</a>
               <button @click="downloadContractPdf(c)" :disabled="downloadingPdfId === c.id"
                 class="min-h-[44px] px-4 py-2 rounded-xl bg-stone-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300 text-sm font-bold border border-stone-200 dark:border-border hover:bg-stone-200 dark:hover:bg-gray-700 disabled:opacity-40">📄 {{ downloadingPdfId === c.id ? t('backoffice.timeshare.saving') : t('backoffice.timeshare.downloadPdf') }}</button>
@@ -1380,7 +1426,7 @@ onMounted(refreshAll)
                 class="min-h-[44px] px-4 py-2 rounded-xl bg-green-50 text-green-700 dark:bg-green-950/40 dark:text-green-300 text-sm font-bold border border-green-200 dark:border-green-800 hover:bg-green-100 dark:hover:bg-green-950/60 disabled:opacity-40">▶️ {{ t('backoffice.timeshare.activate') }}</button>
               <button v-if="auth.hasRole('timeshare_admin') && c.unit_id && !['cancelled','expired'].includes(c.status)" @click="openTransferModal(c)"
                 class="min-h-[44px] px-4 py-2 rounded-xl bg-violet-50 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300 text-sm font-bold border border-violet-200 dark:border-violet-800 hover:bg-violet-100 dark:hover:bg-violet-950/60">🔑 {{ t('backoffice.timeshare.transferUnit') }}</button>
-              <button v-if="!['cancelled','expired'].includes(c.status)" @click="openNewWaitlistModal(c)"
+              <button v-if="canAddWaitlist && !['cancelled','expired'].includes(c.status)" @click="openNewWaitlistModal(c)"
                 class="min-h-[44px] px-4 py-2 rounded-xl bg-indigo-50 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300 text-sm font-bold border border-indigo-200 dark:border-indigo-800 hover:bg-indigo-100 dark:hover:bg-indigo-950/60">⏳ {{ t('backoffice.timeshare.joinWaitlist') }}</button>
               <AppButton v-if="auth.hasRole('timeshare_admin') && c.status !== 'cancelled'" variant="danger" class="min-h-[44px]" @click="cancelContract(c)">🗑️ {{ t('backoffice.timeshare.cancelAction') }}</AppButton>
             </div>
@@ -1431,7 +1477,7 @@ onMounted(refreshAll)
               <td class="px-4 py-3 font-bold">{{ fmt(p.amount) }}</td>
               <td class="px-4 py-3"><AppBadge size="sm" :variant="payStatusVariant[p.status] ?? 'neutral'">{{ payLabel(p.status) }}</AppBadge></td>
               <td class="px-4 py-3">
-                <button v-if="p.status !== 'paid'" @click="openPayModal(p)"
+                <button v-if="p.status !== 'paid' && canCollectInstallments" @click="openPayModal(p)"
                   class="min-h-[44px] px-3 py-2 rounded-xl bg-green-50 text-green-700 dark:bg-green-950/40 dark:text-green-300 text-xs font-bold border border-green-200 dark:border-green-800 hover:bg-green-100">💰 {{ t('backoffice.timeshare.pay') }}</button>
               </td>
             </tr>
@@ -1484,7 +1530,7 @@ onMounted(refreshAll)
               <td class="px-4 py-3 font-bold">{{ fmt(d.amount) }}</td>
               <td class="px-4 py-3"><AppBadge size="sm" :variant="payStatusVariant[d.status] ?? 'neutral'">{{ payLabel(d.status) }}</AppBadge></td>
               <td class="px-4 py-3">
-                <button v-if="d.status !== 'paid'" @click="openMaintenancePayModal(d)"
+                <button v-if="d.status !== 'paid' && canCollectMaintenance" @click="openMaintenancePayModal(d)"
                   class="min-h-[44px] px-3 py-2 rounded-xl bg-green-50 text-green-700 dark:bg-green-950/40 dark:text-green-300 text-xs font-bold border border-green-200 dark:border-green-800 hover:bg-green-100">💰 {{ t('backoffice.timeshare.pay') }}</button>
               </td>
             </tr>
@@ -1684,6 +1730,15 @@ onMounted(refreshAll)
         <label class="block text-sm font-bold text-gray-700 dark:text-gray-300">{{ t('backoffice.timeshare.scheduleVisit.checkOut') }}
           <input v-model="approveModal.check_out" type="date" class="min-h-[44px] w-full mt-1 bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-900 dark:text-gray-100 rounded-xl px-3 py-2 text-sm" />
         </label>
+        <TimeshareUnitPicker
+          v-model="approveModal.unitId"
+          :branch-id="branchId"
+          :unit-type="approveModal.request.room_type ?? ''"
+          :check-in="approveModal.check_in"
+          :check-out="approveModal.check_out"
+          :contract-unit-id="approveModal.request.contract_unit_id ?? null"
+          :unit-capacity="approveModal.request.unit_capacity ?? null"
+        />
         <p v-if="approveModal.error" class="text-sm text-red-600 dark:text-red-400">{{ approveModal.error }}</p>
         <AppButton class="w-full min-h-[44px]" :disabled="approveModal.saving" @click="confirmApprove">{{ approveModal.saving ? t('backoffice.timeshare.saving') : t('backoffice.timeshare.confirmApprove') }}</AppButton>
       </div>
@@ -1731,11 +1786,24 @@ onMounted(refreshAll)
     <!-- ══ NEW TIMESHARE STAFF MODAL ══ -->
     <AppModal :open="newStaffModal.open" :title="`➕ ${t('backoffice.timeshare.newStaff')}`" size="sm" @close="newStaffModal.open = false">
       <div v-if="!newStaffModal.result" class="space-y-3">
+        <label class="block text-sm font-bold text-gray-700 dark:text-gray-300">
+          {{ t('backoffice.timeshare.staffEmployee') }}
+          <select v-model.number="newStaffModal.employee_id" @change="selectStaffEmployee"
+            class="min-h-[44px] w-full mt-1 bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-900 dark:text-gray-100 rounded-xl px-3 py-2 text-sm">
+            <option :value="null">{{ t('backoffice.timeshare.staffEmployeePlaceholder') }}</option>
+            <option v-for="employee in eligibleEmployees" :key="employee.id" :value="employee.id">
+              {{ employee.employee_code }} — {{ employee.full_name }} ({{ employee.position }})
+            </option>
+          </select>
+        </label>
+        <p v-if="!eligibleEmployees.length && !newStaffModal.error" class="text-sm text-amber-700 dark:text-amber-300">
+          {{ t('backoffice.timeshare.noEligibleEmployees') }}
+        </p>
         <AppInput v-model="newStaffModal.full_name" :label="t('backoffice.timeshare.staffFullName')" />
         <AppInput v-model="newStaffModal.email" type="email" :label="t('backoffice.timeshare.staffEmail')" />
         <AppInput v-model="newStaffModal.phone" :label="t('backoffice.timeshare.staffPhone')" />
         <p v-if="newStaffModal.error" class="text-sm text-red-600 dark:text-red-400">{{ newStaffModal.error }}</p>
-        <AppButton class="w-full min-h-[44px]" :disabled="newStaffModal.saving" @click="createStaff">{{ newStaffModal.saving ? t('backoffice.timeshare.saving') : t('backoffice.timeshare.createStaff') }}</AppButton>
+        <AppButton class="w-full min-h-[44px]" :disabled="newStaffModal.saving || !eligibleEmployees.length" @click="createStaff">{{ newStaffModal.saving ? t('backoffice.timeshare.saving') : t('backoffice.timeshare.createStaff') }}</AppButton>
       </div>
       <div v-else class="space-y-3">
         <div class="rounded-2xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 p-4 text-sm text-amber-800 dark:text-amber-200">
@@ -1779,8 +1847,7 @@ onMounted(refreshAll)
         <div>
           <label class="text-xs text-gray-600 dark:text-gray-300 font-semibold block mb-1">{{ t('backoffice.timeshare.paymentMethod') }}</label>
           <select v-model="payModal.method" class="min-h-[44px] w-full bg-stone-50 dark:bg-gray-800/60 border border-stone-200 dark:border-border text-gray-900 dark:text-gray-100 text-sm rounded-xl px-4 py-2.5 outline-none">
-            <option value="cash">{{ t('backoffice.timeshare.paymentMethodCash') }}</option><option value="card">{{ t('backoffice.timeshare.paymentMethodCard') }}</option>
-            <option value="bank_transfer">{{ t('backoffice.timeshare.paymentMethodBankTransfer') }}</option><option value="other">{{ t('backoffice.timeshare.paymentMethodOther') }}</option>
+            <option value="bank_transfer">{{ t('backoffice.timeshare.paymentMethodBankTransfer') }}</option><option value="card">{{ t('backoffice.timeshare.paymentMethodCard') }}</option>
           </select>
         </div>
         <div>
@@ -1810,8 +1877,7 @@ onMounted(refreshAll)
         <div>
           <label class="text-xs text-gray-600 dark:text-gray-300 font-semibold block mb-1">{{ t('backoffice.timeshare.paymentMethod') }}</label>
           <select v-model="maintPayModal.method" class="min-h-[44px] w-full bg-stone-50 dark:bg-gray-800/60 border border-stone-200 dark:border-border text-gray-900 dark:text-gray-100 text-sm rounded-xl px-4 py-2.5 outline-none">
-            <option value="cash">{{ t('backoffice.timeshare.paymentMethodCash') }}</option><option value="card">{{ t('backoffice.timeshare.paymentMethodCard') }}</option>
-            <option value="bank_transfer">{{ t('backoffice.timeshare.paymentMethodBankTransfer') }}</option><option value="other">{{ t('backoffice.timeshare.paymentMethodOther') }}</option>
+            <option value="bank_transfer">{{ t('backoffice.timeshare.paymentMethodBankTransfer') }}</option><option value="card">{{ t('backoffice.timeshare.paymentMethodCard') }}</option>
           </select>
         </div>
         <div>
@@ -1901,7 +1967,7 @@ onMounted(refreshAll)
             <p class="text-xs text-gray-500 dark:text-gray-400 font-bold uppercase">{{ t('backoffice.timeshare.visitsCount', { count: profileModal.visits.length }) }}</p>
             <!-- زرار جدولة زيارة: manager/timeshare_agent فقط -->
             <AppButton
-              v-if="auth.hasRole('timeshare_agent')"
+              v-if="canScheduleVisits"
               size="sm" variant="primary"
               @click="openScheduleVisit"
             >📅 {{ t('backoffice.timeshare.scheduleVisit.btnLabel') }}</AppButton>
@@ -1915,7 +1981,7 @@ onMounted(refreshAll)
               </div>
               <div class="flex items-center gap-2 flex-wrap">
                 <!-- أزرار تغيير الحالة — manager/timeshare_agent فقط على الحالات المسموحة -->
-                <template v-if="(auth.hasRole('timeshare_agent')) && nextStatuses(v.status).length">
+                <template v-if="canEditVisits && nextStatuses(v.status).length">
                   <AppButton
                     v-for="ns in nextStatuses(v.status)" :key="ns.status"
                     size="sm" variant="ghost"
@@ -2039,6 +2105,15 @@ onMounted(refreshAll)
           </label>
           <AppInput v-model="scheduleModal.notes" :placeholder="t('backoffice.timeshare.scheduleVisit.notesPlaceholder')" />
         </div>
+        <TimeshareUnitPicker
+          v-model="scheduleModal.unitId"
+          :branch-id="branchId"
+          :unit-type="scheduleModalContract?.room_type ?? ''"
+          :check-in="scheduleModal.checkIn"
+          :check-out="scheduleModal.checkOut"
+          :contract-unit-id="scheduleModalContract?.unit_id ?? null"
+          :unit-capacity="scheduleModalContract?.unit_capacity ?? null"
+        />
         <p v-if="scheduleModal.error" class="text-sm text-red-600 dark:text-red-400">{{ scheduleModal.error }}</p>
       </div>
       <template #footer>

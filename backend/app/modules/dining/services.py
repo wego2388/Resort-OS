@@ -1093,6 +1093,7 @@ def update_order_status(
     credit_account_id: Optional[int] = None,
     payment_currency: Optional[str] = None,
     payment_fx_rate: Optional[Decimal] = None,
+    payment_channel_id: Optional[int] = None,
     settled_by: Optional[int] = None,
     acting_user_level: int = 100,
     approver_user_id: Optional[int] = None,
@@ -1117,6 +1118,7 @@ def update_order_status(
             credit_account_id=credit_account_id,
             payment_currency=payment_currency,
             payment_fx_rate=payment_fx_rate,
+            payment_channel_id=payment_channel_id,
             settled_by=settled_by,
             acting_user_level=acting_user_level,
             approver_user_id=approver_user_id,
@@ -1208,7 +1210,7 @@ def settle_order(
     allocation، زيارة العميل، حالة الطلب والطاولة، وصف DiningSettlement.
     """
     from app.modules.dining.payment_policy import (  # noqa: PLC0415
-        ALL_TENDER_METHODS, is_direct_method, resolve_direct_tender_account,
+        ALL_TENDER_METHODS, is_direct_method, resolve_tender_channel,
     )
     from app.modules.finance import services as finance_services  # noqa: PLC0415
 
@@ -1261,6 +1263,7 @@ def settle_order(
                 # POS-03: عملة/سعر الصرف للكاش بعملة أجنبية — بيتمرّر لـ _settle_direct_tender
                 "currency": (t.get("currency") or "EGP").upper(),
                 "fx_rate": t.get("fx_rate"),
+                "payment_channel_id": t.get("payment_channel_id"),
             })
 
         # M1 (جولة مراجعة Codex الأولى): مقارنة Decimal دقيقة بعد quantize
@@ -1285,10 +1288,16 @@ def settle_order(
                 "استخدم tender غرفة واحد والباقي طرق دفع مباشرة"
             )
 
-        # حل حساب GL لكل tender مباشر (fail-closed) قبل أي تعديل — أي طريقة
-        # غير مهيّأة (card/wallet) بترفع PaymentMethodNotConfiguredError فورًا.
+        # حل قناة التحصيل/حساب GL لكل tender مباشر (fail-closed) قبل أي
+        # تعديل — قناة حقيقية مُعرَّفة (finance.PaymentChannel) هي المصدر
+        # الأساسي؛ فرع بلا قنوات لسه بيشتغل بمسار الحساب القديم (legacy).
+        # أي طريقة غير مهيّأة في الاتنين بترفع PaymentMethodNotConfiguredError.
         for t in direct:
-            t["account"] = resolve_direct_tender_account(t["method"])
+            resolution = resolve_tender_channel(
+                db, order.branch_id, t["method"], t.get("payment_channel_id"),
+            )
+            t["account"] = resolution.account_code
+            t["channel_snapshot"] = resolution.channel_snapshot
 
         # tender مباشر محتاج وردية مفتوحة لنفس الكاشير والفرع (الـ brief §2.1).
         # الإنفاذ بيتفعّل كل ما فيه كاشير محدد (settled_by) — وده **دايمًا**
@@ -1441,6 +1450,15 @@ def settle_order(
                 **({"account": t["account"]} if t.get("account") else {}),
                 **({"folio_id": t["folio_id"]} if t.get("folio_id") else {}),
                 **({"credit_account_id": t["credit_account_id"]} if t.get("credit_account_id") else {}),
+                **(
+                    {
+                        "payment_channel_id": t["channel_snapshot"]["payment_channel_id"],
+                        "payment_channel_code": t["channel_snapshot"]["payment_channel_code"],
+                        "payment_channel_name": t["channel_snapshot"]["payment_channel_name"],
+                    }
+                    if t.get("channel_snapshot") and t["channel_snapshot"].get("payment_channel_id")
+                    else {}
+                ),
             }
             for t in norm
         ]
@@ -1696,6 +1714,7 @@ def _settle_direct_tender(
         posted_at=datetime.utcnow(), shift_id=shift_id, cashier_id=cashier_id,
         reference=f"ORD-{order.order_number}", ref_order_id=order.id, source="dining",
         currency=currency, fx_rate=fx_rate,
+        channel_snapshot=tender.get("channel_snapshot"),
     )
 
     tender_ratio = (amount / order.total) if order.total > 0 else Decimal("0")
@@ -1820,6 +1839,7 @@ def _mark_order_paid(
     credit_account_id: Optional[int] = None,
     payment_currency: Optional[str] = None,
     payment_fx_rate: Optional[Decimal] = None,
+    payment_channel_id: Optional[int] = None,
     settled_by: Optional[int] = None,
     acting_user_level: int = 100,
     approver_user_id: Optional[int] = None,
@@ -1861,6 +1881,7 @@ def _mark_order_paid(
         "amount": None,
         "charge_to_room_id": charge_to_room_id,
         "credit_account_id": credit_account_id,
+        "payment_channel_id": payment_channel_id,
     }
     # POS-03: نمرّر العملة/سعر الصرف فقط لو الدفع كاش بعملة أجنبية
     if method == "cash" and payment_currency and (payment_currency or "EGP").upper() != "EGP":
@@ -2049,14 +2070,14 @@ def void_order_item(
     Gate 4 (جولة مراجعة Codex الأولى): قفل الطلب + إعادة فحص الحالة تحت
     القفل — عشان إلغاء صنف مايتسابقش مع دفع نفس الطلب."""
     order = _lock_order_or_conflict(db, order_id)
-    if order.status in ("paid", "cancelled"):
+    if order.status in ("paid", "cancelled", "refunded"):
         raise ValueError(f"لا يمكن إلغاء صنف من طلب '{order.status}' — استخدم مرتجع بعد الدفع")
 
     item = crud.get_order_item(db, order_id, item_id)
     if not item:
         raise ValueError(f"الصنف {item_id} غير موجود في هذا الطلب")
-    if item.status == "cancelled":
-        raise ValueError("الصنف ده ملغي بالفعل")
+    if item.status in ("cancelled", "refunded"):
+        raise ValueError("الصنف ده ملغي أو مرتجع بالفعل")
 
     from app.modules.core import policy_engine  # noqa: PLC0415
 
@@ -2064,6 +2085,7 @@ def void_order_item(
         db, "void_order_item",
         acting_user_level=acting_user_level,
         approver_user_id=approver_user_id, approver_pin=approver_pin,
+        target_branch_id=order.branch_id,
     )
 
     crud.void_order_item(db, item, reason, voided_by)
@@ -2092,7 +2114,7 @@ def transfer_order_table(db: Session, order_id: int, table_id: int) -> DiningOrd
     (blocking) + إعادة فحص الحالة تحت القفل — عشان نقل الطاولة مايتسابقش مع
     دفع الطلب، ولا مع نقل/فتح طلب تاني على نفس الطاولة الوجهة."""
     order = _lock_order_or_conflict(db, order_id)
-    if order.status in ("paid", "cancelled"):
+    if order.status in ("paid", "cancelled", "refunded"):
         raise ValueError(f"لا يمكن نقل طلب بحالة '{order.status}'")
 
     new_table = crud.get_table(db, table_id)
@@ -2323,6 +2345,7 @@ def split_bill(
             # POS-03: عملة/سعر الصرف للكاش بعملة أجنبية
             "currency": (p.get("currency") or "EGP").upper(),
             "fx_rate": p.get("fx_rate"),
+            "payment_channel_id": p.get("payment_channel_id"),
         }
         for p in payments
     ]
@@ -3045,7 +3068,7 @@ def apply_order_discount(
     القفل — عشان تطبيق الخصم مايتسابقش مع دفع نفس الطلب."""
     order = _lock_order_or_conflict(db, order_id)
 
-    if order.status in ("paid", "cancelled"):
+    if order.status in ("paid", "cancelled", "refunded"):
         raise ValueError("لا يمكن تطبيق خصم على طلب مغلق")
 
     from app.modules.core import policy_engine  # noqa: PLC0415
@@ -3054,6 +3077,7 @@ def apply_order_discount(
         db, "apply_order_discount",
         acting_user_level=acting_user_level,
         approver_user_id=approver_user_id, approver_pin=approver_pin,
+        target_branch_id=order.branch_id,
     )
 
     rules: list[DiscountRule] = []

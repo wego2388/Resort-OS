@@ -409,6 +409,52 @@ class TestPayroll:
         total_credit = sum(l.credit for l in lines)
         assert total_debit == total_credit, "القيد لازم يكون متوازن (مدين = دائن)"
 
+    def test_approve_payroll_run_rejects_unbalanced_journal_from_bad_insurance_base(
+        self, db, branch, si_config, tax_brackets,
+    ):
+        """مراجعة Codex 2026-08-30 (H-07): مفيش تحقق كان بيمنع insurance_
+        base_salary > basic_salary — لو employee_si الناتج (محسوب من الوعاء
+        المنفوخ) أكبر من إجمالي المستحق، القيد المجمّع كان بيترحّل غير
+        متوازن بصمت (_post_payroll_journal كانت بتنادي crud.create_journal_
+        entry مباشرة من غير أي فحص توازن). services.create_employee/
+        update_employee بقى بيرفضوا الحالة دي من الأساس دلوقتي — التست ده
+        بيحاكي بيانات قديمة فاسدة اتسجّلت *قبل* الإصلاح (INSERT مباشر
+        يتخطى فحص الـservice)، ويتأكد إن الدفاع الثاني (post_journal_entry
+        بدل create_journal_entry المباشرة) بيرفض بوضوح بدل ما يرحّل قيد
+        كاسر لتوازن الدفاتر."""
+        from app.modules.finance.models import Account, JournalEntry
+        from app.modules.hr.models import Employee
+
+        for code, acc_type in [
+            ("5100", "expense"),
+            ("2100", "liability"), ("2110", "liability"), ("2120", "liability"),
+        ]:
+            db.add(Account(branch_id=branch.id, code=code, name=code, account_type=acc_type))
+        db.commit()
+
+        # INSERT مباشر يتخطى services.create_employee (اللي بيرفض الحالة دي
+        # دلوقتي) — يحاكي صف موجود بالفعل في الداتابيز من قبل الإصلاح.
+        bad_emp = Employee(
+            branch_id=branch.id, employee_code=f"EMP-{uuid.uuid4().hex[:6].upper()}",
+            full_name="بيانات قديمة فاسدة", position="نادل",
+            basic_salary=Decimal("1000.00"), insurance_base_salary=Decimal("14000.00"),
+            hire_date=date(2020, 1, 1),
+        )
+        db.add(bad_emp)
+        db.commit()
+
+        run = services.run_payroll_for_branch(db, branch.id, 2026, 11)
+        with pytest.raises(ValueError, match="غير متوازن"):
+            services.approve_payroll_run(db, run.id, approved_by=1)
+
+        # مفيش أي قيد اتسجّل — الفشل كان قبل أي commit جزئي للقيد
+        entry = (
+            db.query(JournalEntry)
+            .filter(JournalEntry.source == "payroll", JournalEntry.source_id == run.id)
+            .first()
+        )
+        assert entry is None
+
     def test_approve_payroll_run_with_holiday_bonus_posts_balanced_journal(
         self, db, branch, si_config, tax_brackets,
     ):

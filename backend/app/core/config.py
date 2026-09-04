@@ -2,6 +2,7 @@
 app/core/config.py
 Settings للمشروع — يرث WegoSettings ويضيف حقول Resort OS
 """
+from decimal import Decimal
 from functools import lru_cache
 from typing import Optional
 
@@ -67,6 +68,13 @@ class Settings(CoreSettings):
     FRAUD_DRAWER_OPEN_COUNT_THRESHOLD: int = 20   # فتح الدرج بدون بيع
     FRAUD_DRAWER_OPEN_WINDOW_MINUTES: int = 1440  # 24 ساعة ("في اليوم")
     FRAUD_ALERT_DEDUP_HOURS: int = 24             # ما نبعتش نفس التنبيه (نفس كاشير+قاعدة) أكتر من مرة كل كام ساعة
+
+    # ── Expense Approval Threshold (2026-08-19، طلب Mohamed) ──────────
+    # سند مصروفات بمبلغ >= الرقم ده محتاج موافقة PIN مدير حاضر فعليًا
+    # (نفس core.policy_engine.require_approval اللي بيستخدمها إلغاء صنف/
+    # تطبيق خصم دايننج) — أقل من الرقم ده أي محاسب+ يسجّله لوحده زي ما
+    # كان بالظبط. قيمة مبدئية معقولة، قابلة للتعديل من غير كود جديد.
+    EXPENSE_APPROVAL_THRESHOLD: Decimal = Decimal("5000")
 
     # ── API ───────────────────────────────────────────────────────────
     API_PREFIX: str = "/api/v1"
@@ -163,11 +171,11 @@ class Settings(CoreSettings):
     CHAT_OUTPUT_USD_PER_MILLION_TOKENS: float = Field(7.50, gt=0)
 
     # ── Rate Limiting (login) ──────────────────────────────────────────
-    # الافتراضي (5 محاولات/300 ثانية) هو المعتمد أمنيًا للإنتاج (§15 CLAUDE.md)
-    # — ما اتغيّرش هنا. قابل للتوسيع في `.env` المحلي بس (مش القيمة الافتراضية
-    # دي) وقت التطوير/الاختبار، لما محتاج تبدّل حسابات تجريبية كتير بسرعة
-    # (كل حساب = محاولة تسجيل دخول منفصلة على نفس الـ IP).
-    LOGIN_RATE_LIMIT_MAX: int = 5
+    # Coarse IP protection only. Resort staff share one office/NAT address,
+    # so a five-request bucket locked out legitimate colleagues (a 2FA login
+    # can itself take two requests). Per-account password and 2FA failures are
+    # still capped by MAX_LOGIN_ATTEMPTS below the middleware.
+    LOGIN_RATE_LIMIT_MAX: int = 60
     LOGIN_RATE_LIMIT_WINDOW_SECONDS: int = 300
     AUTH_REFRESH_RATE_LIMIT_MAX: int = 60
     AUTH_REFRESH_RATE_LIMIT_WINDOW_SECONDS: int = 60
@@ -288,6 +296,11 @@ class Settings(CoreSettings):
                 "FIELD_ENCRYPTION_KEY must be a valid Fernet key outside "
                 "development/test/testing."
             ) from exc
+        if self.LOGIN_RATE_LIMIT_MAX < 60:
+            raise ValueError(
+                "LOGIN_RATE_LIMIT_MAX must be at least 60 outside "
+                "development/test/testing because resort staff share one NAT address."
+            )
         return self
 
 

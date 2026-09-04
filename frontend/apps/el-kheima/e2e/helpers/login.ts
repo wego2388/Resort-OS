@@ -6,11 +6,8 @@ import { expect, type Page } from '@playwright/test'
 // demo credentials (dev-only seed, never a real account).
 export const MANAGER = { username: 'manager@resortos.local', password: 'Demo@123456' }
 export const RECEPTIONIST = { username: 'reception@resortos.local', password: 'Demo@123456' }
-// Found broken while building this suite (2026-08-10), not usable yet:
-// both timeshare_admin@resortos.local and timeshare_agent@resortos.local
-// have zero active branch memberships in this dev seed and dead-end on
-// /select-branch ("لا يوجد فرع تشغيلي مسند لهذا الحساب"). Real, separate
-// demo-seed gap — flagged, not fixed as part of UX-API-01.
+// This legacy development identity is usable only after the single-branch
+// reconciliation command assigns its El Kheima membership.
 export const TIMESHARE_ADMIN = { username: 'timeshare_admin@resortos.local', password: 'Demo@123456' }
 
 export async function login(
@@ -25,22 +22,15 @@ export async function login(
   // (homeRouteFor), so just wait for the redirect rather than a fixed path.
   await page.waitForURL((url) => !url.pathname.startsWith('/login'), { timeout: 10_000 })
 
-  // An account with >1 active branch membership lands on /select-branch
-  // first (a screen with no LanguageSwitcher — switchLanguage() would hang
-  // here). Branch buttons render before the trailing logout button
-  // (BranchSelectionView.vue) once the async branches fetch resolves, so
-  // more than one button means a real branch is present, not just logout.
-  // An account with *zero* branches also lands here but never gains a
-  // second button (empty-state message instead) — the assertion below
-  // fails loudly with that distinction rather than hanging on a click.
+  // Single-branch accounts are auto-bound. Remaining on this route means the
+  // account has zero or multiple memberships and reconciliation is required;
+  // there is intentionally no user-facing branch choice.
   if (page.url().includes('/select-branch')) {
-    await expect(
-      page.locator('button'),
-      `${creds.username} landed on /select-branch with only a logout button — `
-        + 'no active branch membership for this account (see TIMESHARE_ADMIN comment)',
-    ).not.toHaveCount(1)
-    await page.locator('button').first().click()
-    await page.waitForURL((url) => !url.pathname.startsWith('/select-branch'), { timeout: 10_000 })
+    await page.waitForURL((url) => !url.pathname.startsWith('/select-branch'), { timeout: 3_000 }).catch(() => undefined)
+    expect(
+      page.url(),
+      `${creds.username} has an invalid single-branch membership configuration`,
+    ).not.toContain('/select-branch')
   }
 }
 

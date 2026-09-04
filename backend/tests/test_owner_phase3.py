@@ -36,8 +36,15 @@ def _tok(email: str, branch_id: int = 1) -> str:
 import uuid
 
 def _get_or_create_branch(db, code: str = None):
-    """يجيب أو ينشئ branch اختبارية — يتجنّب UNIQUE conflict عند تكرار الـ code."""
+    """يجيب أو ينشئ branch اختبارية — يتجنّب UNIQUE conflict عند تكرار الـ code.
+
+    ⚠️ حسابات 1165/4300 لازم تتزرع هنا دايمًا: test_owner_now_b2b_
+    receivables_per_contract_no_guest_data بتنشئ عقد B2B نشط على الفرع،
+    وpost_b2b_monthly_fees بتفحص كل عقود B2B النشطة عبر كل الفروع بتصميم —
+    أي تست تاني بعدها في نفس الـsuite بينادي الترحيل هيلاقيها ويفشل
+    بـFinancialConfigurationError لو الحسابات مش موجودة."""
     from app.modules.core.models import Branch
+    from app.modules.finance.models import Account
     if code is None:
         code = f"TST-{uuid.uuid4().hex[:6].upper()}"
     existing = db.query(Branch).filter(Branch.code == code).first()
@@ -50,6 +57,11 @@ def _get_or_create_branch(db, code: str = None):
         gm_phone="+201000000000",
     )
     db.add(branch)
+    db.flush()
+    db.add_all([
+        Account(branch_id=branch.id, code="1165", name="ذمم فنادق شريكة (B2B)", account_type="asset"),
+        Account(branch_id=branch.id, code="4300", name="Beach Revenue", account_type="revenue"),
+    ])
     db.flush()
     return branch
 
@@ -211,10 +223,20 @@ def test_owner_now_cash_in_drawers_equals_active_shifts(client, db, setup_db):
 
 
 def test_owner_now_b2b_receivables_per_contract_no_guest_data(client, db, setup_db):
-    """يتحقق من A-4: ذمم B2B مجمّعة per contract — لا تحتوي على بيانات ضيف."""
-    branch = _get_or_create_branch(db)
-    from app.modules.beach.models import B2BContract, B2BContractDay
+    """يتحقق من A-4: ذمم B2B مجمّعة per contract — لا تحتوي على بيانات ضيف.
+
+    2026-08-20: العقد بقى مبلغ شهري ثابت (monthly_fee/monthly_guest_cap
+    بدل daily_quota/entry_price/towel_price اللي اتحذفوا)، والرصيد المستحق
+    بقى مجموع B2BContractMonth.amount (الرسم الشهري المُرحَّل فعليًا عبر
+    services.post_b2b_monthly_fees) بدل B2BContractDay.total_amount القديمة
+    (العمود ده نفسه اتحذف من الموديل). بنولّد رصيد حقيقي هنا بنفس الآلية
+    الحقيقية، مش صف B2BContractMonth مصطنع (journal_entry_id عندها FK
+    إجباري NOT NULL على journal_entries، فمفيش طريقة تانية صحيحة)."""
+    branch = _get_or_create_branch(db)  # حسابات 1165/4300 مزروعة بالفعل هنا
     from datetime import date
+
+    from app.modules.beach import services as beach_services
+    from app.modules.beach.models import B2BContract
 
     owner = _create_owner(db, "now4@test.local", branch.id)
 
@@ -223,27 +245,21 @@ def test_owner_now_b2b_receivables_per_contract_no_guest_data(client, db, setup_
         branch_id=branch.id,
         hotel_name="فندق الاختبار",
         hotel_name_ar="فندق الاختبار",
-        daily_quota=50,
-        entry_price=Decimal("100"),
-        towel_price=Decimal("20"),
+        monthly_fee=Decimal("1000"),
+        monthly_guest_cap=50,
         valid_from=date(2026, 1, 1),
         valid_until=date(2026, 12, 31),
         is_active=True,
         credit_limit=Decimal("5000"),
         is_overdue=False,
-        last_settled_at=date(2026, 7, 1),
+        last_settled_at=date(2026, 6, 1),  # قبل الشهر المُرحَّل تحت — راجع get_b2b_outstanding_balance (period_month > since)
     )
     db.add(contract)
     db.commit()
 
-    # نضيف يوم استخدام بعد last_settled_at
-    day = B2BContractDay(
-        contract_id=contract.id,
-        day=date(2026, 7, 5),
-        checked_in_count=10,
-        total_amount=Decimal("1000"),
-    )
-    db.add(day)
+    # نرحّل الرسم الشهري الثابت (بعد last_settled_at) بنفس آلية الترحيل
+    # الحقيقية — ده اللي بيولّد رصيد B2BContractMonth مستحق فعليًا.
+    beach_services.post_b2b_monthly_fees(db, date(2026, 7, 15))
     db.commit()
 
     resp = client.get(

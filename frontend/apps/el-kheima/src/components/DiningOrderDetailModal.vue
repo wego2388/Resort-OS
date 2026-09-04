@@ -24,7 +24,7 @@ const props = defineProps<{
   tables?: VenueTable[]
   branchId: number | null
 }>()
-const emit = defineEmits<{ close: []; changed: [] }>()
+const emit = defineEmits<{ close: []; changed: []; addItems: [order: DiningOrderDetail] }>()
 
 const { t } = useI18n()
 const { formatDateTime, formatMoney, name } = useStaffFormat()
@@ -403,10 +403,25 @@ const displayedSubtotal = computed(() => {
   return order.value.items.reduce((sum, item) => sum + lineTotal(item), 0)
 })
 
+// ⚠️ باج حقيقي اتصلح: القيمة المخزّنة فعليًا للدفع المقسّم هي
+// "split:cash,card" (تفصيل طرق التحصيل الفعلية، راجع dining.services'
+// order.payment_method = "split:" + ",".join(...)) — مش "split" وحدها. كان
+// بيفشل في المطابقة الحرفية ويطلع النص الخام زي ما هو للمستخدم بدل ترجمته.
+const METHOD_KEYS: Record<string, string> = { credit_account: 'creditAccount' }
+
+function tenderLabel(method: string): string {
+  const key = METHOD_KEYS[method] ?? method
+  const known = ['cash', 'card', 'room', 'wallet', 'creditAccount']
+  return known.includes(key) ? t(`backoffice.pos.payment.methods.${key}`) : method
+}
+
 function paymentMethodLabel(method: string): string {
+  if (method.startsWith('split:')) {
+    const tenders = method.slice('split:'.length).split(',').filter(Boolean).map(tenderLabel)
+    return `${t('backoffice.pos.payment.split')} (${tenders.join(' + ')})`
+  }
   if (method === 'split') return t('backoffice.pos.payment.split')
-  const known = ['cash', 'card', 'room', 'wallet']
-  return known.includes(method) ? t(`backoffice.pos.payment.methods.${method}`) : method
+  return tenderLabel(method)
 }
 </script>
 
@@ -627,6 +642,19 @@ function paymentMethodLabel(method: string): string {
     </div>
 
     <template v-if="order" #footer>
+      <!-- 2026-08-16: كان مفيش أي طريقة تضيف صنف تاني على فاتورة مفتوحة
+      من الشاشة دي خالص — الباك إند (add_items_to_order) كان جاهز
+      ويدعم held/open/in_kitchen/served، الفجوة كانت في الفرونت إند بس. -->
+      <AppButton
+        v-if="['held', 'open', 'in_kitchen', 'served'].includes(order.status) && canApplyDiscount"
+        variant="outline"
+        size="lg"
+        block
+        class="mb-2"
+        @click="emit('addItems', order)"
+      >
+        ➕ {{ t('backoffice.pos.orderDetail.addItems') }}
+      </AppButton>
       <div class="grid grid-cols-2 gap-2">
         <AppButton variant="ghost" size="lg" @click="emit('close')">{{ t('backoffice.pos.close') }}</AppButton>
         <AppButton

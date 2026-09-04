@@ -9,7 +9,7 @@ from fastapi import (
 )
 
 from app.core.deps import (
-    DbDep, get_admin_user, get_current_active_user,
+    DbDep, get_admin_user, get_employee_user,
     get_manager_user,
 )
 from app.modules.hub import crud, services
@@ -43,7 +43,7 @@ def _assert_hub_branch(db, user, branch_id: int, action_desc: str) -> None:
 @router.get("/hub/pages", response_model=PaginatedResponse)
 def list_pages(
     db: DbDep,
-    user=Depends(get_current_active_user),
+    user=Depends(get_employee_user),
     branch_id: int = Query(...),
     published_only: bool = Query(False),
     page_type: Optional[str] = Query(None),
@@ -75,14 +75,14 @@ def _get_page_or_404(db, page_id: int):
 
 
 @router.get("/hub/pages/{page_id}", response_model=HubPageRead)
-def get_page(page_id: int, db: DbDep, user=Depends(get_current_active_user)):
+def get_page(page_id: int, db: DbDep, user=Depends(get_employee_user)):
     p = _get_page_or_404(db, page_id)
     _assert_hub_branch(db, user, p.branch_id, "عرض صفحة موقع")
     return HubPageRead.model_validate(p)
 
 
 @router.get("/hub/pages/slug/{slug}", response_model=HubPageRead)
-def get_page_by_slug(slug: str, db: DbDep, user=Depends(get_current_active_user)):
+def get_page_by_slug(slug: str, db: DbDep, user=Depends(get_employee_user)):
     p = crud.get_page_by_slug(db, slug)
     if not p:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "الصفحة غير موجودة")
@@ -116,7 +116,7 @@ def delete_page(page_id: int, db: DbDep, user=Depends(get_admin_user)):
 @router.get("/hub/offers", response_model=PaginatedResponse)
 def list_offers(
     db: DbDep,
-    user=Depends(get_current_active_user),
+    user=Depends(get_employee_user),
     branch_id: int = Query(...),
     active_only: bool = Query(True),
     offer_type: Optional[str] = Query(None),
@@ -148,7 +148,7 @@ def _get_offer_or_404(db, offer_id: int):
 
 
 @router.get("/hub/offers/{offer_id}", response_model=HubOfferRead)
-def get_offer(offer_id: int, db: DbDep, user=Depends(get_current_active_user)):
+def get_offer(offer_id: int, db: DbDep, user=Depends(get_employee_user)):
     o = _get_offer_or_404(db, offer_id)
     _assert_hub_branch(db, user, o.branch_id, "عرض تفاصيل عرض")
     return HubOfferRead.model_validate(o)
@@ -169,7 +169,7 @@ def update_offer(offer_id: int, data: HubOfferUpdate, db: DbDep, user=Depends(ge
 @router.get("/hub/online-bookings", response_model=PaginatedResponse)
 def list_online_bookings(
     db: DbDep,
-    user=Depends(get_current_active_user),
+    user=Depends(get_employee_user),
     branch_id: int = Query(...),
     status: Optional[str] = Query(None),
     date_from: Optional[date] = Query(None),
@@ -187,7 +187,7 @@ def list_online_bookings(
 @router.post("/hub/online-bookings", response_model=OnlineBookingRead,
              status_code=status.HTTP_201_CREATED)
 def create_online_booking(data: OnlineBookingCreate, db: DbDep,
-                          user=Depends(get_current_active_user)):
+                          user=Depends(get_employee_user)):
     _assert_hub_branch(db, user, data.branch_id, "إنشاء حجز إلكتروني")
     try:
         return services.create_online_booking(db, data)
@@ -203,7 +203,7 @@ def _get_online_booking_or_404(db, booking_id: int):
 
 
 @router.get("/hub/online-bookings/{booking_id}", response_model=OnlineBookingRead)
-def get_online_booking(booking_id: int, db: DbDep, user=Depends(get_current_active_user)):
+def get_online_booking(booking_id: int, db: DbDep, user=Depends(get_employee_user)):
     b = _get_online_booking_or_404(db, booking_id)
     _assert_hub_branch(db, user, b.branch_id, "عرض حجز إلكتروني")
     return OnlineBookingRead.model_validate(b)

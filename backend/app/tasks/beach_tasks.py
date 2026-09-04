@@ -82,3 +82,27 @@ def mark_b2b_overdue(self):
     except Exception as exc:
         logger.error("beach mark_b2b_overdue failed: %s", exc)
         raise self.retry(exc=exc, countdown=600)
+
+
+@celery_app.task(name="app.tasks.beach_tasks.post_b2b_monthly_fees", bind=True, max_retries=3)
+def post_b2b_monthly_fees(self):
+    """
+    كل يوم 2:30 صباحاً — يرحّل الرسم الشهري الثابت (2026-08-20، طلب Mohamed
+    صراحةً — استبدال نموذج عقود B2B) لكل عقد نشط لسه ما ترحّلش له الشهر
+    الحالي. idempotent فعليًا (راجع services.post_b2b_monthly_fees) —
+    تشغيله أكتر من مرة في نفس اليوم/الشهر آمن تمامًا، مش هيرحّل مرتين.
+    """
+    try:
+        from app.core.database import SessionLocal  # noqa: PLC0415
+        today: Optional[date] = business_today(settings.TIMEZONE)
+
+        with SessionLocal() as db:
+            from app.modules.beach.services import post_b2b_monthly_fees as _post_fees  # noqa: PLC0415
+
+            billed = _post_fees(db, today)
+            db.commit()
+            logger.info("B2B monthly fees posted: billed=%s", billed)
+
+    except Exception as exc:
+        logger.error("beach post_b2b_monthly_fees failed: %s", exc)
+        raise self.retry(exc=exc, countdown=600)

@@ -456,6 +456,9 @@ class OrderStatusUpdate(BaseModel):
     charge_to_room_id: int | None = None
     payment_method: str | None = Field(None, pattern=r"^(cash|card|room|wallet|credit_account)$")
     credit_account_id: int | None = Field(None, gt=0)
+    # قناة التحصيل المختارة (صندوق/Visa CIB/...) — اختياري: None يعني
+    # استخدم الـdefault المُعرَّف لهذه الطريقة، وفرع بلا قنوات يشتغل زي الأول.
+    payment_channel_id: int | None = Field(None, gt=0)
     approver_user_id: int | None = Field(None, gt=0)
     approver_pin: str | None = Field(None, min_length=4, max_length=12)
     # POS-03: عملة الدفع الكاش — اختيارية، افتراضية EGP. لو currency ≠ EGP
@@ -501,6 +504,9 @@ class SplitBillPayment(BaseModel):
     # POS-03: عملة الدفع الكاش — اختيارية، افتراضية EGP
     currency: str | None = Field(None, pattern=r"^[A-Z]{3}$")
     fx_rate:  Decimal | None = Field(None, gt=0)
+    # قناة التحصيل لهذا الصف بالذات — كل صف في التقسيم ممكن يستخدم قناة
+    # مختلفة (كاش من الصندوق + كارت عبر Visa CIB مثلاً).
+    payment_channel_id: int | None = Field(None, gt=0)
 
     @model_validator(mode="after")
     def _validate_fx(self) -> SplitBillPayment:
@@ -851,11 +857,11 @@ class HotelConsumptionRow(BaseModel):
     total_orders:       int
     total_guests:       int           # مجموع guests_count على الطلبات
     total_revenue:      Decimal
-    # مقارنة بقيمة العقد (entry_price × daily_quota × أيام الفترة)
-    # nullable لأن daily_quota/entry_price حقول الشاطئ مش الدايننج —
-    # بس بيديك فكرة: "الفندق ده بيكسبني ولا لا؟"
-    contract_daily_quota:    int
-    contract_entry_price:    Decimal
+    # مقارنة بقيمة العقد (المبلغ الشهري الثابت + الحد الأقصى الاسترشادي —
+    # راجع beach.models.B2BContract، 2026-08-20) — بيديك فكرة: "الفندق ده
+    # استهلاك الدايننج بتاعه معقول بالنسبة لعقده الأساسي ولا لا؟"
+    contract_monthly_guest_cap: int
+    contract_monthly_fee:       Decimal
     # تفصيل لكل منفذ (مطعم/كافيه) بشكل منفصل
     by_outlet: list[HotelOutletBreakdown] = Field(default_factory=list)
 

@@ -5,10 +5,11 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.modules.beach.models import (
-    B2BContract, B2BContractDay,
+    B2BContract, B2BContractDay, B2BContractMonth,
     BeachInventory, BeachLocation, BeachReservation, BeachTransaction,
 )
 from app.modules.beach.schemas import (
@@ -18,6 +19,17 @@ from app.modules.beach.schemas import (
 
 # ── BeachInventory ────────────────────────────────────────────────────
 
+def get_inventory(db: Session, branch_id: int, inv_date: date) -> Optional[BeachInventory]:
+    return (
+        db.query(BeachInventory)
+        .filter(
+            BeachInventory.branch_id == branch_id,
+            BeachInventory.inventory_date == inv_date,
+        )
+        .first()
+    )
+
+
 def get_or_create_inventory(
     db: Session,
     branch_id: int,
@@ -25,21 +37,33 @@ def get_or_create_inventory(
     capacity_max: int = 200,
     towels_total: int = 200,
 ) -> BeachInventory:
-    row = (
-        db.query(BeachInventory)
-        .filter(BeachInventory.branch_id == branch_id, BeachInventory.inventory_date == inv_date)
-        .first()
+    """⚠️ باج حقيقي اتصلح هنا: check-then-insert بسيط من غير أي حماية —
+    أول بيعتين في نفس اليوم بالظبط (زي الساعة 6 الصبح لما أول كاشير يفتح
+    الشاشة) ممكن الاتنين يقروا row=None في نفس اللحظة، فيحاولوا يعملوا
+    INSERT مرتين لنفس (branch_id, inventory_date) — الصف الأول ينجح، التاني
+    كان بيرمي IntegrityError خام (500 غير متوقع) بدل ما يتعامل مع السباق
+    ويرجّع نفس صف اليوم اللي اتعمل بالفعل. الحل: SAVEPOINT (begin_nested)
+    حوالين الـINSERT بس — لو اتصادم، بنرجّع للـSAVEPOINT فقط (مش
+    db.rollback() الكامل، اللي كان هيمسح أي تعديلات تانية غير ملتزمة لسه
+    في نفس الـtransaction الأكبر، زي أصناف سابقة في سلة atomic)."""
+    row = get_inventory(db, branch_id, inv_date)
+    if row:
+        return row
+    row = BeachInventory(
+        branch_id=branch_id,
+        inventory_date=inv_date,
+        capacity_max=capacity_max,
+        towels_total=towels_total,
+        towels_available=towels_total,
     )
-    if not row:
-        row = BeachInventory(
-            branch_id=branch_id,
-            inventory_date=inv_date,
-            capacity_max=capacity_max,
-            towels_total=towels_total,
-            towels_available=towels_total,
-        )
-        db.add(row)
-        db.flush()
+    try:
+        with db.begin_nested():
+            db.add(row)
+            db.flush()
+    except IntegrityError:
+        row = get_inventory(db, branch_id, inv_date)
+        if row is None:
+            raise
     return row
 
 
@@ -122,6 +146,18 @@ def get_transaction(db: Session, tx_id: int) -> Optional[BeachTransaction]:
 
 def get_transaction_by_local_id(db: Session, local_id: str) -> Optional[BeachTransaction]:
     return db.query(BeachTransaction).filter(BeachTransaction.client_local_id == local_id).first()
+
+
+def get_transactions_by_cart_local_id(db: Session, cart_local_id: str) -> list[BeachTransaction]:
+    """كل تذاكر سلة atomic اتسجّلت بمفتاح idempotency السلة ده — كل صنف بيتخزّن
+    بـclient_local_id = f"{cart_local_id}:{index}" (راجع services.sell_cart).
+    إما الكل موجود (السلة اتسجّلت بنجاح) أو ولا واحد (rollback كامل)."""
+    return (
+        db.query(BeachTransaction)
+        .filter(BeachTransaction.client_local_id.like(f"{cart_local_id}:%"))
+        .order_by(BeachTransaction.id)
+        .all()
+    )
 
 
 def void_transaction(db: Session, tx: BeachTransaction, voided_by: int, reason: str) -> BeachTransaction:
@@ -213,6 +249,9 @@ def get_eod_breakdown(db: Session, branch_id: int, tx_date: date) -> dict:
         "total_entries": sum(r.quantity for r in rows if r.tx_type in entry_types),
         "total_revenue": sum((r.total_amount for r in rows if r.tx_type != "towel_return"), Decimal("0")),
         "b2b_entries":   sum(r.quantity for r in b2b_rows if r.tx_type in entry_types),
+        # 2026-08-20: دايمًا 0 دلوقتي — عقود B2B بقت بمبلغ شهري ثابت
+        # (راجع models.B2BContract)، مفيش قيمة مالية لكل تشيك-إن. الإيراد
+        # الحقيقي بيترحّل شهريًا (services.post_b2b_monthly_fees)، مش هنا.
         "b2b_revenue":   sum((r.total_amount for r in b2b_rows), Decimal("0")),
         "voided_count":  voided_count,
     }
@@ -222,6 +261,23 @@ def get_eod_breakdown(db: Session, branch_id: int, tx_date: date) -> dict:
 
 def get_b2b_contract(db: Session, contract_id: int) -> Optional[B2BContract]:
     return db.query(B2BContract).filter(B2BContract.id == contract_id).first()
+
+
+def lock_b2b_contract_for_update(db: Session, contract_id: int) -> Optional[B2BContract]:
+    """SELECT ... FOR UPDATE NOWAIT — يقفل صف العقد طوال التسوية (مراجعة
+    Codex 2026-08-30، H-04) عشان يمنع تسويتين متزامنتين لنفس العقد (double
+    settlement: القيدين اتنين بيترحّلوا، وآخر تحديث لـ`last_settled_at`
+    بيكسب بصمت). نفس نمط lock_contract_day_for_update/
+    lock_inventory_for_update بالظبط، بما فيها `.populate_existing()`
+    لنفس السبب (قراءة سابقة غير مقفولة قبل القفل ممكن تسيب قيمة قديمة في
+    identity map الـ Session)."""
+    return (
+        db.query(B2BContract)
+        .filter(B2BContract.id == contract_id)
+        .populate_existing()
+        .with_for_update(nowait=True)
+        .first()
+    )
 
 
 def list_b2b_contracts(
@@ -311,24 +367,21 @@ def lock_contract_day_for_update(db: Session, row_id: int) -> Optional[B2BContra
 
 
 def increment_b2b_checkins(
-    db: Session, contract_id: int, day: date, count: int, amount: Decimal
+    db: Session, contract_id: int, day: date, count: int,
 ) -> B2BContractDay:
+    """2026-08-20: عدّاد هيدكاونت بحت دلوقتي — مفيش مبلغ لكل تشيك-إن في
+    نموذج المبلغ الشهري الثابت (راجع models.B2BContract)."""
     row = get_or_create_contract_day(db, contract_id, day)
     row.checked_in_count += count
-    row.total_amount += amount
     db.flush()
     return row
 
 
 def decrement_b2b_checkins(
-    db: Session, contract_id: int, day: date, count: int, amount: Decimal
+    db: Session, contract_id: int, day: date, count: int,
 ) -> Optional[B2BContractDay]:
     """يعكس increment_b2b_checkins — بيُستدعى عند إلغاء عملية تشيك-إن B2B
-    (services.void_transaction). ⚠️ باج حقيقي كان هنا قبل التعديل الحالي:
-    إلغاء عملية شاطئ B2B كان بيعكس الـ inventory والقيد المحاسبي، بس مايلمسش
-    B2BContractDay.checked_in_count/total_amount خالص — يعني الرصيد المستحق
-    على الفندق الشريك (المستخدم دلوقتي في حساب حد الائتمان والتأخر) كان
-    هيفضل متضخّم للأبد حتى بعد الإلغاء الفعلي."""
+    (services.void_transaction)."""
     row = (
         db.query(B2BContractDay)
         .filter(B2BContractDay.contract_id == contract_id, B2BContractDay.day == day)
@@ -337,7 +390,59 @@ def decrement_b2b_checkins(
     if not row:
         return None
     row.checked_in_count = max(0, row.checked_in_count - count)
-    row.total_amount = max(Decimal("0"), row.total_amount - amount)
+    db.flush()
+    return row
+
+
+def get_b2b_checked_in_count_for_month(
+    db: Session, contract_id: int, month_start: date, month_end: date,
+) -> int:
+    """إجمالي عدد الضيوف اللي دخلوا خلال شهر معيّن (بما فيهم كل الأيام من
+    ``month_start`` لحد ``month_end``) — يُستخدم لتحذير اقتراب الحد الشهري
+    (services.b2b_checkin) ولقطة guests_count وقت الترحيل الشهري
+    (services.post_b2b_monthly_fees)."""
+    from sqlalchemy import func as sa_func  # noqa: PLC0415
+
+    total = (
+        db.query(sa_func.coalesce(sa_func.sum(B2BContractDay.checked_in_count), 0))
+        .filter(
+            B2BContractDay.contract_id == contract_id,
+            B2BContractDay.day >= month_start,
+            B2BContractDay.day <= month_end,
+        )
+        .scalar()
+    )
+    return int(total or 0)
+
+
+# ── B2BContractMonth (ترحيل الرسم الشهري الثابت) ───────────────────────
+
+def get_b2b_contract_month(
+    db: Session, contract_id: int, period_month: date,
+) -> Optional[B2BContractMonth]:
+    return (
+        db.query(B2BContractMonth)
+        .filter(
+            B2BContractMonth.contract_id == contract_id,
+            B2BContractMonth.period_month == period_month,
+        )
+        .first()
+    )
+
+
+def create_b2b_contract_month(
+    db: Session, contract_id: int, period_month: date,
+    guests_count: int, amount: Decimal, journal_entry_id: int,
+) -> B2BContractMonth:
+    """إنشاء صف ترحيل شهري — idempotent فعليًا بـ UniqueConstraint
+    (contract_id, period_month) على مستوى الداتابيز؛ راجع
+    services.post_b2b_monthly_fees للتحقق قبل الاستدعاء (get_b2b_contract_month)."""
+    row = B2BContractMonth(
+        contract_id=contract_id, period_month=period_month,
+        guests_count=guests_count, amount=amount, journal_entry_id=journal_entry_id,
+        billed_at=datetime.utcnow(),
+    )
+    db.add(row)
     db.flush()
     return row
 
@@ -345,37 +450,43 @@ def decrement_b2b_checkins(
 # ── B2B credit / dunning ──────────────────────────────────────────────
 
 def get_b2b_outstanding_balance(
-    db: Session, contract_id: int, since: Optional[date] = None
+    db: Session, contract_id: int, since: Optional[date] = None, through: Optional[date] = None,
 ) -> Decimal:
-    """مجموع B2BContractDay.total_amount لكل الأيام بعد آخر تسوية
+    """مجموع B2BContractMonth.amount لكل شهر اتُرحّل بعد آخر تسوية
     (``since`` = contract.last_settled_at) — الرصيد المستحق الحالي على
     الفندق الشريك. ``since=None`` يعني لسه مفيش تسوية من بداية العقد، فكل
-    الأيام المسجّلة تدخل في الحساب."""
-    q = db.query(B2BContractDay).filter(B2BContractDay.contract_id == contract_id)
+    الشهور المُرحَّلة تدخل في الحساب.
+
+    ``through`` (مراجعة Codex 2026-08-30، H-04): كان غايب تمامًا قبل كده —
+    يعني تسوية جزئية/بتاريخ سابق (settled_through أقدم من النهاردة) كانت
+    بتجمع كل الشهور المُرحَّلة **حتى المستقبلية** بدل ما تقف عند التاريخ
+    المطلوب فعليًا، فتحصيل شهر واحد كان ممكن "يبلع" شهور تالية معاه بالغلط."""
+    q = db.query(B2BContractMonth).filter(B2BContractMonth.contract_id == contract_id)
     if since:
-        q = q.filter(B2BContractDay.day > since)
-    return sum((row.total_amount for row in q.all()), Decimal("0"))
+        q = q.filter(B2BContractMonth.period_month > since)
+    if through:
+        q = q.filter(B2BContractMonth.period_month <= through)
+    return sum((row.amount for row in q.all()), Decimal("0"))
 
 
-def get_b2b_oldest_unsettled_day(
+def get_b2b_oldest_unsettled_month(
     db: Session, contract_id: int, since: Optional[date] = None
 ) -> Optional[date]:
-    """أقدم يوم فيه رصيد غير مسوّى (total_amount > 0) بعد آخر تسوية — يُستخدم
-    لحساب هل العقد تخطّى مهلة السداد (payment_terms_days) ولا لأ."""
-    q = (
-        db.query(B2BContractDay)
-        .filter(B2BContractDay.contract_id == contract_id, B2BContractDay.total_amount > 0)
-    )
+    """أقدم شهر مُرحَّل ولسه مش متسوّى بعد آخر تسوية — يُستخدم لحساب هل
+    العقد تخطّى مهلة السداد (payment_terms_days) ولا لأ."""
+    q = db.query(B2BContractMonth).filter(B2BContractMonth.contract_id == contract_id)
     if since:
-        q = q.filter(B2BContractDay.day > since)
-    row = q.order_by(B2BContractDay.day.asc()).first()
-    return row.day if row else None
+        q = q.filter(B2BContractMonth.period_month > since)
+    row = q.order_by(B2BContractMonth.period_month.asc()).first()
+    return row.period_month if row else None
 
 
 def settle_b2b_contract(db: Session, contract: B2BContract, settled_through: date) -> B2BContract:
     """يسجّل إن رصيد العقد اتسوّى (اتحصّل) بالكامل لحد تاريخ ``settled_through``
-    — بيصفّر الرصيد المستحق فعليًا (كل الأيام لحد كده هتتجاهل في الحسابات
-    الجاية) وبيلغي أي علم تأخر سابق."""
+    — بيصفّر الرصيد المستحق فعليًا (كل الشهور المُرحَّلة لحد كده هتتجاهل في
+    الحسابات الجاية) وبيلغي أي علم تأخر سابق. القيد المحاسبي العكسي
+    (Dr. حساب التحصيل / Cr. 1165) بيترحّل في services.settle_b2b_contract
+    قبل ما ينادي هنا، مش هنا — دي طبقة تخزين بحتة."""
     contract.last_settled_at = settled_through
     contract.is_overdue = False
     contract.notified_overdue = False
@@ -383,10 +494,11 @@ def settle_b2b_contract(db: Session, contract: B2BContract, settled_through: dat
     return contract
 
 
-def list_active_b2b_contracts_for_overdue_check(db: Session) -> list[B2BContract]:
-    """كل عقود B2B النشطة عبر كل الفروع — يُستخدم في مهمة Celery الدورية
-    (نفس نمط timeshare_tasks._mark_overdue اللي بيمشي على كل العقود
-    النشطة من غير فلترة فرع، لأنها مهمة خلفية شاملة مش endpoint لفرع معين)."""
+def list_active_b2b_contracts(db: Session) -> list[B2BContract]:
+    """كل عقود B2B النشطة عبر كل الفروع — يُستخدم في مهمتي Celery الدوريتين
+    (تأخر السداد + الترحيل الشهري، نفس نمط timeshare_tasks._mark_overdue
+    اللي بيمشي على كل العقود النشطة من غير فلترة فرع، لأنها مهام خلفية
+    شاملة مش endpoint لفرع معين)."""
     return db.query(B2BContract).filter(B2BContract.is_active.is_(True)).all()
 
 

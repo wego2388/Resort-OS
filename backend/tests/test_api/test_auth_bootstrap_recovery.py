@@ -89,6 +89,16 @@ class TestPrivilegedBootstrap:
         email = f"named-owner-{uuid.uuid4().hex}@test.local"
         db = TestingSessionLocal()
         try:
+            from app.modules.core.models import Branch
+
+            branch = Branch(
+                name="El Kheima Beach Resort",
+                name_ar="الخيمة بيتش ريزورت",
+                code=f"OWN-{uuid.uuid4().hex[:6].upper()}",
+                is_active=True,
+            )
+            db.add(branch)
+            db.commit()
             result = _service(db).provision_account_bootstrap(
                 email=email,
                 full_name="Named Owner Operator",
@@ -102,9 +112,16 @@ class TestPrivilegedBootstrap:
         db = TestingSessionLocal()
         try:
             user = db.query(User).filter(User.email == email).one()
+            from app.modules.core.models import UserBranchMembership
+
             assert user.role == "owner"
             assert user.must_change_password is True
             assert user.two_factor_bootstrap_required is True
+            membership = db.query(UserBranchMembership).filter(
+                UserBranchMembership.user_id == user.id,
+            ).one()
+            assert membership.is_active is True
+            assert membership.is_default is True
             audit = db.query(AuditLog).filter(
                 AuditLog.entity_id == user.id,
                 AuditLog.action == "owner_bootstrap_created",

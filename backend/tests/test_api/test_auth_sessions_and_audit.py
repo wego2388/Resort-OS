@@ -103,8 +103,9 @@ class TestUnifiedAuthAudit:
 
     def test_known_account_failure_and_lockout_are_audited(self, setup_db):
         user_id, email = _create_user()
-        # Five wrong passwords → lockout on the fifth.
-        for _ in range(5):
+        # Use the configured threshold: local/CI environments may override
+        # the production default, but the lockout invariant stays identical.
+        for _ in range(settings.MAX_LOGIN_ATTEMPTS):
             db = TestingSessionLocal()
             try:
                 with pytest.raises(Exception):

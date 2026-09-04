@@ -73,3 +73,67 @@
     color: inherit;
   }
 }
+
+/* High-density back-office tables become readable stacked cards on phones.
+ * Each cell supplies its localized label through data-label; desktop/tablet
+ * retain the normal table and horizontal density. */
+@media (max-width: 767px) {
+  .responsive-card-table {
+    display: block;
+    min-width: 0 !important;
+    width: 100%;
+  }
+
+  .responsive-card-table thead {
+    display: none;
+  }
+
+  .responsive-card-table tbody {
+    display: grid;
+    gap: 0.75rem;
+    padding: 0.75rem;
+  }
+
+  .responsive-card-table tbody tr {
+    display: block;
+    overflow: hidden;
+    border: 1px solid rgb(var(--color-border));
+    border-radius: 0.875rem;
+    background: rgb(var(--color-surface));
+  }
+
+  .responsive-card-table tbody td {
+    display: grid;
+    grid-template-columns: minmax(6.5rem, 38%) minmax(0, 1fr);
+    align-items: center;
+    gap: 0.75rem;
+    width: 100%;
+    padding: 0.625rem 0.75rem;
+    white-space: normal;
+    border-top: 1px solid rgb(var(--color-border) / 0.55);
+  }
+
+  .responsive-card-table tbody td::before {
+    content: attr(data-label);
+    color: rgb(var(--color-muted));
+    font-size: 0.6875rem;
+    font-weight: 700;
+  }
+
+  .responsive-card-table tbody td[data-primary],
+  .responsive-card-table tbody td[data-actions],
+  .responsive-card-table tbody td[data-empty] {
+    display: block;
+  }
+
+  .responsive-card-table tbody td[data-primary] {
+    border-top: 0;
+    padding-block: 0.875rem;
+  }
+
+  .responsive-card-table tbody td[data-primary]::before,
+  .responsive-card-table tbody td[data-actions]::before,
+  .responsive-card-table tbody td[data-empty]::before {
+    content: none;
+  }
+}

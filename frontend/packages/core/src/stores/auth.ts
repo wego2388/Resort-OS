@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { api, setApiToken, registerAuthClearHandler } from '../api/client'
+import { api, setApiToken, registerAuthClearHandler, refreshAccessToken } from '../api/client'
 import { ENDPOINTS } from '../api/endpoints'
 import type { User } from '../types'
 
@@ -186,7 +186,7 @@ export const useAuthStore = defineStore('auth', () => {
   const roleLevel = computed(() => ROLE_LEVELS[role.value] ?? -1)
 
   // Mirrors backend app/core/deps.py::MANDATORY_2FA_ROLES
-  const MANDATORY_2FA_ROLES = new Set(['super_admin', 'accountant'])
+  const MANDATORY_2FA_ROLES = new Set(['super_admin', 'accountant', 'owner'])
 
   const needsTwoFactorSetup = computed(
     () => !!user.value && MANDATORY_2FA_ROLES.has(role.value) && !user.value.two_factor_enabled,
@@ -307,8 +307,10 @@ export const useAuthStore = defineStore('auth', () => {
     isLoading.value = true
     try {
       const form = new URLSearchParams()
-      form.append('username', username.trim())
-      form.append('password', password.trim())
+      form.append('username', username.trim().toLocaleLowerCase('en-US'))
+      // Passwords are opaque. The backend change/reset flows preserve edge
+      // whitespace, so login must send the exact value the user entered.
+      form.append('password', password)
       if (otpCode) form.append('otp_code', otpCode.trim())
       if (recoveryCode) form.append('recovery_code', recoveryCode.trim())
       if (enrollmentToken) form.append('enrollment_token', enrollmentToken.trim())
@@ -333,10 +335,10 @@ export const useAuthStore = defineStore('auth', () => {
   // لو ما فيش cookie صالح يرجع false والـ router guard بيودّي /login.
   async function initAuth(): Promise<boolean> {
     try {
-      const res = await api.post(ENDPOINTS.auth.refresh, {}, { withCredentials: true })
+      const accessToken = await refreshAccessToken()
       await clearIdentityBoundClientState()
       _clearBootstrap()
-      _setToken(res.data.access_token)
+      _setToken(accessToken)
       // CX-02C: single bootstrap call after token refresh — replaces
       // the separate fetchUser() + branch-guessing that was here before.
       await fetchBootstrap()

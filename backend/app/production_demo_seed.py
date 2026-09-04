@@ -1098,10 +1098,13 @@ def _seed_beach_reference_data(db: Session, branch_id: int) -> None:
         )
         .first()
     ):
-        for index, (name, name_ar, quota, price) in enumerate(
+        # 2026-08-20: نموذج العقد بقى مبلغ شهري ثابت + حد أقصى استرشادي —
+        # القيم دي معادِلة اقتصاديًا لقيم العرض القديمة (سعر يومي × حصة ×
+        # 30 يوم)، نفس صيغة الـ backfill في migration 45aabf472620.
+        for index, (name, name_ar, monthly_fee, guest_cap) in enumerate(
             [
-                ("Demo Coral Partner Hotel", "فندق كورال الشريك — عرض", 40, "120"),
-                ("Demo Palm Partner Hotel", "فندق بالم الشريك — عرض", 20, "100"),
+                ("Demo Coral Partner Hotel", "فندق كورال الشريك — عرض", "144000", 1200),
+                ("Demo Palm Partner Hotel", "فندق بالم الشريك — عرض", "60000", 600),
             ]
         ):
             db.add(
@@ -1110,9 +1113,8 @@ def _seed_beach_reference_data(db: Session, branch_id: int) -> None:
                     hotel_name=name,
                     hotel_name_ar=name_ar,
                     contact_phone=None,
-                    daily_quota=quota,
-                    entry_price=Decimal(price),
-                    towel_price=Decimal(30),
+                    monthly_fee=Decimal(monthly_fee),
+                    monthly_guest_cap=guest_cap,
                     valid_from=_today(),
                     valid_until=_today() + timedelta(days=365),
                     is_active=False,

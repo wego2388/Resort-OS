@@ -2,8 +2,8 @@
 
 > **Translation status:** This English guide is a legacy summary and does not
 > describe every current screen. The authoritative operating and training
-> guide is `manual/02-دليل-الموظفين-والتدريب.md` (Arabic, updated 3 August
-> 2026 — covers Timeshare owner portal, HR search/status changes, payroll
+> guide is `manual/02-دليل-الموظفين-والتدريب.md` (Arabic, updated 14 August
+> 2026 — covers single-branch login, Timeshare owner portal, HR, payroll
 > downloads, and more that this English file does not). Follow the Arabic
 > guide and record the English translation gap during UAT.
 > Find your role below. Read only your section.
@@ -25,8 +25,10 @@
 | Waiter / Floor Service | `waiter` | [→ Waiter](#waiter) |
 | Chef / Kitchen Staff | `chef` / `kitchen` | [→ Kitchen](#chef--kitchen) |
 | Inventory / Purchasing | `manager` or above | [→ Inventory](#inventory--purchasing-supervisor) |
-| Timeshare Collection | `cashier` | [→ Timeshare Agent](#timeshare_agent) |
+| Timeshare Manager | `timeshare_admin` | [→ Timeshare Team](#timeshare-team) |
+| Timeshare Visits / Support | `timeshare_agent` | [→ Timeshare Team](#timeshare-team) |
 | Employee (self-service) | `employee` | [→ Employee](#employee) |
+| Resort Owner (read-only) | `owner` | `https://owner.elkheima.com` |
 
 ---
 
@@ -35,7 +37,7 @@
 1. Open the app link and enter your email + temporary password.
 2. You will be forced to change your password. Choose something you will
    remember — minimum 8 characters.
-3. **Accountant and super\_admin:** after changing your
+3. **Accountant, super\_admin, and owner:** after changing your
    password you will be taken to the 2FA setup screen. Scan the QR code with
    Google Authenticator or Authy. Write down the recovery codes and keep them
    safe. You will need a 6-digit code from the app every time you log in.
@@ -45,7 +47,7 @@
 
 ## manager / admin
 
-**Home screen:** `/admin/dashboard`
+**Home screen:** `/admin/finance`
 
 ### Daily tasks
 
@@ -162,7 +164,7 @@ lower-level staff member requests them:
 | Salary Advances | Admin → HR → Salary Advances | Advances and deductions |
 | Penalties | Admin → HR → Penalties | Penalty records |
 | Rota | Admin → HR → Rota | Shift scheduling and templates |
-| Tax Config | Admin → HR → Config | Tax brackets, social insurance |
+| Tax Config | Admin → HR → Config | Internal payroll configuration; not a statutory Egyptian tax/insurance filing without professional approval |
 | Leaderboard | Admin → HR → Leaderboard | Staff performance ranking |
 
 ### Requires manager (admin) approval
@@ -412,14 +414,15 @@ The KDS shows tickets for all stations by default. To see only your station
 
 ---
 
-## timeshare\_agent
+## timeshare team
 
 **Home screen:** `/admin/timeshare`
 
 ### Daily tasks
 
 - Review upcoming visits (Timeshare → Upcoming Visits).
-- Process installment payments for today's due amounts.
+- Review installment and maintenance due amounts. Agents do not collect by
+  default; collection belongs to `timeshare_admin`.
 - Update visit status after guest check-in.
 
 ### Your screens
@@ -427,13 +430,14 @@ The KDS shows tickets for all stations by default. To see only your station
 | Screen | Path | What you do there |
 |---|---|---|
 | Contracts | Admin → Timeshare → Contracts | All timeshare contracts |
-| Installments | Admin → Timeshare → Installments | Payment schedule, collect payment |
+| Installments | Admin → Timeshare → Installments | Payment schedule; manager-only collection unless the named agent has an explicit grant |
 | Visits | Admin → Timeshare → Visits | Book and manage unit visits |
 | Units | Admin → Timeshare → Units | Available unit types and weeks |
 | Waitlist | Admin → Timeshare → Waitlist | Guests waiting for specific weeks |
 | Sales Dashboard | Admin → Timeshare → Sales Dashboard | Pipeline and performance |
 | Calendar | Admin → Timeshare → Calendar | Visual week availability |
-| CRM | Admin → CRM | Customer profiles, leads, interactions |
+| Support | Admin → Timeshare → Support | Reply to contract-owner support tickets |
+| Visit Requests | Admin → Timeshare → Visit Requests | Schedule; manager approves or rejects |
 
 ### Requires manager approval
 
@@ -443,8 +447,8 @@ The KDS shows tickets for all stations by default. To see only your station
 
 ### Tips
 
-- Installment payments: Timeshare → Installments → find due item → Pay.
-  Choose payment method (cash / card / transfer).
+- Installment payments: a `timeshare_admin` (or explicitly named agent) opens
+  the due item and uses **card or bank transfer only**. Cash is not available.
 - After collecting payment, the folio updates automatically.
 - Survey: after a visit completes, a WhatsApp survey can be sent automatically
   if configured. You can also trigger it manually from Visits → Send Survey.
@@ -497,8 +501,8 @@ or manager approval:
 | Transaction not showing after posting | Refresh the page. If still missing after 1 minute, report to your supervisor |
 | App offline / can't connect | Check your internet. Beach POS has offline mode — orange sync icon means transactions are queued and will sync automatically |
 | Forgot password | Go to `/forgot-password`. An email will be sent with a reset link |
-| Lost TOTP device | Contact your manager or super-admin — they will deactivate your account and create a new one for you |
+| Lost TOTP device | Contact a super-admin for Force 2FA Reset. Mandatory roles receive a fresh one-time enrollment token and all old sessions are revoked |
 
 ---
 
-*App version: Resort OS 2026-07 | For technical issues contact your system administrator.*
+*App version: Resort OS readiness guide — 14 August 2026 | For technical issues contact your system administrator.*

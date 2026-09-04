@@ -6,7 +6,7 @@ Generic repository base + UserRepository.
 from datetime import datetime, timezone
 from typing import Generic, List, Optional, Type, TypeVar
 
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 T = TypeVar("T")
@@ -163,14 +163,16 @@ class UserRepository(BaseRepository):
         super().__init__(model, db)
 
     def get_by_email(self, email: str):
-        q = self.db.query(self.model).filter(self.model.email == email)
+        normalized = (email or "").strip().casefold()
+        q = self.db.query(self.model).filter(func.lower(self.model.email) == normalized)
         if hasattr(self.model, "deleted_at"):
             q = q.filter(self.model.deleted_at.is_(None))
         return q.first()
 
     def get_active_by_email(self, email: str):
+        normalized = (email or "").strip().casefold()
         return self.db.query(self.model).filter(
-            self.model.email == email,
+            func.lower(self.model.email) == normalized,
             self.model.is_active == True,  # noqa: E712
         ).first()
 

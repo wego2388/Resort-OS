@@ -56,6 +56,19 @@ def _mark_overdue(db, today: date) -> int:
     from app.resort_os.timeshare_engine import should_freeze_booking  # noqa: PLC0415
     from decimal import Decimal  # noqa: PLC0415
 
+    # ⚠️ باج حقيقي كان هنا (تدقيق ما قبل الإطلاق 2026-08-28): الاستعلام ده
+    # كان بيعلّم أي قسط متأخر بغض النظر عن حالة العقد نفسه — cancel_contract
+    # بيحطّ contract.status="cancelled" بس ملوش أي أثر على أقساطه (لسه
+    # pending/partial زي ما هي، مفيش سبب لتغييرها وقت الإلغاء نفسه). يعني
+    # عقد اتلغى من شهور كان أقساطه المتبقية بتتعلّم "overdue" كل يوم للأبد،
+    # فتضخّم أي تقرير/عدّاد "أقساط متأخرة" برقم وهمي. نفس فلتر status==
+    # "active" المستخدم أصلاً في حلقة تجميد الحجز تحت — قسط عقد مش نشط
+    # مش متأخر بمعنى حقيقي (مفيش حاجة تُجمَّد أو تُحصَّل منه أصلاً).
+    active_contract_ids = {
+        row[0] for row in db.query(TimeshareContract.id)
+        .filter(TimeshareContract.status == "active").all()
+    }
+
     # تحديث الأقساط المتأخرة — بما فيها اللي سُدِّدت جزئياً (partial) ولسه متأخرة،
     # وإلا القسط ده مش هيتحسب أبداً في overdue_total تحت (اللي بيفلتر status=="overdue"
     # بس)، فعقد فيه قسط مدفوع جزئياً ومتأخر ميتجمّدش حقه في الحجز رغم إنه متأخر فعلاً.
@@ -64,9 +77,10 @@ def _mark_overdue(db, today: date) -> int:
         .filter(
             TimeshareInstallment.due_date < today,
             TimeshareInstallment.status.in_(["pending", "partial"]),
+            TimeshareInstallment.contract_id.in_(active_contract_ids),
         )
         .all()
-    )
+    ) if active_contract_ids else []
     for inst in overdue_insts:
         inst.status = "overdue"
 
@@ -76,9 +90,10 @@ def _mark_overdue(db, today: date) -> int:
         .filter(
             TimeshareMaintenanceDue.due_date < today,
             TimeshareMaintenanceDue.status.in_(["pending", "partial"]),
+            TimeshareMaintenanceDue.contract_id.in_(active_contract_ids),
         )
         .all()
-    )
+    ) if active_contract_ids else []
     for due in overdue_dues:
         due.status = "overdue"
 

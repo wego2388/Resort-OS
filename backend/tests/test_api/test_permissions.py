@@ -85,18 +85,6 @@ def _outlet_and_item_committed(db, branch):
     return outlet, item
 
 
-def _set_manager_pin(db, pin: str) -> int:
-    """راجع test_restaurant_http.py::_set_pin لنفس المنطق — بيستخدم حساب
-    manager@test.local (بيتعمل عبر fixture manager_headers)."""
-    from app.core.kernel.models.user import User
-    from app.modules.core import services as core_services
-
-    user = db.query(User).filter(User.email == "manager@test.local").first()
-    core_services.set_pin(db, user.id, pin, created_by=user.id)
-    db.commit()
-    return user.id
-
-
 def _create_order(client: TestClient, outlet_id: int, item_id: int, headers: dict) -> dict:
     resp = client.post(
         f"/api/v1/dining/outlets/{outlet_id}/orders",
@@ -167,14 +155,21 @@ class TestExplicitOverrideEndToEnd:
         super_admin_headers المشترك) — يصدر step-up token واحد بس هنا،
         فمفيش خطر تصادم إعادة استخدام كود مع اختبار تاني."""
         from tests.conftest import _create_test_user, _make_token
+        from app.modules.core import services as core_services
         email = f"perm-waiter-{uuid.uuid4().hex[:6]}@test.local"
         waiter_id = _create_test_user(email, "waiter")
         custom_headers = {"Authorization": f"Bearer {_make_token(email)}"}
-        manager_id = _set_manager_pin(db, "1234")
+        # SEC-07: المعتمِد لازم يكون عضو فعليًا في نفس الفرع — مدير معزول
+        # مش manager@test.local المشتركة (UserBranchMembership عضوية واحدة
+        # بس لكل مستخدم، وتستات تانية بتربطها بفروع مختلفة تمامًا).
+        manager_id = _create_test_user(f"perm-mgr-{uuid.uuid4().hex[:6]}@test.local", "manager")
+        core_services.set_pin(db, manager_id, "1234", created_by=manager_id)
+        db.commit()
         _sa_id, sa_headers, sa_secret = _fresh_super_admin("grant-actor")
 
         branch = _branch_committed(db)
         _link_user_to_branch(db, waiter_id, branch.id)  # High 5: void بيفرض فحص الفرع
+        _link_user_to_branch(db, manager_id, branch.id)  # SEC-07: المعتمِد لازم يكون عضو فعليًا في نفس الفرع
         outlet, item = _outlet_and_item_committed(db, branch)
         order = _create_order(client, outlet.id, item.id, custom_headers)
         order_item_id = order["items"][0]["id"]
@@ -253,16 +248,22 @@ class TestExplicitOverrideEndToEnd:
         )
         assert resp.status_code == 403
 
-    def test_revoke_restores_role_fallback(self, client: TestClient, db, manager_headers):
+    def test_revoke_restores_role_fallback(self, client: TestClient, db):
         from tests.conftest import _create_test_user, _make_token
+        from app.modules.core import services as core_services
         email = f"perm-revoke-{uuid.uuid4().hex[:6]}@test.local"
         waiter_id = _create_test_user(email, "waiter")
         custom_headers = {"Authorization": f"Bearer {_make_token(email)}"}
-        manager_id = _set_manager_pin(db, "1234")
+        # SEC-07: المعتمِد لازم يكون عضو فعليًا في نفس الفرع — راجع تعليق
+        # test_grant_lets_waiter_void_despite_role.
+        manager_id = _create_test_user(f"perm-mgr-rv-{uuid.uuid4().hex[:6]}@test.local", "manager")
+        core_services.set_pin(db, manager_id, "1234", created_by=manager_id)
+        db.commit()
         _sa_id, sa_headers, sa_secret = _fresh_super_admin("revoke-actor")
 
         branch = _branch_committed(db)
         _link_user_to_branch(db, waiter_id, branch.id)  # High 5: void بيفرض فحص الفرع
+        _link_user_to_branch(db, manager_id, branch.id)  # SEC-07
         outlet, item = _outlet_and_item_committed(db, branch)
 
         order1 = _create_order(client, outlet.id, item.id, custom_headers)

@@ -954,8 +954,10 @@ class TestUserUnlockAndForce2FAReset:
         assert resp.json()["detail"]["error_code"] == "STEP_UP_REQUIRED"
 
     def test_force_2fa_reset_clears_2fa_and_revokes_tokens(self, client: TestClient, db):
+        from datetime import datetime, timedelta, timezone
+
         from app.core.kernel.auth.service import AuthService
-        from app.core.kernel.models.user import TwoFactorRecoveryCode, User
+        from app.core.kernel.models.user import RefreshToken, TwoFactorRecoveryCode, User
 
         sa_id, sa_headers, sa_secret = _fresh_super_admin("2fareset-ok")
         target_id = _create_test_user(f"target-{uuid.uuid4().hex[:6]}@test.local", "accountant")
@@ -965,6 +967,13 @@ class TestUserUnlockAndForce2FAReset:
         target.two_factor_last_used_step = 12345
         db.add(TwoFactorRecoveryCode(
             user_id=target_id, code_hash=AuthService._recovery_code_hash("some-recovery-code"),
+        ))
+        db.add(RefreshToken(
+            user_id=target_id,
+            token_hash="a" * 64,
+            expires_at=datetime.now(timezone.utc) + timedelta(days=1),
+            family_id=uuid.uuid4().hex,
+            family_public_id=uuid.uuid4().hex,
         ))
         db.commit()
 
@@ -979,16 +988,61 @@ class TestUserUnlockAndForce2FAReset:
             headers={**sa_headers, "X-Step-Up-Token": token},
         )
         assert resp.status_code == 200, resp.text
-        assert resp.json()["two_factor_enabled"] is False
+        body = resp.json()
+        assert body["user"]["two_factor_enabled"] is False
+        assert body["enrollment_token"]
+        assert body["enrollment_expires_at"]
 
         db.refresh(target)
         assert target.two_factor_enabled is False
         assert target.two_factor_secret is None
         assert target.two_factor_last_used_step is None
+        assert target.two_factor_bootstrap_required is True
+        assert target.two_factor_enrollment_token_hash is not None
         remaining_codes = db.query(TwoFactorRecoveryCode).filter(
             TwoFactorRecoveryCode.user_id == target_id,
         ).count()
         assert remaining_codes == 0
+        assert db.query(RefreshToken).filter(RefreshToken.user_id == target_id).count() == 0
+
+    def test_force_2fa_reset_clears_stale_bootstrap_for_optional_role(
+        self, client: TestClient, db,
+    ):
+        from datetime import datetime, timedelta, timezone
+
+        from app.core.kernel.models.user import User
+
+        _, sa_headers, sa_secret = _fresh_super_admin("2fareset-optional")
+        target_id = _create_test_user(
+            f"optional-{uuid.uuid4().hex[:6]}@test.local", "cashier",
+        )
+        target = db.query(User).filter(User.id == target_id).one()
+        target.two_factor_bootstrap_required = True
+        target.two_factor_enrollment_token_hash = "b" * 64
+        target.two_factor_enrollment_expires_at = (
+            datetime.now(timezone.utc) - timedelta(days=1)
+        )
+        db.commit()
+
+        reason = "إزالة حالة تفعيل قديمة من حساب كاشير"
+        token = _issue_step_up(
+            client,
+            sa_headers,
+            purpose="user_force_2fa_reset",
+            intent={"user_id": target_id, "reason": reason},
+            totp_secret=sa_secret,
+        )
+        response = client.post(
+            f"/api/v1/users/{target_id}/force-2fa-reset",
+            json={"reason": reason},
+            headers={**sa_headers, "X-Step-Up-Token": token},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["enrollment_token"] is None
+        db.refresh(target)
+        assert target.two_factor_bootstrap_required is False
+        assert target.two_factor_enrollment_token_hash is None
+        assert target.two_factor_enrollment_expires_at is None
 
     def test_force_2fa_reset_404_for_missing_user(self, client: TestClient):
         sa_id, sa_headers, sa_secret = _fresh_super_admin("2fareset-404")
@@ -1009,6 +1063,128 @@ class TestUserUnlockAndForce2FAReset:
         _mgr_id, mgr_headers = _fresh_manager_no_2fa("2fareset-mgr")
         resp = client.post(
             f"/api/v1/users/{target_id}/force-2fa-reset",
+            json={"reason": "محاولة من غير صلاحية"},
+            headers=mgr_headers,
+        )
+        assert resp.status_code == 403
+
+
+# ═════════════ Part G2 — Staff credentials reset (web recover) ════════════
+# 2026-08-16: بديل ويب لـ`admin_bootstrap recover` الـCLI — موظف نسي/غلط
+# باسورده المؤقت كان محتاج SSH فعلي على السيرفر قبل كده. مقصور عمدًا على
+# الأدوار العادية؛ super_admin/owner لازم يفضلوا CLI-only (راجع docstring
+# core.services.reset_staff_credentials).
+
+class TestResetStaffCredentials:
+    def test_requires_step_up_token(self, client: TestClient):
+        sa_id, sa_headers, _secret = _fresh_super_admin("credsreset-missing")
+        target_id = _create_test_user(f"target-{uuid.uuid4().hex[:6]}@test.local", "cashier")
+        resp = client.post(
+            f"/api/v1/users/{target_id}/reset-credentials",
+            json={"reason": "نسي كلمة السر"},
+            headers=sa_headers,
+        )
+        assert resp.status_code == 428
+        assert resp.json()["detail"]["error_code"] == "STEP_UP_REQUIRED"
+
+    def test_regenerates_password_and_clears_lockout(self, client: TestClient, db):
+        from datetime import datetime, timedelta, timezone
+        from app.core.kernel.models.user import RefreshToken, User
+
+        sa_id, sa_headers, sa_secret = _fresh_super_admin("credsreset-ok")
+        target_id = _create_test_user(f"target-{uuid.uuid4().hex[:6]}@test.local", "cashier")
+        target = db.query(User).filter(User.id == target_id).first()
+        original_hash = target.password_hash
+        target.failed_login_attempts = 5
+        target.account_locked_until = datetime.now(timezone.utc) + timedelta(minutes=25)
+        db.add(RefreshToken(
+            user_id=target_id,
+            token_hash="c" * 64,
+            expires_at=datetime.now(timezone.utc) + timedelta(days=1),
+            family_id=uuid.uuid4().hex,
+            family_public_id=uuid.uuid4().hex,
+        ))
+        db.commit()
+
+        reason = "الموظف غلط كلمة السر المؤقتة أكتر من مرة"
+        token = _issue_step_up(
+            client, sa_headers, purpose="staff_credentials_reset",
+            intent={"user_id": target_id, "reason": reason}, totp_secret=sa_secret,
+        )
+        resp = client.post(
+            f"/api/v1/users/{target_id}/reset-credentials",
+            json={"reason": reason},
+            headers={**sa_headers, "X-Step-Up-Token": token},
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["temporary_password"]
+        assert body["user"]["account_locked_until"] is None
+        # وردية اختيارية: cashier مش من MANDATORY_2FA_ROLES → مفيش enrollment token
+        assert body["enrollment_token"] is None
+
+        db.refresh(target)
+        assert target.password_hash != original_hash
+        assert target.must_change_password is True
+        assert target.failed_login_attempts == 0
+        assert target.account_locked_until is None
+        assert db.query(RefreshToken).filter(RefreshToken.user_id == target_id).count() == 0
+
+    def test_mandatory_2fa_role_gets_enrollment_token(self, client: TestClient, db):
+        sa_id, sa_headers, sa_secret = _fresh_super_admin("credsreset-mandatory")
+        target_id = _create_test_user(f"target-{uuid.uuid4().hex[:6]}@test.local", "accountant")
+        reason = "محاسب جديد نسي الباسورد المؤقت"
+        token = _issue_step_up(
+            client, sa_headers, purpose="staff_credentials_reset",
+            intent={"user_id": target_id, "reason": reason}, totp_secret=sa_secret,
+        )
+        resp = client.post(
+            f"/api/v1/users/{target_id}/reset-credentials",
+            json={"reason": reason},
+            headers={**sa_headers, "X-Step-Up-Token": token},
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["temporary_password"]
+        assert body["enrollment_token"]
+        assert body["enrollment_expires_at"]
+
+    def test_rejects_super_admin_target(self, client: TestClient):
+        """super_admin لازم يفضل CLI-only — جلسة ويب مخترقة متقدرش تولّد
+        باسورد لحساب سوبر أدمن تاني عبر الـendpoint ده."""
+        sa_id, sa_headers, sa_secret = _fresh_super_admin("credsreset-vs-sa")
+        other_sa_id, _other_headers, _other_secret = _fresh_super_admin("credsreset-target-sa")
+        reason = "محاولة إعادة تعيين حساب سوبر أدمن تاني"
+        token = _issue_step_up(
+            client, sa_headers, purpose="staff_credentials_reset",
+            intent={"user_id": other_sa_id, "reason": reason}, totp_secret=sa_secret,
+        )
+        resp = client.post(
+            f"/api/v1/users/{other_sa_id}/reset-credentials",
+            json={"reason": reason},
+            headers={**sa_headers, "X-Step-Up-Token": token},
+        )
+        assert resp.status_code == 403
+
+    def test_404_for_missing_user(self, client: TestClient):
+        sa_id, sa_headers, sa_secret = _fresh_super_admin("credsreset-404")
+        reason = "سبب اختباري"
+        token = _issue_step_up(
+            client, sa_headers, purpose="staff_credentials_reset",
+            intent={"user_id": 999999, "reason": reason}, totp_secret=sa_secret,
+        )
+        resp = client.post(
+            "/api/v1/users/999999/reset-credentials",
+            json={"reason": reason},
+            headers={**sa_headers, "X-Step-Up-Token": token},
+        )
+        assert resp.status_code == 404
+
+    def test_requires_super_admin_caller(self, client: TestClient):
+        target_id = _create_test_user(f"target-{uuid.uuid4().hex[:6]}@test.local", "cashier")
+        _mgr_id, mgr_headers = _fresh_manager_no_2fa("credsreset-mgr")
+        resp = client.post(
+            f"/api/v1/users/{target_id}/reset-credentials",
             json={"reason": "محاولة من غير صلاحية"},
             headers=mgr_headers,
         )

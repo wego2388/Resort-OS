@@ -469,20 +469,57 @@ def calculate_payroll(
     # ─── خصم السلف/الدفعات (H-01/H-02) ────────────────────────────────
     # محسوب مسبقًا خارج الـ engine (زي late_penalty_amount) — مجموع أقساط
     # سلف نشطة + دفعات الشهر غير المخصومة بعد، مخصوم مباشرة من الصافي.
+    # `_cap_advance_deductions` (hr/services.py) بتحد قيمة السلفة نفسها
+    # قبل ما توصل هنا، لكن دي حماية جزئية بس — لو الجزاءات/الإجازة بدون
+    # أجر كبيرة كفاية بمفردها، الصافي ممكن يفضل يروح سالب حتى لو advance=0.
     advance_deduction = emp.advance_deduction_amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
     # ─── الصافي ───────────────────────────────────────────────────────
-    net = (
-        gross
-        + non_taxable_allowances
-        + holiday_bonus
-        - employee_si
-        - monthly_tax
-        - penalty_deduction
-        - late_penalty_deduction
-        - unpaid_leave_deduction
-        - advance_deduction
-    ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    # ⚠️ باج حقيقي كان هنا (2026-08-28، تدقيق ما قبل الإطلاق): الصافي
+    # عمره ما كان له حد أدنى صفر — جزاءات/إجازة بدون أجر كبيرة (كل واحدة
+    # غير محدودة هنا، عكس advance_deduction) كانت تقدر تنتج صافي سالب،
+    # واللي بيتخزّن على PayrollLine ويترحّل لـ"صافي رواتب مستحقة" كـcredit
+    # سالب — JournalLineCreate.credit عندها قيد ge=0، يعني كانت هترمي
+    # خطأ تحقق غير معالج (500 حقيقي) وقت اعتماد أي مسيرة رواتب فيها موظف
+    # بجزاءات/إجازة زيادة، مش خطأ منطقي بس. الأولوية القانونية: التأمينات
+    # والضريبة إجباريان (مايتنقصوش أبدًا)؛ الخصومات التأديبية الأربعة
+    # (جزاءات/تأخير/إجازة بدون أجر/سلف) بتتقلّص نسبيًا لو مجموعها هيعدّي
+    # المتاح فعليًا، عشان الصافي يفضل ≥ صفر دايمًا.
+    available_for_discretionary = (
+        gross + non_taxable_allowances + holiday_bonus - employee_si - monthly_tax
+    )
+    total_discretionary = (
+        penalty_deduction + late_penalty_deduction + unpaid_leave_deduction + advance_deduction
+    )
+    if total_discretionary > available_for_discretionary and total_discretionary > 0:
+        cap_ratio = max(available_for_discretionary, Decimal("0")) / total_discretionary
+        penalty_deduction = (penalty_deduction * cap_ratio).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+        late_penalty_deduction = (late_penalty_deduction * cap_ratio).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+        unpaid_leave_deduction = (unpaid_leave_deduction * cap_ratio).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+        advance_deduction = (advance_deduction * cap_ratio).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+
+    net = max(
+        Decimal("0"),
+        (
+            gross
+            + non_taxable_allowances
+            + holiday_bonus
+            - employee_si
+            - monthly_tax
+            - penalty_deduction
+            - late_penalty_deduction
+            - unpaid_leave_deduction
+            - advance_deduction
+        ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP),
+    )
 
     period_str = emp.period_month.strftime("%Y-%m")
 

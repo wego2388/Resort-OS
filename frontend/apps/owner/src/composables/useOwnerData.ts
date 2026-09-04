@@ -355,6 +355,50 @@ export function useDetailSheet<T>() {
   return { isOpen, data, loading, error, open, close, retry: load }
 }
 
+/**
+ * useAccountBreakdownDrilldown — تفصيل رقم (إيراد/مصروف) بالحساب، لحظة
+ * ضغط عليه، بمستويين: (1) قائمة الحسابات المكوّنة للرقم، (2) قيود
+ * اليومية الفعلية داخل حساب معيّن منها (2026-08-17، طلب Mohamed الصريح).
+ *
+ * مبني فوق useDetailSheet مرتين (breakdown + detail) بدل اختراع state
+ * جديد — نفس الشاشة (DetailSheet.vue) بتتعرض مرة واحدة بس في كل وقت،
+ * والانتقال بين المستويين بيقفل واحد ويفتح التاني (نفس إحساس "push
+ * navigation" الطبيعي في تطبيقات الموبايل، من غير sheet فوق sheet).
+ *
+ * مشترك بين NowScreen (فترة = اليوم) وPerformanceScreen (فترة = اليوم/
+ * الأسبوع/الشهر — أي تبويب نشط) — نفس الـfetchers، فترة مختلفة بس.
+ */
+export function useAccountBreakdownDrilldown<TBreakdown, TDetail>(
+  fetchBreakdown: (params: DateParams) => Promise<TBreakdown>,
+  fetchDetail: (params: { account_code: string } & DateParams) => Promise<TDetail>,
+) {
+  const breakdown = useDetailSheet<TBreakdown>()
+  const detail = useDetailSheet<TDetail>()
+  let lastParams: DateParams = {}
+
+  function openBreakdown(params: DateParams) {
+    lastParams = params
+    breakdown.open(() => fetchBreakdown(params))
+  }
+
+  function openDetail(accountCode: string) {
+    breakdown.close()
+    detail.open(() => fetchDetail({ account_code: accountCode, ...lastParams }))
+  }
+
+  function backToBreakdown() {
+    detail.close()
+    breakdown.open(() => fetchBreakdown(lastParams))
+  }
+
+  function closeAll() {
+    breakdown.close()
+    detail.close()
+  }
+
+  return { breakdown, detail, openBreakdown, openDetail, backToBreakdown, closeAll }
+}
+
 // ─── Phase 8: بحث عام — debounced ────────────────────────────────────
 
 export function useOwnerSearch() {

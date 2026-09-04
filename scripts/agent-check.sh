@@ -82,10 +82,13 @@ check_compose_production() {
   cd "$ROOT_DIR"
   # Syntax-only check: deliberately use non-routable/non-secret sentinels.
   # Real deployments run scripts/validate_prod_env.py first and supply the
-  # actual env file through scripts/deploy.sh.
+  # actual env file through DEPLOYMENT.md's immutable release procedure.
   DB_PASSWORD="${DB_PASSWORD:-agent-check-not-a-production-secret}" \
   PUBLIC_SITE_URL="${PUBLIC_SITE_URL:-https://public.example.invalid}" \
-    docker compose -f docker-compose.prod.yml config --quiet
+    docker compose \
+      -f docker-compose.prod.yml \
+      -f docker-compose.prod.domain.yml \
+      config --quiet
 }
 
 run_backend_tests() {
@@ -100,7 +103,8 @@ run_frontend_type_check() {
 
 run_frontend_build() {
   cd "$ROOT_DIR/frontend"
-  pnpm run build:all
+  VITE_PUBLIC_SITE_URL="${VITE_PUBLIC_SITE_URL:-https://public.example.invalid}" \
+    pnpm run build:all
 }
 
 section "Repository"

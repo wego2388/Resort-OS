@@ -6,6 +6,7 @@ import { defineConfig } from '@playwright/test'
 // needs real seeded demo accounts and real API responses, not mocks.
 export default defineConfig({
   testDir: './e2e',
+  testIgnore: ['**/mock-*.spec.ts'],
   timeout: 30_000,
   expect: { timeout: 5_000 },
   // Serial, not parallel: several tests sign in as the same shared demo

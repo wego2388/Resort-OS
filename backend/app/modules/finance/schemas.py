@@ -374,6 +374,19 @@ class ShiftEndReport(BaseModel):
     reporting_currency:    str = "EGP"
     # كل الإجماليات هنا EGP equivalent — أي دفعة بعملة غير EGP بتتحوّل بسعر
     # الصرف وقت تاريخ الدفعة قبل الجمع (راجع build_shift_end_report).
+    # تفصيل حسب قناة التحصيل الفعلية (الصندوق/Visa CIB/...) — إضافي، مش بديل
+    # لـtotal_cash/total_card فوق. دفعات legacy (بلا قناة) بتتجمّع تحت اسم
+    # الطريقة الخام (cash/card/wallet) بدل ما تختفي من التقرير.
+    channel_breakdown:     list["ShiftChannelSummary"] = Field(default_factory=list)
+
+
+class ShiftChannelSummary(BaseModel):
+    payment_channel_id:   Optional[int]
+    payment_channel_code: Optional[str]
+    label:                str  # اسم القناة، أو الطريقة الخام لو legacy
+    method:                str
+    amount:                Decimal
+    count:                 int
 
 
 class ActiveShiftSummary(BaseModel):
@@ -527,6 +540,231 @@ class JournalEntryRead(BaseModel):
     lines:       list[JournalLineRead] = []
     created_at:  datetime
     updated_at:  datetime
+
+
+# ── Expenses (2026-08-16) ────────────────────────────────────────────────
+
+class ExpenseCreate(BaseModel):
+    """سند مصروفات — راجع models.Expense / services.record_expense.
+    الفئة هي expense_account_id نفسه (حساب 5xxx من دليل الحسابات)، مفيش
+    taxonomy موازية.
+
+    defer_payment (2026-08-19، طلب Mohamed — مصروف آجل): لو True، السند
+    يترحّل Dr.المصروف/Cr.2180 (مصروفات مستحقة) بدل تسوية نقدية فورية —
+    settlement_account_id بيتجاهل في الحالة دي (الحساب الفعلي دايمًا 2180)،
+    والسداد الفعلي بعدين عبر services.pay_expense. لو False (الافتراضي)
+    settlement_account_id إجباري زي ما كان بالظبط."""
+    expense_date:           date
+    expense_account_id:     int
+    settlement_account_id:  Optional[int] = None
+    amount:                 Decimal = Field(..., gt=0)
+    description:            str = Field(..., min_length=3, max_length=300)
+    reference:              Optional[str] = Field(None, max_length=100)
+    cost_center_id:         Optional[int] = None
+    defer_payment:          bool = False
+    # 2026-08-19 (طلب Mohamed — حد موافقة المصروفات): إجباري بس لو المبلغ
+    # >= settings.EXPENSE_APPROVAL_THRESHOLD والمنفّذ نفسه مستواه أقل من
+    # مدير — راجع services.record_expense.
+    approver_user_id:       Optional[int] = None
+    approver_pin:           Optional[str] = None
+
+
+class ExpenseRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int; branch_id: int; expense_date: date
+    expense_account_id: int; settlement_account_id: int
+    amount: Decimal; description: str; reference: Optional[str]
+    cost_center_id: Optional[int]; journal_entry_id: int; recorded_by: int
+    created_at: datetime
+    payment_status: str = "paid"
+    amount_paid: Decimal = Decimal("0")
+    voided_at: Optional[datetime] = None
+    voided_by: Optional[int] = None
+    # للعرض — راجع services.list_expenses
+    expense_account_code: str = ""
+    expense_account_name: str = ""
+    settlement_account_code: str = ""
+
+
+class ExpensePaymentCreate(BaseModel):
+    """سداد فعلي لسند مصروفات آجل (2026-08-19) — راجع services.pay_expense.
+    نفس شكل SupplierPaymentCreate بالظبط (نظير مصروفات لسداد مورد)."""
+    amount:                 Decimal = Field(..., gt=0)
+    settlement_account_id:  int
+    reference:              Optional[str] = Field(None, max_length=100)
+    notes:                  Optional[str] = Field(None, max_length=500)
+    paid_at:                date
+
+
+class ExpensePaymentRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int; branch_id: int; expense_id: int
+    amount: Decimal; settlement_account_id: int
+    reference: Optional[str]; notes: Optional[str]
+    paid_at: date; journal_entry_id: int; recorded_by: int
+    created_at: datetime
+
+
+class CustodyCreate(BaseModel):
+    """عهدة نقدية (2026-08-19، طلب Mohamed) — سلفة لموظف/مقاول لصرف بند
+    معيّن (مقاولة/عمالة يومية/مشتريات ميدانية...). تترحّل Dr.1190 (عهد
+    نقدية تحت التسوية) / Cr.حساب المصدر وقت الصرف — راجع
+    services.disburse_custody. تتقفل لاحقًا بتوزيع فعلي على حسابات
+    مصروفات حقيقية عبر services.settle_custody."""
+    holder_name:         str = Field(..., min_length=2, max_length=200)
+    holder_employee_id:  Optional[int] = None
+    purpose:             str = Field(..., min_length=3, max_length=300)
+    amount:              Decimal = Field(..., gt=0)
+    disbursed_date:      date
+    source_account_id:   int
+    reference:           Optional[str] = Field(None, max_length=50)
+
+
+class CustodyRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int; branch_id: int; holder_name: str
+    holder_employee_id: Optional[int]; purpose: str
+    amount: Decimal; disbursed_date: date
+    source_account_id: int; custody_account_id: int
+    status: str
+    disbursement_entry_id: int; settlement_entry_id: Optional[int]
+    returned_amount: Decimal
+    disbursed_by: int; settled_by: Optional[int]; settled_at: Optional[datetime]
+    voided_at: Optional[datetime]; voided_by: Optional[int]
+    created_at: datetime
+
+
+class CustodySettlementLineCreate(BaseModel):
+    expense_account_id:  int
+    cost_center_id:      Optional[int] = None
+    amount:               Decimal = Field(..., gt=0)
+    description:          str = Field(..., min_length=3, max_length=300)
+    reference:            Optional[str] = Field(None, max_length=100)
+
+
+class CustodySettlementLineRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int; custody_id: int; expense_account_id: int
+    cost_center_id: Optional[int]; amount: Decimal
+    description: str; reference: Optional[str]
+
+
+class CustodySettleRequest(BaseModel):
+    """تسوية دفعة واحدة (single-shot، طلب Mohamed 2026-08-19) — مجموع
+    lines + returned_amount لازم يساوي مبلغ العهدة بالظبط. تسوية جزئية
+    عبر أكتر من جلسة (حالة نادرة) مؤجَّلة عمدًا."""
+    settlement_date:  date
+    lines:            list[CustodySettlementLineCreate] = Field(default_factory=list)
+    returned_amount:  Decimal = Field(Decimal("0"), ge=0)
+
+
+class CashReceiptCreate(BaseModel):
+    """إذن قبض عام (2026-08-19، طلب Mohamed) — تحصيل نقدية من مصدر متنوع
+    مش مرتبط بمسار بيع قائم (سلفة عائدة، تعويض، إيراد متفرّق...). يرحّل
+    Dr.destination_account (كاش/بنك) / Cr.source_account — مفيش قيد على
+    نوع source_account عمدًا (ممكن يكون إيراد/أصل/التزام حسب طبيعة
+    المصدر)، عكس expense_account في سند المصروفات اللي لازم expense."""
+    receipt_date:            date
+    destination_account_id:  int
+    source_account_id:       int
+    amount:                  Decimal = Field(..., gt=0)
+    description:             str = Field(..., min_length=3, max_length=300)
+    reference:               Optional[str] = Field(None, max_length=100)
+    cost_center_id:          Optional[int] = None
+
+
+class CashReceiptRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int; branch_id: int; receipt_date: date
+    destination_account_id: int; source_account_id: int
+    amount: Decimal; description: str; reference: Optional[str]
+    cost_center_id: Optional[int]; journal_entry_id: int; recorded_by: int
+    voided_at: Optional[datetime] = None
+    voided_by: Optional[int] = None
+    created_at: datetime
+    destination_account_code: str = ""
+    destination_account_name: str = ""
+    source_account_code: str = ""
+
+
+class AccountLedgerLine(BaseModel):
+    entry_id:    int
+    entry_date:  date
+    reference:   str
+    description: str
+    debit:       Decimal
+    credit:      Decimal
+    running_balance: Decimal
+
+
+class AccountLedgerReport(BaseModel):
+    """كشف حساب (2026-08-19، طلب Mohamed) — كل حركات حساب واحد خلال مدى
+    تاريخي، برصيد متحرّك (running balance) حسب طبيعة الحساب (مدين يزوّد
+    رصيد الأصول/المصروفات، دائن يزوّد رصيد الخصوم/حقوق الملكية/الإيرادات)."""
+    account_id:      int
+    account_code:    str
+    account_name:    str
+    account_type:    str
+    date_from:       date
+    date_to:         date
+    opening_balance: Decimal
+    closing_balance: Decimal
+    total_debit:     Decimal
+    total_credit:    Decimal
+    lines:           list[AccountLedgerLine]
+
+
+class AgingBucket(BaseModel):
+    label:  str
+    count:  int
+    amount: Decimal
+
+
+class ReceivableAgingLine(BaseModel):
+    """فوليو مفتوح برصيد مستحق — عمره من check_in (2026-08-19، طلب Mohamed)."""
+    folio_id:         int
+    guest_name:       str
+    check_in:         date
+    days_outstanding: int
+    balance_due:      Decimal
+    bucket:           str
+
+
+class PayableAgingLine(BaseModel):
+    """التزام لسه من غير سداد كامل — أمر شراء أو مصروف آجل (2026-08-19،
+    طلب Mohamed). source_type يفرّق الاتنين لأن مفيش كيان واحد يجمعهم."""
+    source_type:       str  # "purchase_order" | "expense"
+    source_id:         int
+    reference:         str
+    counterparty:      str
+    due_date:          date
+    days_outstanding:  int
+    remaining:         Decimal
+    bucket:            str
+
+
+class AgingReport(BaseModel):
+    branch_id:          int
+    as_of:              date
+    receivables:        list[ReceivableAgingLine]
+    receivables_total:  Decimal
+    receivables_buckets: list[AgingBucket]
+    payables:           list[PayableAgingLine]
+    payables_total:     Decimal
+    payables_buckets:   list[AgingBucket]
+
+
+class AccountingYearCloseRead(BaseModel):
+    """إقفال سنة محاسبية (2026-08-19، طلب Mohamed) — راجع
+    services.close_accounting_year."""
+    model_config = ConfigDict(from_attributes=True)
+    id:               int
+    branch_id:        int
+    year:              int
+    journal_entry_id: int
+    net_income:        Decimal
+    closed_by:         int
+    closed_at:         datetime
 
 
 class AccountingPeriodRead(BaseModel):
@@ -920,3 +1158,68 @@ class DiscountCalcResponse(BaseModel):
 
 class AutoMatchResponse(BaseModel):
     matched_count: int
+
+
+# ── Payment Channels ───────────────────────────────────────────────────────
+
+class PaymentChannelCreate(BaseModel):
+    branch_id:       int
+    code:            str = Field(..., max_length=50)
+    name:            str = Field(..., max_length=200)
+    name_ar:         Optional[str] = Field(None, max_length=200)
+    method:          str = Field(..., pattern=r"^(cash|card|wallet)$")
+    gl_account_id:   int
+    bank_account_id: Optional[int] = None
+    is_default:      bool = False
+    is_active:       bool = True
+    sort_order:      int = 0
+
+
+class PaymentChannelUpdate(BaseModel):
+    name:            Optional[str]  = Field(None, max_length=200)
+    name_ar:         Optional[str]  = Field(None, max_length=200)
+    gl_account_id:   Optional[int]  = None
+    bank_account_id: Optional[int]  = None
+    # لا يوجد unset حقيقي لعمود بنكي — ``False`` صراحةً بيمسحه، None يسيبه
+    # زي ما هو (نفس مشكلة الصفر/False المعروفة في CLAUDE.md §13 بند ❷).
+    clear_bank_account: bool = False
+    is_default:      Optional[bool] = None
+    is_active:       Optional[bool] = None
+    sort_order:      Optional[int]  = None
+
+
+class PaymentChannelRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id:                int
+    branch_id:         int
+    code:              str
+    name:              str
+    name_ar:           Optional[str]
+    method:            str
+    gl_account_id:     int
+    gl_account_code:   str = ""
+    gl_account_name:   str = ""
+    bank_account_id:   Optional[int]
+    bank_account_name: Optional[str] = None
+    is_default:        bool
+    is_active:         bool
+    sort_order:        int
+    created_at:        datetime
+    updated_at:        datetime
+
+    @model_validator(mode="before")
+    @classmethod
+    def _inject_account_display_fields(cls, obj):
+        """نفس نمط JournalLineRead._inject_account_display_fields — الحقول دي
+        مش أعمدة حقيقية، لازم gl_account/bank_account متحمّلين مسبقًا (eager
+        load في crud) وإلا N+1 على كل صف قناة."""
+        if isinstance(obj, dict):
+            return obj
+        data = {name: getattr(obj, name, None) for name in cls.model_fields
+                if name not in ("gl_account_code", "gl_account_name", "bank_account_name")}
+        gl_account = getattr(obj, "gl_account", None)
+        data["gl_account_code"] = gl_account.code if gl_account else ""
+        data["gl_account_name"] = gl_account.name if gl_account else ""
+        bank_account = getattr(obj, "bank_account", None)
+        data["bank_account_name"] = bank_account.account_name if bank_account else None
+        return data

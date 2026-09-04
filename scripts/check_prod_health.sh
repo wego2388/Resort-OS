@@ -3,10 +3,22 @@
 # Intended for resort-os-healthcheck.service; safe to run manually.
 set -uo pipefail
 
-RESORT_PUBLIC_IP="${RESORT_PUBLIC_IP:-191.218.161.133}"
-RESORT_STAFF_URL="${RESORT_STAFF_URL:-https://${RESORT_PUBLIC_IP}/}"
-RESORT_MARKETING_URL="${RESORT_MARKETING_URL:-https://${RESORT_PUBLIC_IP}:8443/}"
-RESORT_TLS_HOST="${RESORT_TLS_HOST:-$RESORT_PUBLIC_IP}"
+# مراجعة Codex 2026-08-31 (SEC-08): الافتراضي كان IP السيرفر القديم
+# (191.218.161.133) — الإنتاج الحقيقي دلوقتي domain-based (elkheima.com،
+# راجع docs/agent-workflow/handoffs/2026-08-30_REL-23-REL-24_production-
+# deploy_claude_handoff.md). RESORT_PUBLIC_IP يفضل قابل للتمرير لو محتاج
+# فحص IP-only bootstrap مؤقت قبل أي شهادة.
+RESORT_PUBLIC_IP="${RESORT_PUBLIC_IP:-}"
+if [[ -n "$RESORT_PUBLIC_IP" ]]; then
+  RESORT_STAFF_URL="${RESORT_STAFF_URL:-https://${RESORT_PUBLIC_IP}/}"
+  RESORT_MARKETING_URL="${RESORT_MARKETING_URL:-https://${RESORT_PUBLIC_IP}:8443/}"
+  RESORT_TLS_HOST="${RESORT_TLS_HOST:-$RESORT_PUBLIC_IP}"
+else
+  RESORT_STAFF_URL="${RESORT_STAFF_URL:-https://app.elkheima.com/}"
+  RESORT_MARKETING_URL="${RESORT_MARKETING_URL:-https://elkheima.com/}"
+  RESORT_TLS_HOST="${RESORT_TLS_HOST:-elkheima.com}"
+fi
+RESORT_OWNER_URL="${RESORT_OWNER_URL:-https://owner.elkheima.com/}"
 RESORT_TLS_PORT="${RESORT_TLS_PORT:-443}"
 RESORT_BACKUP_DIR="${RESORT_BACKUP_DIR:-/var/backups/resort-os}"
 RESORT_BACKUP_MAX_AGE_MINUTES="${RESORT_BACKUP_MAX_AGE_MINUTES:-1560}"
@@ -55,6 +67,14 @@ else
   fail "marketing HTTPS returned ${marketing_status:-no-status}"
 fi
 
+owner_status=$(curl -fsS --max-time 10 -o /dev/null -w '%{http_code}' \
+  "$RESORT_OWNER_URL" 2>/dev/null || true)
+if [[ "$owner_status" == "200" ]]; then
+  pass "owner-https"
+else
+  fail "owner HTTPS returned ${owner_status:-no-status}"
+fi
+
 required_containers=(
   resort-os-prod-backend-1
   resort-os-prod-celery_worker-1
@@ -63,6 +83,7 @@ required_containers=(
   resort-os-prod-el_kheima-1
   resort-os-prod-marketing_site-1
   resort-os-prod-nginx-1
+  resort-os-prod-owner-1
   resort-os-prod-redis_cache-1
 )
 

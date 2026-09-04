@@ -6,6 +6,7 @@
     "dev": "vite --port 3002",
     "build": "vue-tsc && vite build",
     "type-check": "vue-tsc --noEmit",
+    "test:e2e": "playwright test",
     "preview": "vite preview --port 3002"
   },
   "dependencies": {
@@ -17,6 +18,7 @@
     "vue-router": "^4.3.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@vitejs/plugin-vue": "^5.0.0",
     "@vueuse/core": "^10.11.0",
     "autoprefixer": "^10.4.0",

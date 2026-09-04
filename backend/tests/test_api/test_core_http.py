@@ -19,6 +19,29 @@ def branch_payload(**overrides):
     return payload
 
 
+def make_branch_committed(db):
+    from app.modules.core.models import Branch
+    b = Branch(name="Core HTTP Audit Branch", name_ar="فرع تدقيق",
+               code=f"COR-AUD-{uuid.uuid4().hex[:8].upper()}")
+    db.add(b)
+    db.commit()
+    return b
+
+
+def manager_headers_for_branch(db, branch):
+    """مراجعة Codex 2026-08-31 (SEC-01) أضافت assert_branch_access لـ
+    /audit-logs — manager_headers العالمية (مالهاش أي عضوية فرع) بقت تفشل
+    بـ403 على أي فرع محدد، نفس نمط manager_headers_for_branch في
+    test_analytics_endpoints_http.py بالظبط."""
+    from tests.conftest import _create_test_user, _make_token, assign_test_user_to_branch
+
+    email = f"audit-manager-{uuid.uuid4().hex[:8]}@test.local"
+    user_id = _create_test_user(email, "manager")
+    assign_test_user_to_branch(db, user_id, branch.id)
+    db.commit()
+    return {"Authorization": f"Bearer {_make_token(email, branch_id=branch.id)}"}
+
+
 class TestBranchesEndpoints:
     def test_create_requires_admin(self, client: TestClient, manager_headers):
         resp = client.post("/api/v1/branches", json=branch_payload(), headers=manager_headers)
@@ -325,23 +348,32 @@ class TestAuditLogsEndpoint:
         resp = client.get("/api/v1/audit-logs", headers=cashier_headers)
         assert resp.status_code == 403
 
-    def test_lists_with_pagination(self, client: TestClient, manager_headers):
-        resp = client.get("/api/v1/audit-logs", params={"page": 1, "size": 10}, headers=manager_headers)
+    def test_lists_with_pagination(self, client: TestClient, db):
+        branch = make_branch_committed(db)
+        headers = manager_headers_for_branch(db, branch)
+        resp = client.get(
+            "/api/v1/audit-logs",
+            params={"page": 1, "size": 10, "branch_id": branch.id},
+            headers=headers,
+        )
         assert resp.status_code == 200
         assert "total" in resp.json()
 
-    def test_date_range_filter(self, client: TestClient, db, manager_headers):
+    def test_date_range_filter(self, client: TestClient, db):
         """2026-08-03: created_at مفهرس فعليًا بس مفيش أي فلترة بتاريخ كانت
         موجودة خالص."""
         from datetime import datetime, timedelta
         from app.modules.core.models import AuditLog
 
+        branch = make_branch_committed(db)
+        headers = manager_headers_for_branch(db, branch)
+
         old_row = AuditLog(
-            user_id=None, branch_id=None, action="date_range_test_old",
+            user_id=None, branch_id=branch.id, action="date_range_test_old",
             entity_type="test", entity_id=1,
         )
         recent_row = AuditLog(
-            user_id=None, branch_id=None, action="date_range_test_recent",
+            user_id=None, branch_id=branch.id, action="date_range_test_recent",
             entity_type="test", entity_id=2,
         )
         db.add_all([old_row, recent_row])
@@ -354,11 +386,11 @@ class TestAuditLogsEndpoint:
         resp = client.get(
             "/api/v1/audit-logs",
             params={
-                "action": "date_range_test_old", "size": 200,
+                "action": "date_range_test_old", "size": 200, "branch_id": branch.id,
                 "date_from": str(today - timedelta(days=45)),
                 "date_to": str(today - timedelta(days=35)),
             },
-            headers=manager_headers,
+            headers=headers,
         )
         assert resp.status_code == 200, resp.text
         actions = [r["id"] for r in resp.json()["items"]]
@@ -368,14 +400,41 @@ class TestAuditLogsEndpoint:
         resp2 = client.get(
             "/api/v1/audit-logs",
             params={
-                "action": "date_range_test_recent", "size": 200,
+                "action": "date_range_test_recent", "size": 200, "branch_id": branch.id,
                 "date_from": str(today - timedelta(days=45)),
                 "date_to": str(today - timedelta(days=35)),
             },
-            headers=manager_headers,
+            headers=headers,
         )
         assert resp2.status_code == 200, resp2.text
         assert resp2.json()["total"] == 0
+
+    def test_manager_without_branch_id_gets_403_not_global_view(self, client: TestClient, db):
+        """مراجعة Codex 2026-08-31 (SEC-01): branch_id كان اختياري بدون أي
+        فرض — مدير بيحذف الفلتر كان يشوف سجل كل الفروع. دلوقتي branch_id
+        فاضي = طلب عرض عام، متاح لـsuper_admin بس."""
+        branch = make_branch_committed(db)
+        headers = manager_headers_for_branch(db, branch)
+        resp = client.get("/api/v1/audit-logs", headers=headers)
+        assert resp.status_code == 403
+
+    def test_manager_cannot_view_other_branch_logs(self, client: TestClient, db):
+        """الثغرة الأصلية: مدير فرع A كان يقدر يشوف سجل فرع B بمجرد تمرير
+        branch_id بتاعه في الرابط."""
+        own_branch = make_branch_committed(db)
+        other_branch = make_branch_committed(db)
+        headers = manager_headers_for_branch(db, own_branch)
+        resp = client.get(
+            "/api/v1/audit-logs",
+            params={"branch_id": other_branch.id},
+            headers=headers,
+        )
+        assert resp.status_code == 403
+
+    def test_super_admin_can_view_global_logs_across_branches(self, client: TestClient, db, super_admin_headers):
+        resp = client.get("/api/v1/audit-logs", params={"size": 5}, headers=super_admin_headers)
+        assert resp.status_code == 200
+        assert "total" in resp.json()
 
 
 class TestUsersEndpoints:
@@ -478,17 +537,81 @@ class TestPinCredentials:
         resp = client.post("/api/v1/pins/me", json={"pin": "1234"}, headers=headers)
         assert resp.status_code == 403
 
-    def test_manager_can_set_another_users_pin(self, client: TestClient, manager_headers, waiter_headers):
+    def test_manager_can_set_another_users_pin(self, client: TestClient, db, manager_headers, waiter_headers):
         """أونبوردنج كاشير جديد — المدير هو اللي بيضبط الـ PIN، مش الموظف
-        نفسه بالضرورة."""
-        from tests.conftest import _create_test_user
-        target_id = _create_test_user("core-pin-target@test.local", "cashier")
+        نفسه بالضرورة.
 
-        resp = client.post(f"/api/v1/pins/{target_id}", json={"pin": "5678"}, headers=manager_headers)
+        ⚠️ مراجعة Codex 2026-08-30 (M-02) أضافت assert_can_manage_target_pin
+        (نفس الفرع النشط + target أقل مستوى من الفاعل) — manager_headers
+        العالمية والمستخدم الجديد مالهمش أي عضوية فرع مشتركة، فلازم fixture
+        محلي (نفس نمط role_headers_for_branch في ملفات تانية) يربطهم بنفس
+        الفرع صراحةً."""
+        import uuid
+        from app.modules.core.models import Branch
+        from tests.conftest import _create_test_user, _make_token, assign_test_user_to_branch
+
+        branch = Branch(name="PIN Mgmt Branch", name_ar="فرع اختبار PIN",
+                        code=f"PINM-{uuid.uuid4().hex[:8].upper()}")
+        db.add(branch); db.commit()
+
+        manager_email = f"pin-manager-{uuid.uuid4().hex[:8]}@test.local"
+        manager_id = _create_test_user(manager_email, "manager")
+        assign_test_user_to_branch(db, manager_id, branch.id)
+        target_id = _create_test_user("core-pin-target@test.local", "cashier")
+        assign_test_user_to_branch(db, target_id, branch.id)
+        db.commit()
+        scoped_manager_headers = {
+            "Authorization": f"Bearer {_make_token(manager_email, branch_id=branch.id)}"
+        }
+
+        resp = client.post(f"/api/v1/pins/{target_id}", json={"pin": "5678"}, headers=scoped_manager_headers)
         assert resp.status_code == 201, resp.text
 
-        status_resp = client.get(f"/api/v1/pins/{target_id}", headers=manager_headers)
+        status_resp = client.get(f"/api/v1/pins/{target_id}", headers=scoped_manager_headers)
         assert status_resp.json()["has_pin"] is True
+
+    def test_cross_branch_manager_cannot_set_pin(self, client: TestClient, db):
+        """مراجعة Codex 2026-08-30 (M-02): مدير فرع A مايقدرش يضبط PIN
+        مستخدم فرع B."""
+        import uuid
+        from app.modules.core.models import Branch
+        from tests.conftest import _create_test_user, _make_token, assign_test_user_to_branch
+
+        branch_a = Branch(name="PIN A", name_ar="أ", code=f"PINA-{uuid.uuid4().hex[:8].upper()}")
+        branch_b = Branch(name="PIN B", name_ar="ب", code=f"PINB-{uuid.uuid4().hex[:8].upper()}")
+        db.add_all([branch_a, branch_b]); db.commit()
+
+        manager_email = f"pin-manager-xb-{uuid.uuid4().hex[:8]}@test.local"
+        manager_id = _create_test_user(manager_email, "manager")
+        assign_test_user_to_branch(db, manager_id, branch_a.id)
+        target_id = _create_test_user("core-pin-target-xb@test.local", "cashier")
+        assign_test_user_to_branch(db, target_id, branch_b.id)
+        db.commit()
+        headers = {"Authorization": f"Bearer {_make_token(manager_email, branch_id=branch_a.id)}"}
+
+        resp = client.post(f"/api/v1/pins/{target_id}", json={"pin": "5678"}, headers=headers)
+        assert resp.status_code == 403
+
+    def test_manager_cannot_set_pin_for_peer_or_higher_level(self, client: TestClient, db):
+        """مراجعة Codex 2026-08-30 (M-02): مدير مايقدرش يضبط PIN مدير نظير
+        (نفس المستوى) حتى لو في نفس الفرع."""
+        import uuid
+        from app.modules.core.models import Branch
+        from tests.conftest import _create_test_user, _make_token, assign_test_user_to_branch
+
+        branch = Branch(name="PIN Peer", name_ar="فرع", code=f"PINP-{uuid.uuid4().hex[:8].upper()}")
+        db.add(branch); db.commit()
+
+        manager_email = f"pin-manager-peer-{uuid.uuid4().hex[:8]}@test.local"
+        manager_id = _create_test_user(manager_email, "manager")
+        assign_test_user_to_branch(db, manager_id, branch.id)
+        peer_id = _create_test_user(f"pin-peer-{uuid.uuid4().hex[:8]}@test.local", "manager")
+        assign_test_user_to_branch(db, peer_id, branch.id)
+        db.commit()
+        headers = {"Authorization": f"Bearer {_make_token(manager_email, branch_id=branch.id)}"}
+
+        resp = client.post(f"/api/v1/pins/{peer_id}", json={"pin": "5678"}, headers=headers)
+        assert resp.status_code == 403
 
     def test_waiter_cannot_set_another_users_pin(self, client: TestClient, waiter_headers):
         from tests.conftest import _create_test_user
@@ -637,13 +760,13 @@ class TestPinCredentials:
         """مدير (level>=60) بيوافق على نفسه ضمنيًا — approved_by=None، مفيش
         استدعاء PIN خالص."""
         from app.modules.core import services as core_services
-        result = core_services.resolve_pin_approval(db, 60, None, None, min_approver_level=60)
+        result = core_services.resolve_pin_approval(db, 60, None, None, min_approver_level=60, target_branch_id=1)
         assert result is None
 
     def test_resolve_pin_approval_requires_approver_fields_when_actor_below_threshold(self, db):
         from app.modules.core import services as core_services
         with pytest.raises(ValueError):
-            core_services.resolve_pin_approval(db, 40, None, None, min_approver_level=60)
+            core_services.resolve_pin_approval(db, 40, None, None, min_approver_level=60, target_branch_id=1)
 
     def test_resolve_pin_approval_rejects_approver_below_threshold(self, db, waiter_headers):
         """المعتمِد نفسه لازم يكون فوق الحد — حتى لو الـ PIN بتاعه صح، لو
@@ -656,7 +779,37 @@ class TestPinCredentials:
         db.commit()
 
         with pytest.raises(ValueError):
-            core_services.resolve_pin_approval(db, 40, waiter.id, "1111", min_approver_level=60)
+            core_services.resolve_pin_approval(db, 40, waiter.id, "1111", min_approver_level=60, target_branch_id=1)
+
+    def test_resolve_pin_approval_rejects_approver_from_different_branch(self, db):
+        """مراجعة Codex 2026-08-31 (SEC-07): مدير فرع A كان يقدر PIN بتاعه
+        يوافق على إجراء في فرع B خالص. المعتمِد لازم يكون فعليًا عضو في
+        (أو super_admin على) الفرع المستهدف، مش بس دوره وPIN بتاعه."""
+        from app.modules.core.models import Branch
+        from app.modules.core import services as core_services
+        from tests.conftest import _create_test_user, assign_test_user_to_branch
+
+        branch_a = Branch(name="فرع أ SEC-07", code=f"SEC07A-{uuid.uuid4().hex[:6].upper()}")
+        branch_b = Branch(name="فرع ب SEC-07", code=f"SEC07B-{uuid.uuid4().hex[:6].upper()}")
+        db.add_all([branch_a, branch_b])
+        db.commit()
+
+        manager_id = _create_test_user(f"mgr-a-{uuid.uuid4().hex[:8]}@test.local", "manager")
+        assign_test_user_to_branch(db, manager_id, branch_a.id)
+        db.commit()
+        core_services.set_pin(db, manager_id, "7777", created_by=manager_id)
+        db.commit()
+
+        with pytest.raises(ValueError, match="غير مصرح له بهذا الفرع"):
+            core_services.resolve_pin_approval(
+                db, 40, manager_id, "7777", min_approver_level=60, target_branch_id=branch_b.id,
+            )
+
+        # نفس المعتمِد، نفس الـPIN، بس فرعه الحقيقي — لازم ينجح.
+        result = core_services.resolve_pin_approval(
+            db, 40, manager_id, "7777", min_approver_level=60, target_branch_id=branch_a.id,
+        )
+        assert result == manager_id
 
 
 class TestCreateUserEndpoint:
@@ -672,17 +825,46 @@ class TestCreateUserEndpoint:
         resp = client.post("/api/v1/users", json=payload, headers=manager_headers)
         assert resp.status_code == 403
 
+    def test_rejects_operational_account_without_employee_link(
+        self, client: TestClient, super_admin_headers,
+    ):
+        response = client.post(
+            "/api/v1/users",
+            json={
+                "email": f"orphan-{uuid.uuid4().hex[:6]}@test.local",
+                "full_name": "موظف بدون ملف",
+                "role": "cashier",
+                "reason": "اختبار منع الحسابات اليتيمة",
+            },
+            headers=super_admin_headers,
+        )
+        assert response.status_code == 422
+
     def test_creates_staff_account_with_must_change_password(
         self, client: TestClient, super_admin_headers, db
     ):
+        from datetime import date
+        from decimal import Decimal
+
         from tests.conftest import _fresh_super_admin, _issue_step_up
         from app.modules.core.models import Branch, UserBranchMembership
+        from app.modules.hr.models import Employee
         branch = Branch(
             name="Basic Staff Branch",
             code=f"BS-{uuid.uuid4().hex[:8].upper()}",
             is_active=True,
         )
         db.add(branch)
+        db.commit()
+        employee = Employee(
+            branch_id=branch.id,
+            employee_code=f"BSC-{uuid.uuid4().hex[:8].upper()}",
+            full_name="كاشير اختبار",
+            position="Cashier",
+            basic_salary=Decimal("5000"),
+            hire_date=date.today(),
+        )
+        db.add(employee)
         db.commit()
         _sa_id, sa_headers, sa_secret = _fresh_super_admin(
             "create-staff-basic", branch_id=branch.id,
@@ -691,6 +873,7 @@ class TestCreateUserEndpoint:
         payload = {
             "email": email,
             "full_name": "كاشير اختبار",
+            "employee_id": employee.id,
             "role": "cashier",
             "preferred_language": "ar",
             "reason": "تعيين موظف جديد في الاختبار",
@@ -774,6 +957,61 @@ class TestCreateUserEndpoint:
         assert len(payload["enrollment_token"]) >= 20
         assert payload["enrollment_expires_at"] is not None
 
+    def test_super_admin_can_provision_first_timeshare_admin(self, client: TestClient, db):
+        """The control plane must be able to bootstrap the first unit admin."""
+        from datetime import date
+        from decimal import Decimal
+
+        from app.modules.core.models import Branch
+        from app.modules.hr.models import Employee
+        from tests.conftest import _fresh_super_admin, _issue_step_up
+
+        branch = Branch(
+            name="Timeshare Admin Branch",
+            code=f"TSA-{uuid.uuid4().hex[:8].upper()}",
+            is_active=True,
+        )
+        db.add(branch)
+        db.commit()
+        employee = Employee(
+            branch_id=branch.id,
+            employee_code=f"TSA-{uuid.uuid4().hex[:8].upper()}",
+            full_name="Timeshare Unit Admin",
+            position="Timeshare Admin",
+            basic_salary=Decimal("8000"),
+            hire_date=date.today(),
+        )
+        db.add(employee)
+        db.commit()
+
+        _, headers, secret = _fresh_super_admin(
+            "first-timeshare-admin", branch_id=branch.id,
+        )
+        body = {
+            "email": f"timeshare-admin-{uuid.uuid4().hex}@test.local",
+            "full_name": employee.full_name,
+            "employee_id": employee.id,
+            "role": "timeshare_admin",
+            "preferred_language": "ar",
+            "reason": "تعيين أول مدير للملكية الجزئية",
+        }
+        step_up = _issue_step_up(
+            client,
+            headers,
+            purpose="user_provision",
+            intent=body,
+            totp_secret=secret,
+        )
+        response = client.post(
+            "/api/v1/users",
+            json=body,
+            headers={**headers, "X-Step-Up-Token": step_up},
+        )
+        assert response.status_code == 201, response.text
+        assert response.json()["user"]["role"] == "timeshare_admin"
+        db.expire(employee)
+        assert db.get(Employee, employee.id).user_id == response.json()["user"]["id"]
+
     def test_rejects_duplicate_email(self, client: TestClient, super_admin_headers):
         """الـ provision endpoint يرفض إيميل مكرر بـ 409.
         ملاحظة: الـ second call لازم يستنى دورة TOTP جديدة (30 ث) — skip في
@@ -802,8 +1040,12 @@ class TestCreateUserEndpoint:
         assert resp.status_code == 422
 
     def test_list_users_supports_search_filter(self, client: TestClient, super_admin_headers, db):
+        from datetime import date
+        from decimal import Decimal
+
         from tests.conftest import _fresh_super_admin, _issue_step_up
         from app.modules.core.models import Branch
+        from app.modules.hr.models import Employee
         branch = Branch(
             name="Search Staff Branch",
             code=f"SS-{uuid.uuid4().hex[:8].upper()}",
@@ -816,14 +1058,26 @@ class TestCreateUserEndpoint:
         )
         unique = uuid.uuid4().hex[:8]
         email = f"searchable-{unique}@test.local"
+        employee = Employee(
+            branch_id=branch.id,
+            employee_code=f"SEA-{unique.upper()}",
+            full_name=f"موظف {unique}",
+            position="Employee",
+            basic_salary=Decimal("5000"),
+            hire_date=date.today(),
+        )
+        db.add(employee)
+        db.commit()
         payload = {
             "email": email, "full_name": f"موظف {unique}",
-            "role": "employee", "preferred_language": "ar", "reason": "اختبار بحث",
+            "employee_id": employee.id, "role": "employee",
+            "preferred_language": "ar", "reason": "اختبار بحث",
         }
         token = _issue_step_up(client, sa_headers, purpose="user_provision",
                                intent=payload, totp_secret=sa_secret)
-        client.post("/api/v1/users", json=payload,
-                    headers={**sa_headers, "X-Step-Up-Token": token})
+        created = client.post("/api/v1/users", json=payload,
+                              headers={**sa_headers, "X-Step-Up-Token": token})
+        assert created.status_code == 201, created.text
 
         resp = client.get(f"/api/v1/users?search={unique}", headers=super_admin_headers)
         assert resp.status_code == 200

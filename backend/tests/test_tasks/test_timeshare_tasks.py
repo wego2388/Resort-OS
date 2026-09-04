@@ -59,6 +59,32 @@ class TestMarkOverdue:
         assert first_inst.status == "overdue"
         assert overdue_count >= 1
 
+    def test_does_not_mark_installment_overdue_for_cancelled_contract(self, db: Session):
+        """⚠️ باج حقيقي كان هنا (تدقيق ما قبل الإطلاق 2026-08-28):
+        cancel_contract بيحطّ contract.status="cancelled" بس ملوش أي أثر
+        على حالة أقساطه (لسه pending) — قبل الإصلاح، _mark_overdue كانت
+        بتعلّم القسط المتأخر ده "overdue" برضو رغم إلغاء العقد بالكامل،
+        فأي تقرير/عدّاد "أقساط متأخرة" كان بيتضخّم برقم وهمي للأبد."""
+        branch = make_branch(db)
+        past_due = date.today() - timedelta(days=5)
+        data = TimeshareContractCreate(
+            branch_id=branch.id, customer_name="عميل ملغي", room_type="Studio", unit_capacity=2,
+            total_value=Decimal("60000"), down_payment=Decimal("6000"),
+            installments=6, installment_period=1,
+            first_installment_date=past_due, start_date=date(2026, 1, 1),
+        )
+        contract = services.create_contract(db, data, signed_by=1)
+        services.cancel_contract(db, contract.id, Decimal("0"), cancelled_by=1)
+        db.commit()
+
+        overdue_count = _mark_overdue(db, date.today())
+        db.commit()
+        db.refresh(contract)
+
+        first_inst = min(contract.installments_list, key=lambda i: i.installment_no)
+        assert first_inst.status == "pending"
+        assert overdue_count == 0
+
     def test_freezes_booking_when_contract_has_overdue_installment(self, db: Session):
         branch = make_branch(db)
         past_due = date.today() - timedelta(days=10)

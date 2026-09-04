@@ -10,17 +10,17 @@ from decimal import Decimal
 import pytest
 
 from app.resort_os.beach_engine import (
+    BEACH_CAPACITY_MAX_LIMIT,
     TX_CONFIG,
     TX_TYPES,
     B2BContractState,
     BeachInventoryState,
-    calculate_b2b_price,
     calculate_inventory_delta,
     calculate_tx_price,
     is_contract_overdue,
+    parse_beach_capacity_max,
     validate_b2b_checkin,
     validate_entry,
-    would_exceed_credit_limit,
 )
 
 
@@ -43,10 +43,9 @@ def _state(
 def _b2b(
     contract_id: int = 1,
     hotel_name: str = "Hilton",
-    daily_quota: int = 50,
-    checked_in_today: int = 0,
-    entry_price: Decimal = Decimal("150"),
-    towel_price: Decimal = Decimal("50"),
+    monthly_guest_cap: int = 50,
+    checked_in_this_month: int = 0,
+    monthly_fee: Decimal = Decimal("150000"),
     is_active: bool = True,
     valid_from: date = date(2000, 1, 1),
     valid_until: date = date(2099, 12, 31),
@@ -54,10 +53,9 @@ def _b2b(
     return B2BContractState(
         contract_id=contract_id,
         hotel_name=hotel_name,
-        daily_quota=daily_quota,
-        checked_in_today=checked_in_today,
-        entry_price=entry_price,
-        towel_price=towel_price,
+        monthly_guest_cap=monthly_guest_cap,
+        checked_in_this_month=checked_in_this_month,
+        monthly_fee=monthly_fee,
         is_active=is_active,
         valid_from=valid_from,
         valid_until=valid_until,
@@ -66,10 +64,29 @@ def _b2b(
 
 def _base_prices() -> dict[str, Decimal]:
     return {
-        "entry":       Decimal("200"),
-        "entry_towel": Decimal("250"),
-        "towel_rent":  Decimal("50"),
+        "entry":            Decimal("200"),
+        "entry_towel":      Decimal("250"),
+        "towel_rent":       Decimal("50"),
+        "outside_food_fee": Decimal("50"),
     }
+
+
+# ─── BeachInventoryState Properties ──────────────────────────────────
+
+class TestBeachCapacitySetting:
+
+    @pytest.mark.parametrize(("raw", "expected"), [("1", 1), ("350", 350), (" 200 ", 200)])
+    def test_valid_capacity(self, raw, expected):
+        assert parse_beach_capacity_max(raw) == expected
+
+    @pytest.mark.parametrize("raw", ["", "0", "-1", "200.5", "abc", True])
+    def test_invalid_capacity(self, raw):
+        with pytest.raises(ValueError):
+            parse_beach_capacity_max(raw)
+
+    def test_capacity_upper_guard(self):
+        with pytest.raises(ValueError):
+            parse_beach_capacity_max(BEACH_CAPACITY_MAX_LIMIT + 1)
 
 
 # ─── BeachInventoryState Properties ──────────────────────────────────
@@ -117,34 +134,36 @@ class TestBeachInventoryStateProperties:
 
 
 # ─── B2BContractState Properties ─────────────────────────────────────
+# 2026-08-20، طلب Mohamed صراحةً: العقد بقى مبلغ شهري ثابت + حد أقصى
+# استرشادي للضيوف شهريًا (monthly_guest_cap)، مش سعر لكل ضيف × حصة يومية.
+# تخطي الحد **مسموح صراحةً** — remaining_monthly_quota بيرجع 0 لو اتخطى
+# (مش بيبقى سالب)، وquota_warning تحذير بس، مش رفض (مفيش is_quota_exhausted
+# خالص دلوقتي — راجع TestValidateB2bCheckin تحت لتأكيد إن تخطي الحد بيعدّي
+# التحقق عادي).
 
 class TestB2BContractStateProperties:
 
-    def test_remaining_quota(self):
-        assert _b2b(daily_quota=50, checked_in_today=20).remaining_quota == 30
+    def test_remaining_monthly_quota(self):
+        assert _b2b(monthly_guest_cap=50, checked_in_this_month=20).remaining_monthly_quota == 30
 
-    def test_remaining_quota_zero_when_exhausted(self):
-        assert _b2b(daily_quota=50, checked_in_today=50).remaining_quota == 0
+    def test_remaining_monthly_quota_zero_when_exhausted(self):
+        assert _b2b(monthly_guest_cap=50, checked_in_this_month=50).remaining_monthly_quota == 0
 
-    def test_remaining_quota_never_negative(self):
-        assert _b2b(daily_quota=50, checked_in_today=60).remaining_quota == 0
-
-    def test_quota_not_exhausted(self):
-        assert _b2b(checked_in_today=49, daily_quota=50).is_quota_exhausted is False
-
-    def test_quota_exhausted(self):
-        assert _b2b(checked_in_today=50, daily_quota=50).is_quota_exhausted is True
+    def test_remaining_monthly_quota_never_negative(self):
+        """تخطي الحد الشهري مسموح صراحةً — remaining_monthly_quota بيفضل 0،
+        مش رقم سالب."""
+        assert _b2b(monthly_guest_cap=50, checked_in_this_month=60).remaining_monthly_quota == 0
 
     def test_quota_warning_at_threshold(self):
-        """5 أشخاص متبقين → warning"""
-        assert _b2b(daily_quota=50, checked_in_today=45).quota_warning is True
+        """5 أشخاص متبقين هذا الشهر → warning"""
+        assert _b2b(monthly_guest_cap=50, checked_in_this_month=45).quota_warning is True
 
     def test_quota_warning_more_than_5(self):
-        assert _b2b(daily_quota=50, checked_in_today=44).quota_warning is False
+        assert _b2b(monthly_guest_cap=50, checked_in_this_month=44).quota_warning is False
 
     def test_quota_warning_exhausted(self):
         """صفر متبقي → لا warning (quota_warning = 0 < remaining ≤ 5)"""
-        assert _b2b(daily_quota=50, checked_in_today=50).quota_warning is False
+        assert _b2b(monthly_guest_cap=50, checked_in_this_month=50).quota_warning is False
 
 
 # ─── validate_entry ───────────────────────────────────────────────────
@@ -192,6 +211,12 @@ class TestValidateEntry:
         result = validate_entry(empty_towels, "towel_rent")
         assert result.valid is False
 
+    def test_outside_food_fee_no_capacity_or_towel_check(self):
+        """رسم الخدمة (2026-08-23، طلب Mohamed) رسم إضافي مستقل — بيمر حتى لو
+        الشاطئ ممتلئ ومفيش فوط خالص، لأنه مش بيستهلك أي منهم."""
+        result = validate_entry(_state(capacity_used=200, capacity_max=200, towels_available=0), "outside_food_fee")
+        assert result.valid is True
+
     def test_towel_return_always_valid(self):
         """إرجاع الفوطة دائماً صحيح"""
         result = validate_entry(_state(), "towel_return")
@@ -216,35 +241,27 @@ class TestValidateEntry:
 
 
 # ─── validate_b2b_checkin ─────────────────────────────────────────────
+# 2026-08-20: guests_count اتشال من التوقيع — التحقق بقى مقصور على صلاحية
+# العقد نفسه (is_active + نافذة valid_from/valid_until)، مفيش رفض على
+# أساس الحد الشهري خالص (تخطيه مسموح صراحةً، راجع models.B2BContract).
 
 class TestValidateB2bCheckin:
 
     def test_valid_checkin(self):
-        result = validate_b2b_checkin(_b2b(daily_quota=50, checked_in_today=10), 5)
+        result = validate_b2b_checkin(_b2b(monthly_guest_cap=50, checked_in_this_month=10))
         assert result.valid is True
 
     def test_inactive_contract_blocked(self):
-        result = validate_b2b_checkin(_b2b(is_active=False), 2)
+        result = validate_b2b_checkin(_b2b(is_active=False))
         assert result.valid is False
         assert "غير نشط" in result.error
 
-    def test_quota_exhausted_blocked(self):
-        result = validate_b2b_checkin(_b2b(daily_quota=50, checked_in_today=50), 1)
-        assert result.valid is False
-        assert "50" in result.error
-
-    def test_exceeds_remaining_quota(self):
-        """10 متبقين، يطلب 15 → ممنوع"""
-        result = validate_b2b_checkin(
-            _b2b(daily_quota=50, checked_in_today=40), guests_count=15
-        )
-        assert result.valid is False
-        assert "10" in result.error
-
-    def test_exactly_fills_quota(self):
-        result = validate_b2b_checkin(
-            _b2b(daily_quota=50, checked_in_today=40), guests_count=10
-        )
+    def test_over_monthly_cap_still_allowed(self):
+        """تخطي الحد الشهري الاسترشادي مسموح صراحةً (قرار Mohamed) — التحقق
+        بيعدّي عادي حتى لو checked_in_this_month اتخطى monthly_guest_cap
+        بكتير، طالما العقد نشط وساري."""
+        over_cap = _b2b(monthly_guest_cap=50, checked_in_this_month=200)
+        result = validate_b2b_checkin(over_cap)
         assert result.valid is True
 
     def test_expired_contract_blocked(self):
@@ -254,7 +271,7 @@ class TestValidateB2bCheckin:
         expired = _b2b(
             valid_from=date(2025, 1, 1), valid_until=date(2025, 12, 31),
         )
-        result = validate_b2b_checkin(expired, guests_count=1, check_date=date(2026, 7, 6))
+        result = validate_b2b_checkin(expired, check_date=date(2026, 7, 6))
         assert result.valid is False
         assert "غير سارٍ" in result.error
 
@@ -263,22 +280,22 @@ class TestValidateB2bCheckin:
         future = _b2b(
             valid_from=date(2027, 1, 1), valid_until=date(2027, 12, 31),
         )
-        result = validate_b2b_checkin(future, guests_count=1, check_date=date(2026, 7, 6))
+        result = validate_b2b_checkin(future, check_date=date(2026, 7, 6))
         assert result.valid is False
         assert "غير سارٍ" in result.error
 
     def test_contract_valid_on_boundary_dates(self):
         """أول وآخر يوم في نافذة الصلاحية لازم يعدّوا (inclusive boundaries)."""
         contract = _b2b(valid_from=date(2026, 1, 1), valid_until=date(2026, 12, 31))
-        assert validate_b2b_checkin(contract, 1, check_date=date(2026, 1, 1)).valid is True
-        assert validate_b2b_checkin(contract, 1, check_date=date(2026, 12, 31)).valid is True
-        assert validate_b2b_checkin(contract, 1, check_date=date(2027, 1, 1)).valid is False
+        assert validate_b2b_checkin(contract, check_date=date(2026, 1, 1)).valid is True
+        assert validate_b2b_checkin(contract, check_date=date(2026, 12, 31)).valid is True
+        assert validate_b2b_checkin(contract, check_date=date(2027, 1, 1)).valid is False
 
     def test_inactive_takes_priority_over_date_message(self):
         """لو العقد غير نشط ومنتهي مع بعض، رسالة 'غير نشط' هي اللي تظهر أولاً."""
         result = validate_b2b_checkin(
             _b2b(is_active=False, valid_from=date(2025, 1, 1), valid_until=date(2025, 12, 31)),
-            guests_count=1, check_date=date(2026, 7, 6),
+            check_date=date(2026, 7, 6),
         )
         assert result.valid is False
         assert "غير نشط" in result.error
@@ -327,30 +344,9 @@ class TestCalculateTxPrice:
         result = calculate_tx_price("entry", {}, surge_pct=0.0)
         assert result == Decimal(str(TX_CONFIG["entry"]["base_amount"]))
 
-
-# ─── calculate_b2b_price ─────────────────────────────────────────────
-
-class TestCalculateB2bPrice:
-
-    def test_entry_only(self):
-        contract = _b2b(entry_price=Decimal("150"), towel_price=Decimal("50"))
-        result = calculate_b2b_price(contract, guests_count=3, with_towel=False)
-        assert result == Decimal("450")  # 150 × 3
-
-    def test_entry_with_towel(self):
-        contract = _b2b(entry_price=Decimal("150"), towel_price=Decimal("50"))
-        result = calculate_b2b_price(contract, guests_count=3, with_towel=True)
-        assert result == Decimal("600")  # (150+50) × 3
-
-    def test_single_guest_no_towel(self):
-        contract = _b2b(entry_price=Decimal("200"), towel_price=Decimal("60"))
-        result = calculate_b2b_price(contract, guests_count=1, with_towel=False)
-        assert result == Decimal("200")
-
-    def test_zero_guests(self):
-        contract = _b2b(entry_price=Decimal("200"))
-        result = calculate_b2b_price(contract, guests_count=0, with_towel=False)
-        assert result == Decimal("0")
+    def test_outside_food_fee_base_price(self):
+        result = calculate_tx_price("outside_food_fee", _base_prices(), surge_pct=0.0)
+        assert result == Decimal("50")
 
 
 # ─── calculate_inventory_delta ────────────────────────────────────────
@@ -382,32 +378,15 @@ class TestCalculateInventoryDelta:
         assert cap_delta == -4
         assert towel_delta == -4
 
+    def test_outside_food_fee_no_inventory_impact(self):
+        cap_delta, towel_delta = calculate_inventory_delta("outside_food_fee", quantity=3)
+        assert cap_delta == 0
+        assert towel_delta == 0
+
     def test_unknown_tx_returns_zero_delta(self):
         cap_delta, towel_delta = calculate_inventory_delta("unknown_type")
         assert cap_delta == 0
         assert towel_delta == 0
-
-
-class TestCreditLimit:
-    """B2B partner-hotel credit control — راجع ملحوظة B2BContract في
-    app/modules/beach/models.py: عقود B2B علاقة ائتمانية متكررة، مش كاش
-    فوري، وده أول ضبط ائتماني حقيقي في المشروع كله (finance/crm/beach)."""
-
-    def test_no_limit_never_exceeded(self):
-        assert would_exceed_credit_limit(Decimal("100000"), Decimal("500"), None) is False
-
-    def test_within_limit_ok(self):
-        assert would_exceed_credit_limit(Decimal("1000"), Decimal("500"), Decimal("2000")) is False
-
-    def test_exactly_at_limit_ok(self):
-        """الحد نفسه مسموح — الرفض بس لو *تخطّاه* فعليًا (> مش >=)."""
-        assert would_exceed_credit_limit(Decimal("1500"), Decimal("500"), Decimal("2000")) is False
-
-    def test_over_limit_rejected(self):
-        assert would_exceed_credit_limit(Decimal("1800"), Decimal("500"), Decimal("2000")) is True
-
-    def test_already_over_limit_before_new_charge(self):
-        assert would_exceed_credit_limit(Decimal("2500"), Decimal("1"), Decimal("2000")) is True
 
 
 class TestContractOverdue:

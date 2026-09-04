@@ -187,6 +187,11 @@ async function handleLogin() {
       // new accounts from the same office IP shared one 5-attempts/5-minute
       // bucket keyed by IP, not by account).
       toast.error(t('auth.loginRateLimited'))
+    } else if (code === 'ACCOUNT_LOCKED' || e?.response?.status === 423) {
+      const minutes = e?.response?.data?.detail?.retry_after_minutes
+      toast.error(t('auth.accountLocked', { minutes: minutes ?? 1 }))
+    } else if (code === 'ACCOUNT_INACTIVE') {
+      toast.error(t('auth.accountInactive'))
     } else {
       toast.error(t('auth.loginError'))
     }

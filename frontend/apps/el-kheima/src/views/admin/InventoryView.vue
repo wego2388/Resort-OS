@@ -321,6 +321,77 @@ async function toggleSupplierActive(s: Supplier) {
   }
 }
 
+// ── سداد الموردين (2026-08-16) — يقفل حلقة الذمم الدائنة اللي
+// receive_purchase_order بيفتحها (Dr.1200/Cr.2200) — قبل كده مفيش أي
+// طريقة تسجّل إن المنتجع دفع فعليًا للمورد. عمدًا مش شاشة "أوامر الشراء"
+// كاملة (النطاق مقصور على المستحقات المتبقية بس، مطابقة لطلب Mohamed).
+interface PayableOrder {
+  id: number; order_number: string; supplier_name: string | null
+  total_amount: number; amount_paid: number; payment_status: string
+}
+const payablesModal = ref(false)
+const payablesLoading = ref(false)
+const payables = ref<PayableOrder[]>([])
+const payModal = ref(false)
+const savingPay = ref(false)
+const payTarget = ref<PayableOrder | null>(null)
+const assetAccounts = ref<{ id: number; code: string; name: string }[]>([])
+const payForm = ref({ amount: '', settlement_account_id: '' as number | '', reference: '', notes: '' })
+
+async function openPayablesModal() {
+  payablesModal.value = true
+  payablesLoading.value = true
+  try {
+    const [poRes, accRes] = await Promise.all([
+      api.get('/api/v1/inventory/purchase-orders', { params: { branch_id: branchId.value, status: 'received', size: 100 } }),
+      assetAccounts.value.length ? Promise.resolve(null) : api.get('/api/v1/finance/accounts', { params: { branch_id: branchId.value } }),
+    ])
+    payables.value = (poRes.data.items ?? []).filter((po: PayableOrder) => po.payment_status !== 'paid')
+    if (accRes) {
+      const rows = accRes.data.accounts ?? accRes.data.items ?? accRes.data
+      assetAccounts.value = rows.filter((a: { account_type: string }) => a.account_type === 'asset')
+    }
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail ?? t('backoffice.inventory.msg.loadPayablesError'))
+  } finally {
+    payablesLoading.value = false
+  }
+}
+
+function remainingAmount(po: PayableOrder): number {
+  return Math.max(0, po.total_amount - po.amount_paid)
+}
+
+function openPayModal(po: PayableOrder) {
+  payTarget.value = po
+  payForm.value = { amount: String(remainingAmount(po)), settlement_account_id: '', reference: '', notes: '' }
+  payModal.value = true
+}
+
+async function confirmPay() {
+  if (!payTarget.value) return
+  if (!payForm.value.settlement_account_id) { toast.error(t('backoffice.inventory.msg.selectSettlementAccount')); return }
+  const amount = Number(payForm.value.amount)
+  if (!amount || amount <= 0) { toast.error(t('backoffice.inventory.msg.enterValidAmount')); return }
+  savingPay.value = true
+  try {
+    await api.post(`/api/v1/inventory/purchase-orders/${payTarget.value.id}/pay`, {
+      amount: payForm.value.amount,
+      settlement_account_id: payForm.value.settlement_account_id,
+      reference: payForm.value.reference || undefined,
+      notes: payForm.value.notes || undefined,
+      paid_at: new Date().toISOString().slice(0, 10),
+    })
+    toast.success(t('backoffice.inventory.msg.paymentRecorded'))
+    payModal.value = false
+    await openPayablesModal()
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail ?? t('backoffice.inventory.msg.paymentError'))
+  } finally {
+    savingPay.value = false
+  }
+}
+
 async function fetchProducts() {
   loading.value = true
   try {
@@ -357,6 +428,7 @@ onMounted(() => { fetchCategories(); fetchWarehouses(); fetchSuppliers(); fetchP
         <AppButton variant="secondary" size="sm" @click="supplierListModal = true">🚚 {{ t('backoffice.inventory.suppliers') }}</AppButton>
         <AppButton variant="secondary" size="sm" @click="openAdjustStock">⚖️ {{ t('backoffice.inventory.manualAdjustment') }}</AppButton>
         <AppButton variant="secondary" size="sm" @click="openReceivePO">📦 {{ t('backoffice.inventory.recordReceipt') }}</AppButton>
+        <AppButton variant="secondary" size="sm" @click="openPayablesModal">💳 {{ t('backoffice.inventory.supplierPayables') }}</AppButton>
         <AppButton size="sm" @click="openCreateProduct">+ {{ t('backoffice.inventory.newProduct') }}</AppButton>
         <AppButton variant="secondary" size="sm" @click="fetchProducts">🔄</AppButton>
       </div>
@@ -560,6 +632,72 @@ onMounted(() => { fetchCategories(); fetchWarehouses(); fetchSuppliers(); fetchP
           </table>
         </div>
       </div>
+    </AppModal>
+
+    <!-- ══ سداد الموردين (2026-08-16) ══ -->
+    <AppModal :open="payablesModal" :title="t('backoffice.inventory.supplierPayables')" size="lg" @close="payablesModal = false">
+      <div class="space-y-3">
+        <div v-if="payablesLoading" class="flex justify-center py-8"><AppSpinner size="lg" /></div>
+        <div v-else class="overflow-x-auto border border-stone-100 dark:border-border/50 rounded-xl">
+          <table class="w-full min-w-[700px]">
+            <thead class="bg-stone-50 dark:bg-gray-800/60">
+              <tr>
+                <th class="px-3 py-2 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.inventory.payables.orderNumber') }}</th>
+                <th class="px-3 py-2 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.inventory.payables.supplier') }}</th>
+                <th class="px-3 py-2 text-end text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.inventory.payables.total') }}</th>
+                <th class="px-3 py-2 text-end text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.inventory.payables.paid') }}</th>
+                <th class="px-3 py-2 text-end text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.inventory.payables.remaining') }}</th>
+                <th class="px-3 py-2 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase"></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="po in payables" :key="po.id" class="border-t border-stone-100 dark:border-border/50">
+                <td class="px-3 py-2 text-sm font-mono text-gray-900 dark:text-gray-100">{{ po.order_number }}</td>
+                <td class="px-3 py-2 text-sm text-gray-600 dark:text-gray-400">{{ po.supplier_name || '—' }}</td>
+                <td class="px-3 py-2 text-sm text-end tabular-nums">{{ formatNumber(po.total_amount) }}</td>
+                <td class="px-3 py-2 text-sm text-end tabular-nums">{{ formatNumber(po.amount_paid) }}</td>
+                <td class="px-3 py-2 text-sm text-end tabular-nums font-bold text-amber-700 dark:text-amber-400">{{ formatNumber(remainingAmount(po)) }}</td>
+                <td class="px-3 py-2 text-end whitespace-nowrap">
+                  <button @click="openPayModal(po)" class="text-xs font-semibold text-primary-700 hover:underline">{{ t('backoffice.inventory.payables.pay') }}</button>
+                </td>
+              </tr>
+              <tr v-if="payables.length === 0">
+                <td colspan="6" class="px-4 py-8">
+                  <EmptyState icon="✅" :title="t('backoffice.inventory.payables.empty')" />
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </AppModal>
+
+    <AppModal :open="payModal" :title="t('backoffice.inventory.payables.payTitle', { number: payTarget?.order_number ?? '' })" @close="payModal = false">
+      <div class="space-y-3">
+        <label class="block text-sm font-bold text-gray-700 dark:text-gray-300">{{ t('backoffice.inventory.payables.amount') }}
+          <input v-model="payForm.amount" type="number" min="0" step="0.01"
+            class="w-full mt-1 border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm tabular-nums" />
+        </label>
+        <label class="block text-sm font-bold text-gray-700 dark:text-gray-300">{{ t('backoffice.inventory.payables.settlementAccount') }}
+          <select v-model.number="payForm.settlement_account_id"
+            class="w-full mt-1 border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm bg-white dark:bg-surface">
+            <option value="">{{ t('backoffice.inventory.payables.selectAccount') }}</option>
+            <option v-for="acc in assetAccounts" :key="acc.id" :value="acc.id">{{ acc.code }} — {{ acc.name }}</option>
+          </select>
+        </label>
+        <label class="block text-sm font-bold text-gray-700 dark:text-gray-300">{{ t('backoffice.inventory.payables.reference') }}
+          <input v-model="payForm.reference" class="w-full mt-1 border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
+        </label>
+        <label class="block text-sm font-bold text-gray-700 dark:text-gray-300">{{ t('backoffice.inventory.payables.notes') }}
+          <input v-model="payForm.notes" class="w-full mt-1 border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
+        </label>
+      </div>
+      <template #footer>
+        <div class="flex gap-2">
+          <AppButton variant="ghost" class="flex-1" @click="payModal = false">{{ t('common.cancel') }}</AppButton>
+          <AppButton class="flex-1" :loading="savingPay" @click="confirmPay">{{ t('backoffice.inventory.payables.confirmPay') }}</AppButton>
+        </div>
+      </template>
     </AppModal>
 
     <!-- الموردون — إضافة/تعديل -->

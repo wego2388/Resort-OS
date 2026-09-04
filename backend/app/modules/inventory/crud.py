@@ -13,11 +13,12 @@ from app.resort_os.timezone_utils import local_now
 from app.modules.inventory.models import (
     Category, Product, PurchaseOrder, PurchaseOrderItem,
     PurchaseRequest, PurchaseRequestItem, PurchaseApproval,
-    StockCount, StockMovement, Supplier, Warehouse,
+    StockCount, StockMovement, Supplier, SupplierPayment, Warehouse,
 )
 from app.modules.inventory.schemas import (
     CategoryCreate, ProductCreate, ProductUpdate,
-    PurchaseOrderCreate, StockMovementCreate, SupplierCreate, SupplierUpdate, WarehouseCreate,
+    PurchaseOrderCreate, StockMovementCreate, SupplierCreate, SupplierPaymentCreate,
+    SupplierUpdate, WarehouseCreate,
 )
 
 
@@ -254,6 +255,73 @@ def _next_po_number(db: Session) -> str:
 
 def get_purchase_order(db: Session, po_id: int) -> Optional[PurchaseOrder]:
     return db.query(PurchaseOrder).filter(PurchaseOrder.id == po_id).first()
+
+
+def lock_purchase_order_for_update(db: Session, po_id: int) -> Optional[PurchaseOrder]:
+    """SELECT ... FOR UPDATE NOWAIT — يقفل صف أمر الشراء طوال عملية الاستلام
+    (مراجعة Codex 2026-08-30، H-03). قبل كده كان بيتقرا من غير قفل، وكل
+    سطر استلام بيتحقق من `remaining` بقراءة غير مقفولة — استلامين متزامنين
+    (أو صفين بنفس item_id في نفس الطلب) كل واحد كان يقدر يعدّي التحقق
+    بمفرده بينما مجموعهم يتخطى الكمية المطلوبة فعليًا. نفس نمط
+    lock_product_for_update بالضبط."""
+    return (
+        db.query(PurchaseOrder)
+        .filter(PurchaseOrder.id == po_id)
+        .populate_existing()
+        .with_for_update(nowait=True)
+        .first()
+    )
+
+
+# ── Supplier Payments (2026-08-16) ───────────────────────────────────────
+
+def create_supplier_payment(
+    db: Session, branch_id: int, supplier_id: int, po: PurchaseOrder,
+    data: SupplierPaymentCreate, journal_entry_id: int, recorded_by: int,
+) -> SupplierPayment:
+    payment = SupplierPayment(
+        branch_id=branch_id, supplier_id=supplier_id, purchase_order_id=po.id,
+        amount=data.amount, settlement_account_id=data.settlement_account_id,
+        reference=data.reference, notes=data.notes, paid_at=data.paid_at,
+        journal_entry_id=journal_entry_id, recorded_by=recorded_by,
+    )
+    db.add(payment)
+    db.flush()
+    return payment
+
+
+def get_supplier_payment(db: Session, payment_id: int) -> Optional[SupplierPayment]:
+    return db.query(SupplierPayment).filter(SupplierPayment.id == payment_id).first()
+
+
+def void_supplier_payment(db: Session, payment: SupplierPayment, voided_by: int) -> SupplierPayment:
+    payment.voided_at = datetime.utcnow()
+    payment.voided_by = voided_by
+    db.flush()
+    return payment
+
+
+def list_supplier_payments(db: Session, purchase_order_id: int) -> list["SupplierPayment"]:
+    return (
+        db.query(SupplierPayment)
+        .filter(SupplierPayment.purchase_order_id == purchase_order_id)
+        .order_by(SupplierPayment.paid_at.desc(), SupplierPayment.id.desc())
+        .all()
+    )
+
+
+def list_unpaid_purchase_orders_for_aging(db: Session, branch_id: int) -> list[PurchaseOrder]:
+    """أوامر شراء لسه من غير سداد كامل — لتقرير أعمار الديون (2026-08-19،
+    طلب Mohamed) — راجع finance.services.get_aging_report."""
+    return (
+        db.query(PurchaseOrder)
+        .filter(
+            PurchaseOrder.branch_id == branch_id,
+            PurchaseOrder.payment_status.in_(("unpaid", "partial")),
+        )
+        .order_by(PurchaseOrder.ordered_at)
+        .all()
+    )
 
 
 def list_purchase_orders(

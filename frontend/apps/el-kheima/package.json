@@ -10,7 +10,8 @@
     "test:unit": "vitest run",
     "test:a11y": "vitest run src/__tests__/a11y",
     "test:frontend": "node scripts/validate-i18n.mjs && vitest run",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:e2e:mock": "playwright test --config playwright.mock.config.ts"
   },
   "dependencies": {
     "@resort-os/core": "workspace:*",

@@ -90,9 +90,42 @@ async def lifespan(app: FastAPI):
 
 # ── App Factory ───────────────────────────────────────────────────────────────
 
+def _warn_if_alert_channels_unconfigured() -> None:
+    """مراجعة Codex 2026-08-31 (SEC-13): قنوات التنبيه (WhatsApp/Sentry/
+    Email) كانت ميتة تمامًا في الإنتاج من غير أي إشارة واضحة عند الإقلاع —
+    فشل مهمة Celery، تنبيه احتيال، أو تأخر سداد كانوا بيروحوا للفراغ بصمت.
+    سطر واحد واضح في لوجات الإقلاع (مش مجرد DEBUG مدفون) أفضل من اكتشاف
+    الفجوة دي وقت حادثة حقيقية. تحذير بس — مش فشل إقلاع (مفتاح Twilio/
+    SendGrid/Sentry الحقيقي قرار Mohamed منفصل، مش حاجة تمنع تشغيل التطبيق)."""
+    import os
+
+    if settings.ENVIRONMENT not in ("production", "staging"):
+        return
+
+    dark_channels = []
+    if not (getattr(settings, "SENTRY_DSN", None) or os.getenv("SENTRY_DSN")):
+        dark_channels.append("Sentry (SENTRY_DSN)")
+    has_twilio = os.getenv("TWILIO_ACCOUNT_SID") and os.getenv("TWILIO_AUTH_TOKEN")
+    has_meta_whatsapp = os.getenv("WHATSAPP_PHONE_ID") and os.getenv("WHATSAPP_ACCESS_TOKEN")
+    if not (has_twilio or has_meta_whatsapp):
+        dark_channels.append("WhatsApp (TWILIO_* أو WHATSAPP_PHONE_ID/WHATSAPP_ACCESS_TOKEN)")
+    if not os.getenv("ADMIN_PHONE"):
+        dark_channels.append("ADMIN_PHONE (مفيش رقم يوصله تنبيه واتساب حتى لو القناة شغالة)")
+    if not os.getenv("SENDGRID_API_KEY"):
+        dark_channels.append("Email (SENDGRID_API_KEY) — استرجاع كلمة المرور هيفشل بصمت")
+
+    if dark_channels:
+        logger.error(
+            "⚠️ قنوات تنبيه غير مُعدّة في بيئة %s: %s — فشل مهمة/احتيال/تأخر سداد "
+            "لن يوصل لحد فعليًا حتى تُعدّ.",
+            settings.ENVIRONMENT, "؛ ".join(dark_channels),
+        )
+
+
 def create_app() -> FastAPI:
     setup_logging(settings)
     setup_sentry(settings)
+    _warn_if_alert_channels_unconfigured()
 
     # ⚠️ enforce_owner_access_policy إجباري هنا على مستوى التطبيق كله —
     # مش على owner router بس. باج أمني حقيقي اتصلح 2026-08-11: النسخة

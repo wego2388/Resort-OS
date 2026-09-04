@@ -19,13 +19,18 @@ import { ThemeToggle } from '@resort-os/ui'
 const router = useRouter()
 const route = useRoute()
 const auth = useAuthStore()
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const { formatTime } = useStaffFormat()
 const { isOnline, pendingCount } = useOfflineQueue()
 
 const showOperatorSwitch = ref(false)
+const mobileMenuOpen = ref(false)
 
-const branchName = computed(() => auth.branchId ? `${t('backoffice.layout.branch')} ${auth.branchId}` : t('backoffice.layout.branch'))
+const branchName = computed(() => {
+  const branch = auth.activeBranch
+  if (!branch) return t('backoffice.layout.branch')
+  return locale.value === 'ar' && branch.name_ar ? branch.name_ar : branch.name
+})
 
 const currentTime = ref('')
 function updateClock() {
@@ -63,6 +68,7 @@ const allNavItems = computed(() => [
 const navItems = computed(() => allNavItems.value.filter(item => auth.hasRole(item.minRole)))
 
 function logout() {
+  mobileMenuOpen.value = false
   auth.logout()
   router.push('/login')
 }
@@ -77,11 +83,11 @@ function logout() {
       <div class="flex min-h-16 items-center justify-between gap-2 px-3 py-2 sm:px-4">
 
         <!-- Logo + title -->
-        <div class="flex items-center gap-3">
+        <div class="flex min-w-0 items-center gap-3">
           <div class="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl bg-gold-DEFAULT shadow-elevation-1">
             <span class="text-white text-xs font-black">{{ isWaiter ? '🧑🍳' : 'POS' }}</span>
           </div>
-          <div>
+          <div class="hidden min-w-0 sm:block">
             <div class="text-sm font-bold leading-tight text-gray-900 dark:text-gray-50">
               {{ isWaiter ? t('backoffice.layout.orderTaker') : t('backoffice.layout.pos') }}
             </div>
@@ -90,7 +96,7 @@ function logout() {
         </div>
 
         <!-- Actions -->
-        <div class="flex items-center gap-1 sm:gap-2">
+        <div class="relative flex min-w-0 items-center gap-1 sm:gap-2">
           <!-- Shift panel — كاشير+ فقط -->
           <ShiftPanel v-if="auth.hasRole('cashier')" />
 
@@ -123,16 +129,54 @@ function logout() {
             <span class="text-xs text-amber-700 dark:text-amber-300">{{ auth.role }}</span>
           </button>
 
-          <LanguageSwitcher variant="compact" />
-          <ThemeToggle
-            :light-label="t('backoffice.layout.switchLight')"
-            :dark-label="t('backoffice.layout.switchDark')"
-          />
+          <div class="hidden items-center gap-1 sm:flex sm:gap-2">
+            <LanguageSwitcher variant="compact" />
+            <ThemeToggle
+              :light-label="t('backoffice.layout.switchLight')"
+              :dark-label="t('backoffice.layout.switchDark')"
+            />
+
+            <button
+              @click="logout"
+              class="min-h-11 rounded-xl px-2 text-sm font-medium text-red-600 transition-colors hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-950/40"
+            >{{ t('backoffice.layout.logout') }}</button>
+          </div>
 
           <button
-            @click="logout"
-            class="min-h-11 rounded-xl px-2 text-sm font-medium text-red-600 transition-colors hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-950/40"
-          >{{ t('backoffice.layout.logout') }}</button>
+            type="button"
+            class="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-xl text-xl text-gray-700 hover:bg-stone-100 dark:text-gray-200 dark:hover:bg-gray-800 sm:hidden"
+            :aria-label="t('backoffice.layout.moreActions')"
+            :aria-expanded="mobileMenuOpen"
+            aria-haspopup="menu"
+            @click="mobileMenuOpen = !mobileMenuOpen"
+          >⋮</button>
+
+          <div
+            v-if="mobileMenuOpen"
+            class="absolute end-0 top-12 z-50 w-64 rounded-2xl border border-stone-200 bg-white p-2 shadow-xl dark:border-gray-700 dark:bg-[#252D3A] sm:hidden"
+            role="menu"
+          >
+            <button
+              type="button"
+              class="flex min-h-11 w-full flex-col items-start justify-center rounded-xl px-3 text-start hover:bg-stone-100 dark:hover:bg-[#2E3748]"
+              @click="mobileMenuOpen = false; showOperatorSwitch = true"
+            >
+              <span class="max-w-full truncate text-sm font-bold text-gray-900 dark:text-gray-50">{{ auth.user?.full_name }}</span>
+              <span class="text-xs text-amber-700 dark:text-amber-300">{{ auth.role }}</span>
+            </button>
+            <div class="mt-1 flex min-h-11 items-center justify-between rounded-xl px-2 hover:bg-stone-100 dark:hover:bg-[#2E3748]">
+              <LanguageSwitcher variant="full" />
+              <ThemeToggle
+                :light-label="t('backoffice.layout.switchLight')"
+                :dark-label="t('backoffice.layout.switchDark')"
+              />
+            </div>
+            <button
+              type="button"
+              class="mt-1 min-h-11 w-full rounded-xl px-3 text-start text-sm font-bold text-red-600 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-950/40"
+              @click="logout"
+            >{{ t('backoffice.layout.logout') }}</button>
+          </div>
         </div>
       </div>
 

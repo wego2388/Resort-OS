@@ -15,7 +15,7 @@ import hashlib
 import json
 import logging
 import secrets
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import TYPE_CHECKING, Optional
 
@@ -201,6 +201,47 @@ PIN_MAX_ATTEMPTS = 3       # 3 محاولات غلط = قفل
 PIN_LOCKOUT_SECONDS = 60   # دقيقة واحدة
 
 
+def assert_can_manage_target_pin(db: Session, actor, target_user_id: int, action_desc: str) -> None:
+    """⚠️ باج حقيقي كان هنا (مراجعة Codex 2026-08-30، M-02): أي مدير كان
+    يقدر يقرا أو يعيد ضبط PIN أي user_id — بدون تحقق من وجود الهدف، فرعه،
+    أو مستواه النسبي. النتيجة: مدير يقدر يعيد ضبط PIN مدير نظير (أو حتى
+    أعلى) في فرع تاني تمامًا، بعدها ينتحل هويته على أي terminal مؤهّل أو
+    يزوّر attribution موافقة PIN — نفس فئة الخطر (مصادقة بديلة موازية
+    للـJWT، راجع resolve_pin_approval) لازم تتحمي بنفس الجدية.
+
+    القاعدة: نفس الفرع النشط للفاعل + target أدنى من الفاعل صراحةً (يمنع
+    peers/higher تمامًا) — مطبّقة حتى على super_admin (100) عشان تفضل
+    متسقة مع فلسفة assert_branch_access (سياق فرع نشط حقيقي، مش تجاوز
+    مطلق) ومع القاعدة نفسها بتمنع مدير يعيد ضبط PIN مدير تاني بنفس
+    مستواه بالظبط."""
+    from app.core.deps import user_level as _user_level  # noqa: PLC0415
+    from app.core.kernel.models.user import User  # noqa: PLC0415
+
+    target = db.query(User).filter(User.id == target_user_id).first()
+    if not target:
+        raise ValueError(f"المستخدم {target_user_id} غير موجود")
+
+    actor_branch_id = get_user_branch_id(db, actor)
+    if actor_branch_id is None:
+        raise BranchContextRequiredError(f"اختر فرعًا نشطًا قبل {action_desc}")
+
+    target_in_branch = (
+        db.query(UserBranchMembership.id)
+        .filter(
+            UserBranchMembership.user_id == target.id,
+            UserBranchMembership.branch_id == actor_branch_id,
+            UserBranchMembership.is_active.is_(True),
+        )
+        .first()
+        is not None
+    )
+    if not target_in_branch:
+        raise BranchAccessDeniedError(f"لا يمكنك {action_desc} لمستخدم خارج فرعك الحالي")
+
+    if _user_level(target) >= _user_level(actor):
+        raise PermissionError(f"لا يمكنك {action_desc} لمستخدم بنفس مستواك أو أعلى")
+
+
 def set_pin(db: Session, user_id: int, pin: str, created_by: int) -> PinCredential:
     """ضبط/تجديد PIN — الـ Field(pattern=r"^\\d{4,6}$") في PinSetRequest هو
     الحارس الوحيد على الشكل؛ هنا بس hashing + تخزين. commit صريح — دي
@@ -262,6 +303,7 @@ def resolve_pin_approval(
     approver_pin: Optional[str],
     *,
     min_approver_level: int = 60,
+    target_branch_id: int,
 ) -> Optional[int]:
     """البوابة المركزية اللي كل إجراء حسّاس (إلغاء صنف، مرتجع...) بينادي
     عليها بدل ما يعيد نفس المنطق. بترجع ``approved_by`` (user.id بتاع
@@ -275,6 +317,13 @@ def resolve_pin_approval(
     قرار معماري متعمد: لو مستوى المنفّذ نفسه >= min_approver_level (هو
     أصلاً مدير أو فوق)، **مفيش موافقة PIN مطلوبة خالص** — طلب موافقة مدير
     من نفسه مسرحية أمان بدون قيمة حقيقية، وبتبطّئ شغله من غير داعي.
+
+    ⚠️ مراجعة Codex 2026-08-31 (SEC-07): قبل كده الدالة دي كانت بتتحقق من
+    دور المعتمِد وPIN بس — **من غير أي تحقق فرع خالص**. مدير فرع A كان
+    يقدر PIN بتاعه يوافق على إلغاء/خصم/حركة كاش في فرع B بمجرد ما الكاشير
+    يعرف/يخمّن user_id بتاعه. ``target_branch_id`` بقى إجباري — نفس
+    الفحص المستخدم في ``pin_switch_login`` (``_can_enter_branch``:
+    super_admin بس بيتخطّى، وإلا لازم عضوية فرع فعّالة حقيقية).
     """
     if acting_user_level >= min_approver_level:
         return None
@@ -292,6 +341,8 @@ def resolve_pin_approval(
         raise ValueError("حساب المعتمِد غير نشط")
     if user_level(approver) < min_approver_level:
         raise ValueError("المستخدم ده مش عنده صلاحية كافية للموافقة على هذا الإجراء")
+    if not _can_enter_branch(db, approver, target_branch_id):
+        raise ValueError("المعتمِد غير مصرح له بهذا الفرع")
 
     if not verify_pin(db, approver_user_id, approver_pin):
         raise ValueError("رقم PIN غلط أو الحساب مقفول مؤقتًا بعد محاولات فاشلة")
@@ -745,13 +796,17 @@ def force_reset_2fa(
     db: Session, user_id: int, reset_by: int, reason: str,
     step_up_public_reference: Optional[str] = None,
     assurance_method: Optional[str] = None,
-) -> "User":
-    """يمسح ربط 2FA الحالي (secret/آخر خطوة TOTP/أكواد الاسترجاع) لموظف
-    فقد جهازه، من غير ما يلمس كلمة السر أو أي بيانات هوية تانية — الحساب
-    يفضل نشط، وبيدخل بكلمة سره الحالية. two_factor_bootstrap_required
-    يفضل False عمدًا فالموظف بيعيد التسجيل عبر /2fa/setup العادي
-    (current_password، مش enrollment token الـCLI-only)."""
+) -> dict:
+    """Reset a lost 2FA device without stranding the account.
+
+    Roles whose 2FA is mandatory receive a fresh, short-lived enrollment
+    token returned once to the super-admin. Optional roles have every stale
+    bootstrap marker cleared and can continue with their existing password.
+    Password/identity/active state are deliberately preserved.
+    """
     from app.core.deps import revoke_user_tokens  # noqa: PLC0415
+    from app.core.deps import MANDATORY_2FA_ROLES  # noqa: PLC0415
+    from app.core.kernel.auth.repository import delete_refresh_tokens_for_user  # noqa: PLC0415
     from app.core.kernel.models.user import TwoFactorRecoveryCode  # noqa: PLC0415
 
     user = crud.lock_user_for_update(db, user_id)
@@ -761,9 +816,24 @@ def force_reset_2fa(
     user.two_factor_enabled = False
     user.two_factor_secret = None
     user.two_factor_last_used_step = None
+    requires_enrollment = user.role in MANDATORY_2FA_ROLES
+    enrollment_token = secrets.token_urlsafe(32) if requires_enrollment else None
+    enrollment_expires_at = (
+        datetime.now(timezone.utc) + timedelta(
+            minutes=settings.TWO_FACTOR_ENROLLMENT_TOKEN_TTL_MINUTES,
+        )
+        if requires_enrollment else None
+    )
+    user.two_factor_bootstrap_required = requires_enrollment
+    user.two_factor_enrollment_token_hash = (
+        hashlib.sha256(enrollment_token.encode()).hexdigest()
+        if enrollment_token else None
+    )
+    user.two_factor_enrollment_expires_at = enrollment_expires_at
     db.query(TwoFactorRecoveryCode).filter(
         TwoFactorRecoveryCode.user_id == user.id,
     ).delete(synchronize_session=False)
+    delete_refresh_tokens_for_user(db, user.id)
 
     from app.modules.core.crud import create_audit_log  # noqa: PLC0415
     from app.modules.core.schemas import AuditLogCreate  # noqa: PLC0415
@@ -771,6 +841,10 @@ def force_reset_2fa(
         user_id=reset_by, branch_id=None, action="force_reset_2fa",
         entity_type="user", entity_id=user.id,
         new_data=json.dumps({
+            "requires_2fa_enrollment": requires_enrollment,
+            "enrollment_expires_at": (
+                enrollment_expires_at.isoformat() if enrollment_expires_at else None
+            ),
             **_step_up_audit_context(
                 reason=reason,
                 step_up_public_reference=step_up_public_reference,
@@ -783,7 +857,95 @@ def force_reset_2fa(
     # تغيير role/is_active (راجع update_user_role فوق).
     revoke_user_tokens(user.id)
     db.refresh(user)
-    return user
+    return {
+        "user": user,
+        "enrollment_token": enrollment_token,
+        "enrollment_expires_at": enrollment_expires_at,
+    }
+
+
+def reset_staff_credentials(
+    db: Session, user_id: int, reset_by: int, reason: str,
+    step_up_public_reference: Optional[str] = None,
+    assurance_method: Optional[str] = None,
+) -> dict:
+    """يولّد باسورد مؤقت جديد + رابط تفعيل 2FA جديد لموظف عادي نسي/غلط
+    بيانات دخوله — بديل ويب آمن لـ`admin_bootstrap recover` الـCLI، اللي
+    كان قبل كده الطريقة الوحيدة (لازم SSH على السيرفر فعليًا). مقصور
+    عمدًا على الأدوار العادية: super_admin/owner يفضلوا CLI-only بنفس
+    القيد اللي `provision_account_bootstrap`'s `create` بيفرضه فعليًا
+    (`BOOTSTRAP_CREATABLE_ROLES`) — جلسة سوبر أدمن مخترقة على الويب
+    ميتقدرش تولّد بيانات دخول لحساب سوبر أدمن/مالك تاني."""
+    from app.core.deps import revoke_user_tokens  # noqa: PLC0415
+    from app.core.deps import MANDATORY_2FA_ROLES  # noqa: PLC0415
+    from app.core.kernel.auth.repository import delete_refresh_tokens_for_user  # noqa: PLC0415
+    from app.core.kernel.auth.service import AuthService, BOOTSTRAP_CREATABLE_ROLES  # noqa: PLC0415
+    from app.core.kernel.models.user import TwoFactorRecoveryCode  # noqa: PLC0415
+    from app.core.kernel.security import get_password_hash  # noqa: PLC0415
+
+    user = crud.lock_user_for_update(db, user_id)
+    if not user:
+        raise UserNotFoundError(f"المستخدم {user_id} غير موجود")
+    if user.role in BOOTSTRAP_CREATABLE_ROLES:
+        raise PermissionError(
+            "حسابات super_admin/owner لا تُعاد تعيينها عبر الويب — "
+            "استخدم `python -m app.admin_bootstrap recover` من على "
+            "السيرفر مباشرة."
+        )
+
+    temporary_password = AuthService._new_temporary_password()
+    requires_enrollment = user.role in MANDATORY_2FA_ROLES
+    enrollment_token = secrets.token_urlsafe(32) if requires_enrollment else None
+    enrollment_expires_at = (
+        datetime.now(timezone.utc) + timedelta(
+            minutes=settings.TWO_FACTOR_ENROLLMENT_TOKEN_TTL_MINUTES,
+        )
+        if requires_enrollment else None
+    )
+
+    user.password_hash = get_password_hash(temporary_password)
+    user.must_change_password = True
+    user.failed_login_attempts = 0
+    user.account_locked_until = None
+    user.two_factor_enabled = False
+    user.two_factor_secret = None
+    user.two_factor_last_used_step = None
+    user.two_factor_bootstrap_required = requires_enrollment
+    user.two_factor_enrollment_token_hash = (
+        hashlib.sha256(enrollment_token.encode()).hexdigest()
+        if enrollment_token else None
+    )
+    user.two_factor_enrollment_expires_at = enrollment_expires_at
+    db.query(TwoFactorRecoveryCode).filter(
+        TwoFactorRecoveryCode.user_id == user.id,
+    ).delete(synchronize_session=False)
+    delete_refresh_tokens_for_user(db, user.id)
+
+    from app.modules.core.crud import create_audit_log  # noqa: PLC0415
+    from app.modules.core.schemas import AuditLogCreate  # noqa: PLC0415
+    create_audit_log(db, AuditLogCreate(
+        user_id=reset_by, branch_id=None, action="reset_staff_credentials",
+        entity_type="user", entity_id=user.id,
+        new_data=json.dumps({
+            "requires_2fa_enrollment": requires_enrollment,
+            **_step_up_audit_context(
+                reason=reason,
+                step_up_public_reference=step_up_public_reference,
+                assurance_method=assurance_method,
+            ),
+        }),
+    ))
+    db.commit()
+    # التوكنات الحالية لازم تتجدد بعد تغيير أمني زي ده — نفس نمط
+    # force_reset_2fa/update_user_role.
+    revoke_user_tokens(user.id)
+    db.refresh(user)
+    return {
+        "user": user,
+        "temporary_password": temporary_password,
+        "enrollment_token": enrollment_token,
+        "enrollment_expires_at": enrollment_expires_at,
+    }
 
 
 # ─────────────────────── Settings ────────────────────────────────────
@@ -833,6 +995,14 @@ def upsert_setting(
             )
         if branch_id is not None and user_level(actor) < 100:
             assert_branch_access(db, actor, branch_id, "تعديل إعدادات هذا الفرع")
+
+    # Typed operational settings must be validated before they can become a
+    # misleading saved value.  The Settings table is intentionally generic,
+    # so domain-specific parsing stays in the pure domain engine.
+    if key == "beach.capacity_max":
+        from app.resort_os.beach_engine import parse_beach_capacity_max  # noqa: PLC0415
+
+        value = str(parse_beach_capacity_max(value))
 
     old_row = crud.get_setting_exact(db, key, branch_id)
     old_value = old_row.value if old_row else None

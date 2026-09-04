@@ -52,6 +52,17 @@ SENSITIVE_ACTIONS: dict[str, SensitiveAction] = {
         SensitiveAction("cash_movement", "حركة كاش يدوية (إيداع/سحب/تصحيح/فتح درج)"),
         SensitiveAction("view_other_cashier_shift_invoices", "عرض فواتير وردية كاشير تاني"),
         SensitiveAction("override_credit_limit", "تجاوز حد حساب آجل شخصي", min_approver_level=60),
+        # 2026-08-19 (طلب Mohamed) — مش "دايمًا محتاج موافقة" زي باقي
+        # الكتالوج، بل مشروط بمبلغ (راجع settings.EXPENSE_APPROVAL_
+        # THRESHOLD وfinance.services.record_expense) — قرار الحد نفسه
+        # جوه finance.services، مش هنا (الملف ده بيسجّل "مين يوافق"، مش
+        # "امتى الموافقة مطلوبة أصلاً").
+        # min_approver_level=80 (admin) عمدًا مش 60 الافتراضي: كل الأدوار
+        # المسموح لها أصلاً تسجّل سند مصروفات (accountant=70، manager=60،
+        # راجع get_finance_user) لو الحد فضل 60 كان أي محاسب هيبقى "مؤهّل
+        # بنفسه" تلقائيًا (70>=60) والبوابة كلها هتبقى بلا أثر عمليًا —
+        # المطلوب فعليًا إشراف admin+ فوق مستوى المحاسب/المدير نفسه.
+        SensitiveAction("record_expense", "تسجيل سند مصروفات فوق الحد المسموح", min_approver_level=80),
     ]
 }
 
@@ -63,11 +74,16 @@ def require_approval(
     acting_user_level: int,
     approver_user_id: Optional[int],
     approver_pin: Optional[str],
+    target_branch_id: int,
 ) -> Optional[int]:
     """يتحقق من موافقة PIN لإجراء حسّاس معروف في SENSITIVE_ACTIONS، بقراءة
     min_approver_level من الكتالوج بدل ما الـ caller يقفله inline. بيرجّع
     ``approved_by`` زي resolve_pin_approval بالظبط (None لو المنفّذ نفسه
-    كان مؤهّل أصلاً)."""
+    كان مؤهّل أصلاً).
+
+    ``target_branch_id`` إجباري (مراجعة Codex 2026-08-31، SEC-07) —
+    core.services.resolve_pin_approval بقى بيتحقق إن المعتمِد فعلاً مصرح
+    له بالفرع ده، مش بس دوره وPIN بتاعه."""
     policy = SENSITIVE_ACTIONS.get(action_key)
     if not policy:
         raise ValueError(f"إجراء غير معروف في Policy Engine: {action_key}")
@@ -77,6 +93,7 @@ def require_approval(
     return core_services.resolve_pin_approval(
         db, acting_user_level, approver_user_id, approver_pin,
         min_approver_level=policy.min_approver_level,
+        target_branch_id=target_branch_id,
     )
 
 

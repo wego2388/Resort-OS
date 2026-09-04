@@ -9,7 +9,7 @@ from fastapi.responses import Response
 
 from app.core.deps import (
     DbDep, get_admin_user, get_current_active_user,
-    get_hr_manager_user, get_manager_user, get_super_admin_user,
+    get_hr_manager_user, get_hr_reader_user, get_super_admin_user,
     require_permission,
 )
 from app.modules.hr import crud, services
@@ -53,13 +53,21 @@ router = APIRouter(tags=["hr"])
 @router.get("/hr/employees", response_model=PaginatedResponse)
 def list_employees(
     db: DbDep,
-    _=Depends(get_manager_user),
+    user=Depends(get_hr_reader_user),
     branch_id: int = Query(...),
     status_filter: Optional[str] = Query(None, alias="status"),
     search: Optional[str] = Query(None, max_length=100),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
 ):
+    """⚠️ باج حقيقي كان هنا (2026-08-28، تدقيق ما قبل الإطلاق): مفيش أي فحص
+    عزل فرع على قائمة الموظفين — عكس get_employee المفردة المجاورة اللي
+    عندها الفحص من الأساس (نفس فئة IDOR §13). قائمة كاملة بأرقام قومية
+    ورواتب لأي فرع كانت متاحة بمجرد تمرير branch_id مختلف."""
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "عرض قائمة الموظفين")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     items, total = crud.list_employees(db, branch_id, status_filter, search,
                                         skip=(page - 1) * size, limit=size)
     return PaginatedResponse(total=total, page=page, size=size,
@@ -89,9 +97,9 @@ def create_employee(
 
 
 @router.get("/hr/employees/{employee_id}", response_model=EmployeeRead)
-def get_employee(employee_id: int, db: DbDep, user=Depends(get_manager_user)):
+def get_employee(employee_id: int, db: DbDep, user=Depends(get_hr_reader_user)):
     """⚠️ باج حقيقي كان هنا (2026-08-03): مفيش أي فحص عزل فرع خالص — أي
-    مدير (get_manager_user، مش شرط HR) من أي فرع كان يقدر يشوف بروفايل
+    مدير (get_hr_reader_user، مش شرط HR) من أي فرع كان يقدر يشوف بروفايل
     موظف أي فرع تاني بمجرد تخمين employee_id (راتب + الرقم القومي بعد
     فك التشفير)، عكس update_employee المجاورة اللي عندها الفحص ده من
     الأساس. نفس فئة IDOR الموثّقة في §13 من CLAUDE.md."""
@@ -107,7 +115,7 @@ def get_employee(employee_id: int, db: DbDep, user=Depends(get_manager_user)):
 
 @router.get("/hr/employees/{employee_id}/payslips", response_model=PaginatedResponse)
 def get_employee_payslips(
-    employee_id: int, db: DbDep, user=Depends(get_manager_user),
+    employee_id: int, db: DbDep, user=Depends(get_hr_reader_user),
     page: int = Query(1, ge=1),
     size: int = Query(24, ge=1, le=60),
 ):
@@ -148,16 +156,25 @@ def update_employee(
     db: DbDep,
     user=Depends(get_hr_manager_user),
 ):
+    """⚠️ باج حقيقي كان هنا (مراجعة Codex 2026-08-30، H-07): كل ValueError
+    من services.update_employee كان بيترجم لـ404 "غير موجود" — حتى أخطاء
+    تحقق حقيقية (زي وعاء تأمين أكبر من الراتب الأساسي، اتضافت في نفس
+    المراجعة) كانت بترجع 404 مضلّلة بدل 400. دلوقتي مفصولين: موظف غير
+    موجود = 404، أي فشل تحقق تاني من update_employee نفسها = 400."""
     try:
         employee = services.get_employee_or_404(db, employee_id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+    try:
         core_services.assert_branch_access(
             db, user, employee.branch_id, "تعديل بيانات موظف",
         )
-        return services.update_employee(db, employee_id, data, updated_by=user.id)
     except PermissionError as exc:
         raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+    try:
+        return services.update_employee(db, employee_id, data, updated_by=user.id)
     except ValueError as exc:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
 @router.patch("/hr/employees/{employee_id}/link-user", response_model=EmployeeRead)
@@ -203,7 +220,7 @@ def link_employee_user(
 def get_payslip(
     employee_id: int,
     db: DbDep,
-    _=Depends(get_manager_user),
+    user=Depends(get_hr_reader_user),
     period_year:  int = Query(..., ge=2020),
     period_month: int = Query(..., ge=1, le=12),
     penalty_days: int = Query(0, ge=0),
@@ -211,7 +228,17 @@ def get_payslip(
     overtime_amount: float = Query(0.0, ge=0),
     late_penalty_amount: float = Query(0.0, ge=0),
 ):
+    """⚠️ باج حقيقي كان هنا (2026-08-28، تدقيق ما قبل الإطلاق): حساب راتب حي
+    (صافي/ضريبة/تأمين) لأي employee_id من غير أي فحص عزل فرع — نفس فئة
+    get_employee's IDOR الموثّق §13."""
     from decimal import Decimal  # noqa: PLC0415
+    employee = crud.get_employee(db, employee_id)
+    if not employee:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"الموظف {employee_id} غير موجود")
+    try:
+        core_services.assert_branch_access(db, user, employee.branch_id, "حساب راتب موظف")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     try:
         return services.calculate_employee_payroll(
             db, employee_id, period_year, period_month,
@@ -229,9 +256,18 @@ def get_payslip(
 
 @router.get("/hr/employees/{employee_id}/allowances", response_model=list[AllowanceRead])
 def list_employee_allowances(
-    employee_id: int, db: DbDep, _=Depends(get_manager_user),
+    employee_id: int, db: DbDep, user=Depends(get_hr_reader_user),
     active_only: bool = Query(True),
 ):
+    """⚠️ باج حقيقي كان هنا (2026-08-28): مفيش فحص عزل فرع خالص — نفس فئة
+    IDOR §13، راجع create_employee_allowance المجاورة اللي عندها الفحص."""
+    employee = crud.get_employee(db, employee_id)
+    if not employee:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"الموظف {employee_id} غير موجود")
+    try:
+        core_services.assert_branch_access(db, user, employee.branch_id, "عرض بدلات موظف")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     return [AllowanceRead.model_validate(a)
             for a in crud.list_allowances_for_employee(db, employee_id, active_only)]
 
@@ -312,11 +348,28 @@ def create_salary_advance(data: SalaryAdvanceCreate, db: DbDep, user=Depends(get
 
 @router.get("/hr/salary-advances", response_model=list[SalaryAdvanceRead])
 def list_salary_advances(
-    db: DbDep, _=Depends(get_manager_user),
+    db: DbDep, user=Depends(get_hr_reader_user),
     employee_id: Optional[int] = Query(None),
     branch_id: Optional[int] = Query(None),
     status_filter: Optional[str] = Query(None, alias="status"),
 ):
+    """⚠️ باج حقيقي كان هنا (2026-08-28): تسريب سلف/مبالغ كل الفروع لو
+    الفلترين اتسابوا فاضيين — نفس فئة IDOR §13. لازم employee_id أو
+    branch_id عشان نقدر نتحقق من عزل الفرع (الفرونت إند بيبعت employee_id
+    دايمًا فعليًا)."""
+    try:
+        if employee_id is not None:
+            employee = services.get_employee_or_404(db, employee_id)
+            core_services.assert_branch_access(db, user, employee.branch_id, "عرض سلف موظف")
+        elif branch_id is not None:
+            core_services.assert_branch_access(db, user, branch_id, "عرض سلف فرع")
+        else:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                                 "لازم تحدّد employee_id أو branch_id")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
     return [SalaryAdvanceRead.model_validate(a)
             for a in crud.list_salary_advances(db, employee_id, branch_id, status_filter)]
 
@@ -358,7 +411,7 @@ def cancel_salary_advance(
 
 @router.post("/hr/advance-payments", response_model=AdvancePaymentRead,
              status_code=status.HTTP_201_CREATED)
-def create_advance_payment(data: AdvancePaymentCreate, db: DbDep, user=Depends(get_manager_user)):
+def create_advance_payment(data: AdvancePaymentCreate, db: DbDep, user=Depends(get_hr_reader_user)):
     try:
         core_services.assert_branch_access(db, user, data.branch_id, "تسجيل دفعة سلفة")
         return services.create_advance_payment(db, data, recorded_by=user.id)
@@ -374,11 +427,26 @@ def create_advance_payment(data: AdvancePaymentCreate, db: DbDep, user=Depends(g
 
 @router.get("/hr/advance-payments", response_model=list[AdvancePaymentRead])
 def list_advance_payments(
-    db: DbDep, _=Depends(get_manager_user),
+    db: DbDep, user=Depends(get_hr_reader_user),
     employee_id: Optional[int] = Query(None),
     branch_id: Optional[int] = Query(None),
     deducted: Optional[bool] = Query(None),
 ):
+    """⚠️ باج حقيقي كان هنا (2026-08-28) — نفس فئة list_salary_advances
+    المجاورة بالظبط، راجع تعليقها."""
+    try:
+        if employee_id is not None:
+            employee = services.get_employee_or_404(db, employee_id)
+            core_services.assert_branch_access(db, user, employee.branch_id, "عرض دفعات سلفة موظف")
+        elif branch_id is not None:
+            core_services.assert_branch_access(db, user, branch_id, "عرض دفعات سلفة فرع")
+        else:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                                 "لازم تحدّد employee_id أو branch_id")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
     return [AdvancePaymentRead.model_validate(p)
             for p in crud.list_advance_payments(db, employee_id, branch_id, deducted)]
 
@@ -389,10 +457,18 @@ def list_advance_payments(
 
 @router.get("/hr/leave-balance-monthly", response_model=list[LeaveBalanceMonthlyRead])
 def list_leave_balance_monthly(
-    db: DbDep, _=Depends(get_manager_user),
+    db: DbDep, user=Depends(get_hr_reader_user),
     employee_id: int = Query(...),
     limit: int = Query(24, ge=1, le=60),
 ):
+    """⚠️ باج حقيقي كان هنا (2026-08-28) — مفيش فحص عزل فرع، نفس فئة IDOR §13."""
+    try:
+        employee = services.get_employee_or_404(db, employee_id)
+        core_services.assert_branch_access(db, user, employee.branch_id, "عرض رصيد إجازات موظف")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
     return [LeaveBalanceMonthlyRead.model_validate(r)
             for r in crud.list_leave_balance_monthly(db, employee_id, limit)]
 
@@ -401,12 +477,17 @@ def list_leave_balance_monthly(
 
 @router.get("/hr/leaderboard", response_model=list[LeaderboardEntry])
 def sales_leaderboard(
-    db: DbDep, _=Depends(get_manager_user),
+    db: DbDep, user=Depends(get_hr_reader_user),
     branch_id: int = Query(...),
     date_from: date = Query(...),
     date_to: date = Query(...),
 ):
-    """ترتيب الموظفين حسب إجمالي المبيعات الحقيقية (مطعم/كافيه/شاطئ) خلال المدى."""
+    """ترتيب الموظفين حسب إجمالي المبيعات الحقيقية (مطعم/كافيه/شاطئ) خلال المدى.
+    ⚠️ باج حقيقي كان هنا (2026-08-28): مفيش فحص عزل فرع."""
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "عرض لوحة الصدارة")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     return services.get_sales_leaderboard(db, branch_id, date_from, date_to)
 
 
@@ -414,11 +495,17 @@ def sales_leaderboard(
 
 @router.get("/hr/payroll-runs", response_model=PaginatedResponse)
 def list_payroll_runs(
-    db: DbDep, _=Depends(get_manager_user),
+    db: DbDep, user=Depends(get_hr_reader_user),
     branch_id: int = Query(...),
     page: int = Query(1, ge=1),
     size: int = Query(24, ge=1, le=60),
 ):
+    """⚠️ باج حقيقي كان هنا (2026-08-28): مفيش فحص عزل فرع — إجمالي رواتب
+    فرع تاني كان متاح بمجرد تمرير branch_id مختلف."""
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "عرض مسيرات رواتب")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     items, total = crud.list_payroll_runs(db, branch_id, (page - 1) * size, size)
     return PaginatedResponse(total=total, page=page, size=size,
                              items=[PayrollRunRead.model_validate(r) for r in items])
@@ -429,12 +516,12 @@ def list_payroll_runs(
 # بيرجّع نفس البيانات بدل ما يرجّع 404 حقيقي.
 @router.get("/hr/payroll/runs", response_model=PaginatedResponse)
 def list_payroll_runs_alias(
-    db: DbDep, _=Depends(get_manager_user),
+    db: DbDep, user=Depends(get_hr_reader_user),
     branch_id: int = Query(...),
     page: int = Query(1, ge=1),
     size: int = Query(24, ge=1, le=60),
 ):
-    return list_payroll_runs(db, _, branch_id, page, size)
+    return list_payroll_runs(db, user, branch_id, page, size)
 
 
 @router.post("/hr/payroll-runs", response_model=PayrollRunRead,
@@ -452,7 +539,7 @@ def create_payroll_run(data: PayrollRunCreate, db: DbDep, user=Depends(get_admin
 
 
 @router.get("/hr/payroll-runs/{run_id}", response_model=PayrollRunRead)
-def get_payroll_run(run_id: int, db: DbDep, user=Depends(get_manager_user)):
+def get_payroll_run(run_id: int, db: DbDep, user=Depends(get_hr_reader_user)):
     run = crud.get_payroll_run(db, run_id)
     if not run:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "كشف الرواتب غير موجود")
@@ -486,7 +573,7 @@ def approve_payroll_run(run_id: int, db: DbDep, user=Depends(get_current_active_
 
 @router.get("/hr/payroll-runs/{run_id}/lines",
             response_model=list[PayrollLineRead])
-def list_payroll_lines(run_id: int, db: DbDep, user=Depends(get_manager_user)):
+def list_payroll_lines(run_id: int, db: DbDep, user=Depends(get_hr_reader_user)):
     # ⚠️ باج حقيقي اتصلح هنا (2026-08-04): مفيش أي تحقق فرع — كان أي
     # مدير من أي فرع يقدر يشوف تفاصيل راتب كل موظف في فرع تاني (المرتب
     # الفعلي، البدلات، الخصومات) بمجرد تخمين run_id. أخطر endpoint في
@@ -505,7 +592,7 @@ def list_payroll_lines(run_id: int, db: DbDep, user=Depends(get_manager_user)):
 
 @router.post("/hr/attendance", response_model=AttendanceRecordRead,
              status_code=status.HTTP_201_CREATED)
-def record_attendance(data: AttendanceRecordCreate, db: DbDep, user=Depends(get_manager_user)):
+def record_attendance(data: AttendanceRecordCreate, db: DbDep, user=Depends(get_hr_reader_user)):
     try:
         core_services.assert_branch_access(db, user, data.branch_id, "تسجيل حضور")
     except PermissionError as exc:
@@ -517,7 +604,7 @@ def record_attendance(data: AttendanceRecordCreate, db: DbDep, user=Depends(get_
 
 
 @router.patch("/hr/attendance/{record_id}", response_model=AttendanceRecordRead)
-def update_attendance(record_id: int, data: AttendanceRecordUpdate, db: DbDep, user=Depends(get_manager_user)):
+def update_attendance(record_id: int, data: AttendanceRecordUpdate, db: DbDep, user=Depends(get_hr_reader_user)):
     """تصحيح إداري لسجل حضور موجود (wagdy.md #8) — مدير+ بس، زي أي تعديل
     حسّاس على بيانات موظف تاني. مفيش validation إضافية هنا غير اللي في
     الـ schema نفسه — الحقول كلها Optional وبتتحدّث بـ exclude_unset.
@@ -539,7 +626,7 @@ def update_attendance(record_id: int, data: AttendanceRecordUpdate, db: DbDep, u
 
 @router.get("/hr/attendance", response_model=PaginatedResponse)
 def list_attendance(
-    db: DbDep, _=Depends(get_manager_user),
+    db: DbDep, user=Depends(get_hr_reader_user),
     employee_id: Optional[int] = Query(None),
     branch_id:   Optional[int] = Query(None),
     date_from:   Optional[date] = Query(None),
@@ -547,6 +634,21 @@ def list_attendance(
     page: int = Query(1, ge=1),
     size: int = Query(50, ge=1, le=200),
 ):
+    """⚠️ باج حقيقي كان هنا (2026-08-28): تسريب سجلات حضور كل الفروع لو
+    الفلترين اتسابوا فاضيين — نفس فئة IDOR §13."""
+    try:
+        if employee_id is not None:
+            employee = services.get_employee_or_404(db, employee_id)
+            core_services.assert_branch_access(db, user, employee.branch_id, "عرض حضور موظف")
+        elif branch_id is not None:
+            core_services.assert_branch_access(db, user, branch_id, "عرض حضور فرع")
+        else:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                                 "لازم تحدّد employee_id أو branch_id")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
     items, total = crud.list_attendance(db, employee_id, branch_id, date_from, date_to,
                                         (page - 1) * size, size)
     return PaginatedResponse(total=total, page=page, size=size,
@@ -559,13 +661,25 @@ async def import_attendance_excel(
     branch_id: int = Query(...),
     period_year: int = Query(..., ge=2020, le=2099),
     period_month: int = Query(..., ge=1, le=12),
-    user=Depends(get_manager_user),
+    user=Depends(get_hr_reader_user),
 ):
     """wagdy.md H-07 — رفع ملف حضور Excel (عمود موظف أول + عمود لكل يوم في
     الشهر، قيمة الخلية كود حالة زي p/v/u) وتحويله لسجلات AttendanceRecord
-    حقيقية دفعة واحدة. نفس نمط POST /timeshare/contracts/import-excel."""
+    حقيقية دفعة واحدة. نفس نمط POST /timeshare/contracts/import-excel.
+
+    مراجعة Codex 2026-08-31 (SEC-10): services.import_attendance_excel كان
+    عنده أصلاً حد 5 ميجا (zip bomb protection) — بس بعد قراءة الملف كامل في
+    الذاكرة، ومن غير أي فحص نوع محتوى قبلها. فحص content-type هنا (نفس نمط
+    dining.upload_item_image) بيرفض الملفات الغلط برسالة واضحة قبل ما تتقرأ
+    أصلاً، بدل استثناء openpyxl مبهم."""
     try:
         core_services.assert_branch_access(db, user, branch_id, "استيراد حضور من Excel")
+        ALLOWED_EXCEL_TYPES = {
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/octet-stream",  # بعض المتصفحات/الأدوات بتبعت النوع العام ده لملفات xlsx
+        }
+        if file.content_type not in ALLOWED_EXCEL_TYPES or not (file.filename or "").lower().endswith(".xlsx"):
+            raise ValueError("الملف لازم يكون Excel (.xlsx) صحيح")
         content = await file.read()
         return services.import_attendance_excel(db, branch_id, period_year, period_month, content)
     except PermissionError as exc:
@@ -578,15 +692,25 @@ async def import_attendance_excel(
 
 @router.get("/hr/departments", response_model=list[DepartmentRead])
 def list_departments(
-    db: DbDep, _=Depends(get_manager_user),
+    db: DbDep, user=Depends(get_hr_reader_user),
     branch_id: int = Query(...),
 ):
+    """⚠️ باج حقيقي كان هنا (مراجعة Codex 2026-08-30، H-01): مفيش فحص عزل فرع."""
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "عرض أقسام فرع")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     return [DepartmentRead.model_validate(d) for d in crud.list_departments(db, branch_id)]
 
 
 @router.post("/hr/departments", response_model=DepartmentRead,
              status_code=status.HTTP_201_CREATED)
-def create_department(data: DepartmentCreate, db: DbDep, _=Depends(get_manager_user)):
+def create_department(data: DepartmentCreate, db: DbDep, user=Depends(get_hr_reader_user)):
+    """⚠️ باج حقيقي كان هنا (مراجعة Codex 2026-08-30، H-01): مفيش فحص عزل فرع."""
+    try:
+        core_services.assert_branch_access(db, user, data.branch_id, "إضافة قسم")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     dept = crud.create_department(db, data)
     db.commit()
     db.refresh(dept)
@@ -597,15 +721,25 @@ def create_department(data: DepartmentCreate, db: DbDep, _=Depends(get_manager_u
 
 @router.get("/hr/shifts", response_model=list[ShiftRead])
 def list_shifts(
-    db: DbDep, _=Depends(get_manager_user),
+    db: DbDep, user=Depends(get_hr_reader_user),
     branch_id: int = Query(...),
 ):
+    """⚠️ باج حقيقي كان هنا (مراجعة Codex 2026-08-30، H-01): مفيش فحص عزل فرع."""
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "عرض ورديات فرع")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     return [ShiftRead.model_validate(s) for s in crud.list_shifts(db, branch_id)]
 
 
 @router.post("/hr/shifts", response_model=ShiftRead,
              status_code=status.HTTP_201_CREATED)
-def create_shift(data: ShiftCreate, db: DbDep, _=Depends(get_manager_user)):
+def create_shift(data: ShiftCreate, db: DbDep, user=Depends(get_hr_reader_user)):
+    """⚠️ باج حقيقي كان هنا (مراجعة Codex 2026-08-30، H-01): مفيش فحص عزل فرع."""
+    try:
+        core_services.assert_branch_access(db, user, data.branch_id, "إضافة وردية")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     shift = crud.create_shift(db, data)
     db.commit()
     db.refresh(shift)
@@ -618,7 +752,12 @@ def create_shift(data: ShiftCreate, db: DbDep, _=Depends(get_manager_user)):
 # مش hardcoded في الكود.
 
 @router.get("/hr/attendance-policy", response_model=AttendancePolicyRead)
-def get_attendance_policy(db: DbDep, _=Depends(get_manager_user), branch_id: int = Query(...)):
+def get_attendance_policy(db: DbDep, user=Depends(get_hr_reader_user), branch_id: int = Query(...)):
+    """⚠️ باج حقيقي كان هنا (مراجعة Codex 2026-08-30، H-01): مفيش فحص عزل فرع."""
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "عرض سياسة حضور")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     policy = crud.get_attendance_policy(db, branch_id)
     if not policy:
         raise HTTPException(status.HTTP_404_NOT_FOUND,
@@ -628,8 +767,13 @@ def get_attendance_policy(db: DbDep, _=Depends(get_manager_user), branch_id: int
 
 @router.put("/hr/attendance-policy", response_model=AttendancePolicyRead)
 def upsert_attendance_policy(
-    data: AttendancePolicyUpsert, db: DbDep, _=Depends(get_manager_user), branch_id: int = Query(...),
+    data: AttendancePolicyUpsert, db: DbDep, user=Depends(get_hr_reader_user), branch_id: int = Query(...),
 ):
+    """⚠️ باج حقيقي كان هنا (مراجعة Codex 2026-08-30، H-01): مفيش فحص عزل فرع."""
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "تعديل سياسة حضور")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     policy = crud.upsert_attendance_policy(db, branch_id, data)
     db.commit()
     db.refresh(policy)
@@ -650,7 +794,12 @@ def list_leave_types(
 
 @router.post("/hr/leave-types", response_model=LeaveTypeRead,
              status_code=status.HTTP_201_CREATED)
-def create_leave_type(data: LeaveTypeCreate, db: DbDep, _=Depends(get_manager_user)):
+def create_leave_type(data: LeaveTypeCreate, db: DbDep, user=Depends(get_hr_reader_user)):
+    """⚠️ باج حقيقي كان هنا (مراجعة Codex 2026-08-30، H-01): مفيش فحص عزل فرع."""
+    try:
+        core_services.assert_branch_access(db, user, data.branch_id, "إضافة نوع إجازة")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     lt = crud.create_leave_type(db, data)
     db.commit()
     db.refresh(lt)
@@ -661,7 +810,12 @@ def create_leave_type(data: LeaveTypeCreate, db: DbDep, _=Depends(get_manager_us
 
 @router.post("/hr/leave-requests", response_model=LeaveRequestRead,
              status_code=status.HTTP_201_CREATED)
-def create_leave_request(data: LeaveRequestCreate, db: DbDep, _=Depends(get_manager_user)):
+def create_leave_request(data: LeaveRequestCreate, db: DbDep, user=Depends(get_hr_reader_user)):
+    """⚠️ باج حقيقي كان هنا (مراجعة Codex 2026-08-30، H-01): مفيش فحص عزل فرع."""
+    try:
+        core_services.assert_branch_access(db, user, data.branch_id, "تسجيل طلب إجازة")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     try:
         req = services.request_leave(
             db,
@@ -679,13 +833,18 @@ def create_leave_request(data: LeaveRequestCreate, db: DbDep, _=Depends(get_mana
 
 @router.get("/hr/leave-requests", response_model=PaginatedResponse)
 def list_leave_requests(
-    db: DbDep, _=Depends(get_manager_user),
+    db: DbDep, user=Depends(get_hr_reader_user),
     branch_id:   int = Query(...),
     employee_id: Optional[int] = Query(None),
     status_filter: Optional[str] = Query(None, alias="status"),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
 ):
+    """⚠️ باج حقيقي كان هنا (2026-08-28): مفيش فحص عزل فرع."""
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "عرض طلبات إجازة")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     items, total = crud.list_leave_requests(
         db, branch_id, employee_id, status_filter, (page - 1) * size, size
     )
@@ -726,7 +885,7 @@ def approve_leave_request(
 @router.patch("/hr/leave-requests/{request_id}/reject",
               response_model=LeaveRequestRead)
 def reject_leave_request(
-    request_id: int, body: LeaveRejectRequest, db: DbDep, user=Depends(get_manager_user)
+    request_id: int, body: LeaveRejectRequest, db: DbDep, user=Depends(get_hr_reader_user)
 ):
     existing = crud.get_leave_request(db, request_id)
     if not existing:
@@ -756,19 +915,19 @@ def reject_leave_request(
 
 @router.get("/hr/leaves", response_model=PaginatedResponse)
 def list_leaves_alias(
-    db: DbDep, _=Depends(get_manager_user),
+    db: DbDep, user=Depends(get_hr_reader_user),
     branch_id:   int = Query(...),
     employee_id: Optional[int] = Query(None),
     status_filter: Optional[str] = Query(None, alias="status"),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
 ):
-    return list_leave_requests(db, _, branch_id, employee_id, status_filter, page, size)
+    return list_leave_requests(db, user, branch_id, employee_id, status_filter, page, size)
 
 
 @router.patch("/hr/leaves/{request_id}", response_model=LeaveRequestRead)
 def update_leave_status_alias(
-    request_id: int, body: LeaveStatusUpdate, db: DbDep, user=Depends(get_manager_user),
+    request_id: int, body: LeaveStatusUpdate, db: DbDep, user=Depends(get_hr_reader_user),
 ):
     existing = crud.get_leave_request(db, request_id)
     if not existing:
@@ -952,7 +1111,12 @@ def list_tax_bracket_configs(db: DbDep, _=Depends(get_admin_user)):
 
 @router.post("/hr/penalty-types", response_model=PenaltyTypeRead,
              status_code=status.HTTP_201_CREATED)
-def create_penalty_type(data: PenaltyTypeCreate, db: DbDep, _=Depends(get_manager_user)):
+def create_penalty_type(data: PenaltyTypeCreate, db: DbDep, user=Depends(get_hr_reader_user)):
+    """⚠️ باج حقيقي كان هنا (مراجعة Codex 2026-08-30، H-01): مفيش فحص عزل فرع."""
+    try:
+        core_services.assert_branch_access(db, user, data.branch_id, "إضافة نوع جزاء")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     penalty_type = crud.create_penalty_type(db, data)
     db.commit()
     db.refresh(penalty_type)
@@ -973,7 +1137,7 @@ def list_penalty_types(
 
 @router.post("/hr/penalties", response_model=EmployeePenaltyRead,
              status_code=status.HTTP_201_CREATED)
-def create_penalty(data: EmployeePenaltyCreate, db: DbDep, user=Depends(get_manager_user)):
+def create_penalty(data: EmployeePenaltyCreate, db: DbDep, user=Depends(get_hr_reader_user)):
     try:
         core_services.assert_branch_access(db, user, data.branch_id, "تسجيل جزاء")
     except PermissionError as exc:
@@ -986,11 +1150,16 @@ def create_penalty(data: EmployeePenaltyCreate, db: DbDep, user=Depends(get_mana
 
 @router.get("/hr/penalties", response_model=list[EmployeePenaltyRead])
 def list_penalties(
-    db: DbDep, _=Depends(get_manager_user),
+    db: DbDep, user=Depends(get_hr_reader_user),
     branch_id:   int = Query(...),
     employee_id: Optional[int] = Query(None),
     month:       Optional[str] = Query(None, description="YYYY-MM"),
 ):
+    """⚠️ باج حقيقي كان هنا (2026-08-28): مفيش فحص عزل فرع."""
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "عرض جزاءات فرع")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     items = crud.list_penalties(db, branch_id, employee_id, month)
     return [EmployeePenaltyRead.model_validate(p) for p in items]
 
@@ -1001,18 +1170,28 @@ def list_penalties(
 
 @router.get("/hr/rota/templates", response_model=list[RotaTemplateRead])
 def list_rota_templates(
-    db: DbDep, _=Depends(get_manager_user),
+    db: DbDep, user=Depends(get_hr_reader_user),
     branch_id: int = Query(...),
     department_id: Optional[int] = Query(None),
     is_active: Optional[bool] = Query(None),
 ):
+    """⚠️ باج حقيقي كان هنا (2026-08-28): مفيش فحص عزل فرع."""
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "عرض قوالب جدول فرع")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     items = crud.list_rota_templates(db, branch_id, department_id, is_active)
     return [RotaTemplateRead.model_validate(t) for t in items]
 
 
 @router.post("/hr/rota/templates", response_model=RotaTemplateRead,
              status_code=status.HTTP_201_CREATED)
-def create_rota_template(data: RotaTemplateCreate, db: DbDep, _=Depends(get_manager_user)):
+def create_rota_template(data: RotaTemplateCreate, db: DbDep, user=Depends(get_hr_reader_user)):
+    """⚠️ باج حقيقي كان هنا (مراجعة Codex 2026-08-30، H-01): مفيش فحص عزل فرع."""
+    try:
+        core_services.assert_branch_access(db, user, data.branch_id, "إضافة قالب جدول")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     template = crud.create_rota_template(db, data)
     db.commit()
     db.refresh(template)
@@ -1020,16 +1199,21 @@ def create_rota_template(data: RotaTemplateCreate, db: DbDep, _=Depends(get_mana
 
 
 @router.get("/hr/rota/templates/{template_id}", response_model=RotaTemplateRead)
-def get_rota_template(template_id: int, db: DbDep, _=Depends(get_manager_user)):
+def get_rota_template(template_id: int, db: DbDep, user=Depends(get_hr_reader_user)):
+    """⚠️ باج حقيقي كان هنا (مراجعة Codex 2026-08-30، H-01): مفيش فحص عزل فرع."""
     template = crud.get_rota_template(db, template_id)
     if not template:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"قالب الجدول {template_id} غير موجود")
+    try:
+        core_services.assert_branch_access(db, user, template.branch_id, "عرض قالب جدول")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     return RotaTemplateRead.model_validate(template)
 
 
 @router.patch("/hr/rota/templates/{template_id}", response_model=RotaTemplateRead)
 def update_rota_template(template_id: int, data: RotaTemplateUpdate, db: DbDep,
-                         user=Depends(get_manager_user)):
+                         user=Depends(get_hr_reader_user)):
     template = crud.get_rota_template(db, template_id)
     if not template:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"قالب الجدول {template_id} غير موجود")
@@ -1047,12 +1231,17 @@ def update_rota_template(template_id: int, data: RotaTemplateUpdate, db: DbDep,
 
 @router.get("/hr/rota", response_model=list[RotaAssignmentRead])
 def get_rota(
-    db: DbDep, _=Depends(get_manager_user),
+    db: DbDep, user=Depends(get_hr_reader_user),
     branch_id:   int = Query(...),
     week_start:  date = Query(...),
     week_end:    date = Query(...),
     employee_id: Optional[int] = Query(None),
 ):
+    """⚠️ باج حقيقي كان هنا (مراجعة Codex 2026-08-30، H-01): مفيش فحص عزل فرع."""
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "عرض جدول ورديات فرع")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     items = crud.list_rota_assignments(db, branch_id, week_start, week_end, employee_id)
     return [RotaAssignmentRead.model_validate(a) for a in items]
 
@@ -1073,7 +1262,7 @@ def _assert_payroll_run_branch_access(db, user, run_id: int) -> None:
 
 
 @router.get("/hr/payroll/{run_id}/payslip/{employee_id}", response_model=None)
-def download_payslip(run_id: int, employee_id: int, db: DbDep, user=Depends(get_manager_user)):
+def download_payslip(run_id: int, employee_id: int, db: DbDep, user=Depends(get_hr_reader_user)):
     _assert_payroll_run_branch_access(db, user, run_id)
     try:
         pdf = services.generate_payslip_pdf(db, run_id, employee_id)
@@ -1087,7 +1276,7 @@ def download_payslip(run_id: int, employee_id: int, db: DbDep, user=Depends(get_
 
 
 @router.get("/hr/payroll/{run_id}/excel", response_model=None)
-def download_payroll_excel(run_id: int, db: DbDep, user=Depends(get_manager_user)):
+def download_payroll_excel(run_id: int, db: DbDep, user=Depends(get_hr_reader_user)):
     _assert_payroll_run_branch_access(db, user, run_id)
     try:
         xlsx = services.generate_payroll_excel(db, run_id)
@@ -1101,7 +1290,7 @@ def download_payroll_excel(run_id: int, db: DbDep, user=Depends(get_manager_user
 
 
 @router.get("/hr/payroll/{run_id}/pdf", response_model=None)
-def download_payroll_bulk_pdf(run_id: int, db: DbDep, user=Depends(get_manager_user)):
+def download_payroll_bulk_pdf(run_id: int, db: DbDep, user=Depends(get_hr_reader_user)):
     """H-06 — PDF كشف مرتبات جماعي لطباعة الكشف الرسمي."""
     _assert_payroll_run_branch_access(db, user, run_id)
     try:
@@ -1117,7 +1306,7 @@ def download_payroll_bulk_pdf(run_id: int, db: DbDep, user=Depends(get_manager_u
 
 @router.post("/hr/rota/assignments", response_model=RotaAssignmentRead,
              status_code=status.HTTP_201_CREATED)
-def create_rota_assignment(data: RotaAssignmentCreate, db: DbDep, user=Depends(get_manager_user)):
+def create_rota_assignment(data: RotaAssignmentCreate, db: DbDep, user=Depends(get_hr_reader_user)):
     try:
         core_services.assert_branch_access(db, user, data.branch_id, "تعيين وردية")
     except PermissionError as exc:
@@ -1130,7 +1319,12 @@ def create_rota_assignment(data: RotaAssignmentCreate, db: DbDep, user=Depends(g
 
 @router.post("/hr/rota/swap-requests", response_model=ShiftSwapRequestRead,
              status_code=status.HTTP_201_CREATED)
-def create_swap_request(data: ShiftSwapRequestCreate, db: DbDep, _=Depends(get_current_active_user)):
+def create_swap_request(data: ShiftSwapRequestCreate, db: DbDep, user=Depends(get_current_active_user)):
+    """⚠️ باج حقيقي كان هنا (مراجعة Codex 2026-08-30، H-01): مفيش فحص عزل فرع."""
+    try:
+        core_services.assert_branch_access(db, user, data.branch_id, "طلب تبديل وردية")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     swap = crud.create_swap_request(db, data)
     db.commit()
     db.refresh(swap)
@@ -1139,7 +1333,7 @@ def create_swap_request(data: ShiftSwapRequestCreate, db: DbDep, _=Depends(get_c
 
 @router.patch("/hr/rota/swap-requests/{swap_id}/approve",
               response_model=ShiftSwapRequestRead)
-def approve_swap_request(swap_id: int, db: DbDep, user=Depends(get_manager_user)):
+def approve_swap_request(swap_id: int, db: DbDep, user=Depends(get_hr_reader_user)):
     swap = crud.get_swap_request(db, swap_id)
     if not swap:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "طلب التبديل غير موجود")

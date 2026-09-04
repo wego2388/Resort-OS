@@ -865,7 +865,7 @@ def get_hotel_consumption(
     يرجع قائمة من dicts، كل dict يمثّل فندقًا بالشكل:
     {
         contract_id, hotel_name, hotel_name_ar,
-        contract_daily_quota, contract_entry_price,
+        contract_monthly_guest_cap, contract_monthly_fee,
         total_orders, total_guests, total_revenue,
         by_outlet: [{ outlet_id, outlet_name, outlet_type,
                       orders_count, revenue }, ...]
@@ -926,8 +926,8 @@ def get_hotel_consumption(
                 "contract_id": cid,
                 "hotel_name": c.hotel_name if c else f"فندق #{cid}",
                 "hotel_name_ar": c.hotel_name_ar if c else None,
-                "contract_daily_quota": c.daily_quota if c else 0,
-                "contract_entry_price": c.entry_price if c else Decimal("0"),
+                "contract_monthly_guest_cap": c.monthly_guest_cap if c else 0,
+                "contract_monthly_fee": c.monthly_fee if c else Decimal("0"),
                 "total_orders": 0,
                 "total_guests": 0,
                 "total_revenue": Decimal("0"),

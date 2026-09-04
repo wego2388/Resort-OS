@@ -13,7 +13,7 @@ from fastapi.responses import Response
 from app.core.config import settings
 from app.core.deps import (
     DbDep, get_admin_user, get_cashier_user,
-    get_current_active_user, get_manager_user, get_websocket_user, require_permission,
+    get_manager_user, get_websocket_user, require_permission,
     user_level,
 )
 from app.modules.beach import crud, services
@@ -22,7 +22,7 @@ from app.modules.dining import payment_policy
 from app.modules.finance import services as finance_services
 from app.modules.beach.schemas import (
     B2BCheckinRequest, B2BContractCreate, B2BContractRead, B2BContractUpdate,
-    B2BSettleRequest, BeachDailySummary, BeachInventoryRead,
+    B2BSettleRequest, BeachCartSellRequest, BeachDailySummary, BeachInventoryRead,
     BeachLocationBulkCreate, BeachLocationBulkRemove, BeachLocationCheckinRequest,
     BeachLocationRead, BeachLocationUpdate,
     BeachReservationCreate, BeachReservationPublic, BeachReservationRead,
@@ -90,7 +90,14 @@ async def beach_map_websocket(ws: WebSocket, branch_id: int, db: DbDep):
     كاشير فرع A كان يقدر يشترك في بث خريطة فرع B ويشوف بيانات الضيوف الحية
     (تشيك-إن/أوت + أماكنهم) بمجرد تغيير الرقم في الـ URL. نفس فئة الباج
     اللي اتصلح في alerts WS وأُضيف صراحةً في guest_alerts_websocket."""
-    user = await get_websocket_user(ws, db, min_level=40)
+    user = await get_websocket_user(
+        ws,
+        db,
+        min_level=40,
+        allowed_roles={
+            "cashier", "receptionist", "supervisor", "manager", "admin", "super_admin",
+        },
+    )
     if not user:
         return
     try:
@@ -126,12 +133,12 @@ def _business_today() -> date:
 @router.get("/beach/inventory", response_model=BeachInventoryRead)
 def get_inventory(
     db: DbDep,
-    user=Depends(get_current_active_user),
+    user=Depends(get_cashier_user),
     branch_id: int  = Query(...),
     inv_date:  date = Query(default_factory=_business_today),
 ):
     _assert_beach_branch(db, user, branch_id, "عرض مخزون الشاطئ")
-    row = crud.get_or_create_inventory(db, branch_id, inv_date)
+    row = services.get_inventory(db, branch_id, inv_date)
     db.commit()
     prices = services.get_base_prices(db, branch_id)
     data = {
@@ -141,6 +148,7 @@ def get_inventory(
         "towels_used": row.towels_used, "surge_pct": row.surge_pct,
         "adult_price": prices["entry"], "child_price": prices["entry_child"],
         "resident_price": prices["entry_resident"], "towel_price": prices["towel_rent"],
+        "outside_food_fee_price": prices["outside_food_fee"],
     }
     return BeachInventoryRead.model_validate(data)
 
@@ -179,6 +187,14 @@ async def sell_ticket(
         )
     except services.BeachConcurrencyError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
+    except services.NoOpenShiftError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, {
+            "code": "NO_OPEN_SHIFT", "message": str(exc),
+        })
+    except finance_services.ShiftCloseInProgressError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, {
+            "code": "SHIFT_CLOSE_IN_PROGRESS", "message": str(exc),
+        })
     except credit_services.CreditConcurrencyError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, {
             "code": "CREDIT_ACCOUNT_BUSY", "message": str(exc),
@@ -209,6 +225,67 @@ async def sell_ticket(
             "type": "shift_sale", "shift_id": tx.shift_id,
         })
     return tx
+
+
+@router.post("/beach/sell-cart", response_model=list[BeachTransactionRead],
+             status_code=status.HTTP_201_CREATED)
+async def sell_cart(
+    data: BeachCartSellRequest, db: DbDep,
+    user=Depends(get_cashier_user),
+    branch_id: int = Query(...),
+):
+    """بيع سلة متعددة الأصناف (زي "2 بالغ + فوطة") كـ transaction واحدة
+    atomic — إما كل الأصناف تنجح أو ولا واحد فيهم يترحّل. بديل الحلقة
+    القديمة اللي كانت بتبعت طلب منفصل لكل صنف (نفس معالجة الأخطاء لـ
+    /beach/sell بالظبط)."""
+    _assert_beach_branch(db, user, branch_id, "بيع سلة شاطئ")
+    data = data.model_copy(update={"cashier_id": user.id})
+    try:
+        transactions = services.sell_cart(
+            db, branch_id, data, acting_user_level=user_level(user),
+        )
+    except services.BeachConcurrencyError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
+    except services.NoOpenShiftError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, {
+            "code": "NO_OPEN_SHIFT", "message": str(exc),
+        })
+    except finance_services.ShiftCloseInProgressError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, {
+            "code": "SHIFT_CLOSE_IN_PROGRESS", "message": str(exc),
+        })
+    except credit_services.CreditConcurrencyError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, {
+            "code": "CREDIT_ACCOUNT_BUSY", "message": str(exc),
+        })
+    except credit_services.CreditLimitExceededError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, {
+            "code": "CREDIT_LIMIT_EXCEEDED", "message": str(exc),
+            "current_balance": str(exc.current), "credit_limit": str(exc.limit),
+            "requested": str(exc.requested),
+        })
+    except credit_services.CreditAccountInactiveError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, {
+            "code": "CREDIT_ACCOUNT_INACTIVE", "message": str(exc),
+        })
+    except finance_services.FinancialConfigurationError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {
+            "code": "FINANCIAL_CONFIGURATION_ERROR", "message": str(exc),
+        })
+    except payment_policy.PaymentMethodNotConfiguredError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {
+            "code": "METHOD_NOT_CONFIGURED", "message": str(exc),
+        })
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    shift_ids = {tx.shift_id for tx in transactions if tx.shift_id}
+    if shift_ids:
+        from app.modules.finance.api.router import shift_manager  # noqa: PLC0415
+        for shift_id in shift_ids:
+            await shift_manager.broadcast(str(branch_id), {
+                "type": "shift_sale", "shift_id": shift_id,
+            })
+    return transactions
 
 
 @router.post("/beach/b2b-checkin", response_model=BeachTransactionRead,
@@ -278,7 +355,7 @@ def download_ticket(tx_id: int, db: DbDep, user=Depends(get_cashier_user)):
 @router.post("/beach/transactions/{tx_id}/void",
              dependencies=[Depends(require_permission("beach.void_transaction", "execute", min_role_level=60))],
              response_model=BeachTransactionRead)
-def void_transaction(tx_id: int, data: VoidTransactionRequest, db: DbDep, user=Depends(get_current_active_user)):
+def void_transaction(tx_id: int, data: VoidTransactionRequest, db: DbDep, user=Depends(get_cashier_user)):
     tx = _get_transaction_or_404(db, tx_id)
     _assert_beach_branch(db, user, tx.branch_id, "إلغاء معاملة شاطئ")
     try:
@@ -304,7 +381,7 @@ def daily_summary(
     tx_date:   date = Query(default_factory=_business_today),
 ):
     _assert_beach_branch(db, user, branch_id, "عرض ملخص الشاطئ اليومي")
-    inv = crud.get_or_create_inventory(db, branch_id, tx_date)
+    inv = services.get_inventory(db, branch_id, tx_date)
     summary = crud.get_daily_summary(db, branch_id, tx_date)
     cap_pct = (
         min(100, int(inv.capacity_used / inv.capacity_max * 100))
@@ -362,7 +439,7 @@ def list_contracts(db: DbDep, user=Depends(get_manager_user),
 
 @router.get("/beach/b2b-contracts/status", response_model=None)
 def get_b2b_quota_status(
-    db: DbDep, user=Depends(get_current_active_user),
+    db: DbDep, user=Depends(get_cashier_user),
     branch_id: int = Query(...), day: Optional[date] = Query(None),
 ):
     """حالة حصة كل فندق B2B اليوم — بيظهر quota_warning (≤5 متبقين) لعرضه
@@ -375,12 +452,12 @@ def get_b2b_quota_status(
 
 @router.get("/beach/live-dashboard", response_model=None)
 def get_live_dashboard(
-    db: DbDep, user=Depends(get_current_active_user),
+    db: DbDep, user=Depends(get_cashier_user),
     branch_id: int = Query(...),
 ):
     """السعة الحالية + حصص فنادق B2B + تنبيهات — للوحة حيّة (polling كل شوية)."""
     _assert_beach_branch(db, user, branch_id, "عرض اللوحة الحيّة")
-    inv = crud.get_or_create_inventory(db, branch_id, _business_today())
+    inv = services.get_inventory(db, branch_id, _business_today())
     db.commit()
     b2b_status = services.get_b2b_quota_status(db, branch_id)
     alerts = [s for s in b2b_status if s["quota_warning"]]
@@ -441,7 +518,9 @@ def settle_contract(
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"العقد {contract_id} غير موجود")
     _assert_beach_branch(db, user, contract.branch_id, "تسوية عقد B2B")
     try:
-        obj = services.settle_b2b_contract(db, contract_id, data.settled_through)
+        obj = services.settle_b2b_contract(
+            db, contract_id, data.settled_through, data.settlement_account_code,
+        )
         return B2BContractRead.model_validate(obj)
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
@@ -496,6 +575,14 @@ def checkin_reservation(reservation_id: int, db: DbDep, user=Depends(get_cashier
         )
     except services.BeachConcurrencyError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
+    except services.NoOpenShiftError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, {
+            "code": "NO_OPEN_SHIFT", "message": str(exc),
+        })
+    except finance_services.ShiftCloseInProgressError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, {
+            "code": "SHIFT_CLOSE_IN_PROGRESS", "message": str(exc),
+        })
     except PermissionError as exc:
         raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     except ValueError as exc:
@@ -570,6 +657,14 @@ async def checkin_location(
         loc = services.checkin_location(db, branch_id, location_id, data, cashier_id=data.cashier_id)
     except services.BeachConcurrencyError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
+    except services.NoOpenShiftError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, {
+            "code": "NO_OPEN_SHIFT", "message": str(exc),
+        })
+    except finance_services.ShiftCloseInProgressError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, {
+            "code": "SHIFT_CLOSE_IN_PROGRESS", "message": str(exc),
+        })
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
     await beach_map_manager.broadcast(str(branch_id), {"type": "map_update", "location": BeachLocationRead.model_validate(loc).model_dump(mode="json")})

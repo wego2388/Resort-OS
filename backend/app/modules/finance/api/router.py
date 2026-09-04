@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.deps import (
     DbDep, get_admin_user, get_cashier_user,
-    get_current_active_user, get_db, get_manager_user, get_websocket_user,
+    get_current_active_user, get_db, get_finance_user, get_websocket_user,
     rate_limit_dep, require_permission, user_level,
 )
 from app.modules.finance import crud, services
@@ -35,9 +35,15 @@ from app.modules.finance.schemas import (
     CostCenterCreate, CostCenterRead, CostCenterReport,
     DepreciationRunRequest, DepreciationRunResult,
     DiscountCalculateRequest, ETAInvoiceRead, ETAInvoiceSubmitRequest,
-    ExchangeRateCreate, ExchangeRateRead,
+    AccountingYearCloseRead,
+    AccountLedgerReport, AgingReport,
+    CashReceiptCreate, CashReceiptRead,
+    CustodyCreate, CustodyRead, CustodySettleRequest, CustodySettlementLineRead,
+    ExchangeRateCreate, ExchangeRateRead, ExpenseCreate, ExpensePaymentCreate, ExpensePaymentRead,
+    ExpenseRead,
     FolioChargeCreate, FolioChargeRead,
     FolioCreate, FolioRead, IncomeStatementReport, JournalEntryCreate, JournalEntryRead,
+    PaymentChannelCreate, PaymentChannelRead, PaymentChannelUpdate,
     PaymentCreate, PaymentRead,
     RevenueAuditLogRead,
     ShiftEndReport, ShiftInvoiceLine, TrialBalanceReport, VoidPaymentRequest,
@@ -114,7 +120,18 @@ async def shifts_websocket(ws: WebSocket, branch_id: int, db: DbDep):
     مفيش بيانات مالية بتتبعت في رسالة الـ WS نفسها، القراءة الحقيقية لسه
     عبر GET /finance/shifts/{id}/report العادي (نفس فلسفة KDS: WS = إشارة
     تحديث، مش قناة نقل بيانات)."""
-    if not await get_websocket_user(ws, db, min_level=60):
+    user = await get_websocket_user(
+        ws,
+        db,
+        min_level=60,
+        allowed_roles={"accountant", "manager", "admin", "super_admin"},
+    )
+    if not user:
+        return
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "متابعة الورديات المالية")
+    except PermissionError:
+        await ws.close(code=4403)
         return
     await shift_manager.connect(ws, str(branch_id))
     try:
@@ -130,15 +147,25 @@ async def shifts_websocket(ws: WebSocket, branch_id: int, db: DbDep):
 @router.get("/finance/folios", response_model=PaginatedResponse)
 def list_folios(
     db: DbDep,
-    _=Depends(get_manager_user),
+    user=Depends(get_finance_user),
     branch_id: int = Query(...),
-    status: Optional[str] = Query(None),
+    # اسم مختلف عن `status` عمدًا — `status` (module fastapi) بيتظلّل داخل
+    # جسم الدالة لو استخدمناه كاسم باراميتر، وده كان هيكسر أي استخدام لاحق
+    # لـstatus.HTTP_* هنا (زي فحص الفرع تحت) بصمت وقت التشغيل. alias
+    # بيحافظ على شكل الـquery string زي ما هو (?status=...).
+    folio_status: Optional[str] = Query(None, alias="status"),
     date_from: Optional[date] = Query(None),
     date_to: Optional[date]   = Query(None),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
 ):
-    items, total = crud.list_folios(db, branch_id, status, date_from, date_to,
+    """⚠️ باج حقيقي كان هنا (2026-08-28، تدقيق ما قبل الإطلاق): مفيش فحص
+    عزل فرع — نفس فئة IDOR §13 اللي اتصلحت في HR بنفس الجولة."""
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "عرض قائمة الفواتير")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+    items, total = crud.list_folios(db, branch_id, folio_status, date_from, date_to,
                                     skip=(page - 1) * size, limit=size)
     return PaginatedResponse(total=total, page=page, size=size,
                              items=[FolioRead.model_validate(f) for f in items])
@@ -146,7 +173,12 @@ def list_folios(
 
 @router.post("/finance/folios", response_model=FolioRead,
              status_code=status.HTTP_201_CREATED)
-def create_folio(data: FolioCreate, db: DbDep, _=Depends(get_cashier_user)):
+def create_folio(data: FolioCreate, db: DbDep, user=Depends(get_cashier_user)):
+    """⚠️ باج حقيقي كان هنا (مراجعة Codex 2026-08-30، C-01): مفيش فحص عزل فرع."""
+    try:
+        core_services.assert_branch_access(db, user, data.branch_id, "فتح فوليو")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     return services.create_folio(db, data)
 
 
@@ -221,7 +253,7 @@ async def add_payment(folio_id: int, data: PaymentCreate, db: DbDep, user=Depend
              dependencies=[Depends(require_permission("finance.void_payment", "execute", min_role_level=60))])
 def void_payment(
     payment_id: int, data: VoidPaymentRequest, db: DbDep, request: Request,
-    user=Depends(get_manager_user),
+    user=Depends(get_finance_user),
     x_step_up_token: Optional[str] = Header(default=None, alias="X-Step-Up-Token"),
 ):
     """Gate 4 (جولة مراجعة Codex الأولى — M5a): عكس دفعة اتسجّلت بالفعل في
@@ -273,12 +305,17 @@ def download_folio_statement_pdf(folio_id: int, db: DbDep, user=Depends(get_cash
 
 @router.get("/finance/folios/report/export", response_model=None)
 def download_folios_report_excel(
-    db: DbDep, _=Depends(get_manager_user),
+    db: DbDep, user=Depends(get_finance_user),
     branch_id: int = Query(...),
     date_from: Optional[date] = Query(None),
     date_to: Optional[date] = Query(None),
     status_filter: Optional[str] = Query(None, alias="status"),
 ):
+    """⚠️ باج حقيقي كان هنا (مراجعة Codex 2026-08-30، C-01): مفيش فحص عزل فرع."""
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "تحميل تقرير الفواتير Excel")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     xlsx = services.generate_folios_report_excel(db, branch_id, date_from, date_to, status_filter)
     return Response(
         content=xlsx,
@@ -329,22 +366,28 @@ def get_handover_note(db: DbDep, user=Depends(get_cashier_user), branch_id: int 
     return {"handover_note": services.get_latest_handover_note(db, branch_id)}
 
 
-@router.get("/finance/shifts/current", response_model=CashierShiftRead)
+@router.get("/finance/shifts/current", response_model=CashierShiftRead | None)
 def get_current_shift(db: DbDep, user=Depends(get_cashier_user), branch_id: int = Query(...)):
+    """Return the caller's open shift, or JSON null when no shift is open.
+
+    "No open shift" is the normal state before a cashier starts work, not a
+    missing resource. Returning 404 made every POS page emit a red browser
+    network error even though the UI handled the state correctly.
+    """
     try:
         core_services.assert_branch_access(db, user, branch_id, "عرض الوردية الحالية")
     except PermissionError as exc:
         raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     shift = crud.get_open_shift(db, branch_id, user.id)
     if not shift:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "لا توجد وردية مفتوحة")
+        return None
     return CashierShiftRead.model_validate(shift)
 
 
 @router.get("/finance/shifts/active", response_model=ActiveShiftsResponse)
 def get_active_shifts(
     db: DbDep,
-    user=Depends(get_manager_user),
+    user=Depends(get_finance_user),
     branch_id: int = Query(...),
 ):
     """كل الورديات المفتوحة في الفرع مع ملخص مبيعاتها اللحظي — مدير+ فقط.
@@ -359,7 +402,7 @@ def get_active_shifts(
 
 @router.get("/finance/shifts", response_model=PaginatedResponse)
 def list_shifts(
-    db: DbDep, user=Depends(get_manager_user),
+    db: DbDep, user=Depends(get_finance_user),
     branch_id: int = Query(...),
     cashier_id: Optional[int] = Query(None),
     status_filter: Optional[str] = Query(None, alias="status"),
@@ -521,7 +564,7 @@ def create_cash_movement(shift_id: int, data: CashMovementCreate, db: DbDep, use
 
 
 @router.get("/finance/shifts/{shift_id}/cash-movements", response_model=list[CashMovementRead])
-def list_cash_movements(shift_id: int, db: DbDep, user=Depends(get_manager_user)):
+def list_cash_movements(shift_id: int, db: DbDep, user=Depends(get_finance_user)):
     """سجل حركات الكاش اليدوية على وردية — مدير+ فقط (نفس مستوى `/audit-logs`،
     ده تفصيل من سجل التدقيق يخص مين نفّذ/وافق على إيه، مش بيانات معاملة
     عادية يشوفها الكاشير عن نفسه).
@@ -547,12 +590,17 @@ def list_cash_movements(shift_id: int, db: DbDep, user=Depends(get_manager_user)
 @router.get("/finance/discounts", response_model=PaginatedResponse)
 def list_discounts(
     db: DbDep,
-    _=Depends(get_manager_user),
+    user=Depends(get_finance_user),
     branch_id: int = Query(...),
     active_only: bool = Query(True),
     page: int = Query(1, ge=1),
     size: int = Query(50, ge=1, le=200),
 ):
+    """⚠️ باج حقيقي كان هنا (2026-08-28): مفيش فحص عزل فرع."""
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "عرض خصومات")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     items, total = crud.list_discounts(db, branch_id, active_only,
                                        skip=(page - 1) * size, limit=size)
     return PaginatedResponse(total=total, page=page, size=size,
@@ -572,11 +620,16 @@ def create_discount(data: ConditionalDiscountCreate, db: DbDep, _=Depends(get_ad
               response_model=ConditionalDiscountRead)
 def update_discount(
     discount_id: int, data: ConditionalDiscountUpdate,
-    db: DbDep, _=Depends(get_admin_user),
+    db: DbDep, user=Depends(get_admin_user),
 ):
+    """⚠️ باج حقيقي كان هنا (مراجعة Codex 2026-08-30، C-01): مفيش فحص عزل فرع."""
     discount = crud.get_discount(db, discount_id)
     if not discount:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "الخصم غير موجود")
+    try:
+        core_services.assert_branch_access(db, user, discount.branch_id, "تعديل خصم")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     obj = crud.update_discount(db, discount, data)
     db.commit()
     db.refresh(obj)
@@ -585,10 +638,15 @@ def update_discount(
 
 @router.delete("/finance/discounts/{discount_id}",
                response_model=None, status_code=status.HTTP_204_NO_CONTENT)
-def delete_discount(discount_id: int, db: DbDep, _=Depends(get_admin_user)):
+def delete_discount(discount_id: int, db: DbDep, user=Depends(get_admin_user)):
+    """⚠️ باج حقيقي كان هنا (مراجعة Codex 2026-08-30، C-01): مفيش فحص عزل فرع."""
     discount = crud.get_discount(db, discount_id)
     if not discount:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "الخصم غير موجود")
+    try:
+        core_services.assert_branch_access(db, user, discount.branch_id, "حذف خصم")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     crud.delete_discount(db, discount)
     db.commit()
 
@@ -617,13 +675,18 @@ def calculate_discount_endpoint(
 @router.get("/finance/accounts", response_model=PaginatedResponse)
 def list_accounts(
     db: DbDep,
-    _=Depends(get_manager_user),
+    user=Depends(get_finance_user),
     branch_id: int = Query(...),
     active_only: bool = Query(True),
     as_of: Optional[date] = Query(None, description="تاريخ حساب الرصيد — افتراضيًا اليوم"),
     page: int = Query(1, ge=1),
     size: int = Query(200, ge=1, le=500),
 ):
+    """⚠️ باج حقيقي كان هنا (2026-08-28): مفيش فحص عزل فرع."""
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "عرض دليل الحسابات")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     items, total = crud.list_accounts(db, branch_id, active_only,
                                       skip=(page - 1) * size, limit=size)
     # رصيد كل حساب من دفتر اليومية حتى as_of — نفس منطق trial balance
@@ -645,7 +708,12 @@ def list_accounts(
 
 @router.post("/finance/accounts", response_model=AccountRead,
              status_code=status.HTTP_201_CREATED)
-def create_account(data: AccountCreate, db: DbDep, _=Depends(get_manager_user)):
+def create_account(data: AccountCreate, db: DbDep, user=Depends(get_finance_user)):
+    """⚠️ باج حقيقي كان هنا (مراجعة Codex 2026-08-30، C-01): مفيش فحص عزل فرع."""
+    try:
+        core_services.assert_branch_access(db, user, data.branch_id, "إضافة حساب")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     try:
         account = crud.create_account(db, data)
         db.commit()
@@ -663,6 +731,23 @@ def create_account(data: AccountCreate, db: DbDep, _=Depends(get_manager_user)):
         )
 
 
+@router.get("/finance/accounts/{account_id}/ledger", response_model=AccountLedgerReport)
+def get_account_ledger(
+    account_id: int, db: DbDep, branch_id: int = Query(...),
+    date_from: date = Query(...), date_to: date = Query(...),
+    user=Depends(get_finance_user),
+):
+    """كشف حساب (2026-08-19، طلب Mohamed) — راجع services.get_account_ledger."""
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "عرض كشف حساب")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+    try:
+        return services.get_account_ledger(db, branch_id, account_id, date_from, date_to)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
 # ── Journal Entries ───────────────────────────────────────────────────
 
 @router.post("/finance/journal-entries", response_model=JournalEntryRead,
@@ -670,8 +755,13 @@ def create_account(data: AccountCreate, db: DbDep, _=Depends(get_manager_user)):
 def post_journal_entry(
     data: JournalEntryCreate,
     db: DbDep,
-    user=Depends(get_manager_user),
+    user=Depends(get_finance_user),
 ):
+    """⚠️ باج حقيقي كان هنا (مراجعة Codex 2026-08-30، C-01): مفيش فحص عزل فرع."""
+    try:
+        core_services.assert_branch_access(db, user, data.branch_id, "ترحيل قيد يومية")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     try:
         entry = services.post_journal_entry(db, data, user_id=user.id)
         return JournalEntryRead.model_validate(entry)
@@ -682,7 +772,7 @@ def post_journal_entry(
 @router.get("/finance/journal-entries", response_model=PaginatedResponse)
 def list_journal_entries(
     db: DbDep,
-    _=Depends(get_manager_user),
+    user=Depends(get_finance_user),
     branch_id: int = Query(...),
     date_from: Optional[date] = Query(None),
     date_to: Optional[date] = Query(None),
@@ -690,6 +780,11 @@ def list_journal_entries(
     page: int = Query(1, ge=1),
     size: int = Query(50, ge=1, le=200),
 ):
+    """⚠️ باج حقيقي كان هنا (2026-08-28): مفيش فحص عزل فرع."""
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "عرض القيود اليومية")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     items, total = crud.list_journal_entries(
         db, branch_id, date_from, date_to, source,
         skip=(page - 1) * size, limit=size,
@@ -699,11 +794,377 @@ def list_journal_entries(
 
 
 @router.get("/finance/journal-entries/{entry_id}", response_model=JournalEntryRead)
-def get_journal_entry(entry_id: int, db: DbDep, _=Depends(get_manager_user)):
+def get_journal_entry(entry_id: int, db: DbDep, user=Depends(get_finance_user)):
+    """⚠️ باج حقيقي كان هنا (مراجعة Codex 2026-08-30، C-01): مفيش فحص عزل فرع."""
     entry = crud.get_journal_entry(db, entry_id)
     if not entry:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Journal entry {entry_id} not found")
+    try:
+        core_services.assert_branch_access(db, user, entry.branch_id, "عرض قيد يومية")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     return JournalEntryRead.model_validate(entry)
+
+
+# ── Expenses (2026-08-16) ─────────────────────────────────────────────
+# سند مصروفات حقيقي بفئة (حساب 5xxx) — راجع services.record_expense.
+
+@router.post("/finance/expenses", response_model=ExpenseRead, status_code=status.HTTP_201_CREATED)
+def create_expense(
+    data: ExpenseCreate, db: DbDep, branch_id: int = Query(...),
+    user=Depends(get_finance_user),
+):
+    """⚠️ باج حقيقي كان هنا (مراجعة Codex 2026-08-30، C-01): مفيش فحص عزل فرع."""
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "تسجيل سند مصروفات")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+    try:
+        expense = services.record_expense(
+            db, branch_id, data, recorded_by=user.id, acting_user_level=user_level(user),
+        )
+    except services.FinancialConfigurationError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {
+            "code": "FINANCIAL_CONFIGURATION_ERROR", "message": str(exc),
+        })
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    row = ExpenseRead.model_validate(expense).model_dump()
+    row["expense_account_code"] = expense.expense_account.code if expense.expense_account else ""
+    row["expense_account_name"] = expense.expense_account.name if expense.expense_account else ""
+    row["settlement_account_code"] = expense.settlement_account.code if expense.settlement_account else ""
+    return row
+
+
+@router.get("/finance/expenses", response_model=PaginatedResponse)
+def list_expenses(
+    db: DbDep,
+    user=Depends(get_finance_user),
+    branch_id: int = Query(...),
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+    page: int = Query(1, ge=1),
+    size: int = Query(30, ge=1, le=200),
+):
+    """⚠️ باج حقيقي كان هنا (2026-08-28): مفيش فحص عزل فرع."""
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "عرض سندات مصروفات")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+    items, total = services.list_expenses(db, branch_id, date_from, date_to, page, size)
+    return PaginatedResponse(total=total, page=page, size=size, items=items)
+
+
+@router.post("/finance/expenses/{expense_id}/void", response_model=ExpenseRead,
+             dependencies=[Depends(require_permission("finance.void_expense", "execute", min_role_level=60))])
+def void_expense(
+    expense_id: int, data: VoidPaymentRequest, db: DbDep, request: Request,
+    user=Depends(get_finance_user),
+    x_step_up_token: Optional[str] = Header(default=None, alias="X-Step-Up-Token"),
+):
+    """2026-08-19 (طلب Mohamed): إلغاء سند مصروفات اتسجّل بالفعل — نفس
+    خطورة إلغاء دفعة، محتاج step-up فوق صلاحية مدير+ العادية. راجع
+    app.core.kernel.auth.step_up.expense_void_scope."""
+    from app.core.kernel.auth.step_up import expense_void_scope  # noqa: PLC0415
+    from app.modules.core.api.step_up_utils import consume_step_up_or_raise  # noqa: PLC0415
+
+    expense = crud.get_expense(db, expense_id)
+    if not expense:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"سند المصروفات {expense_id} غير موجود")
+    try:
+        core_services.assert_branch_access(db, user, expense.branch_id, "إلغاء سند مصروفات")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+
+    scope_hash = expense_void_scope(expense_id=expense_id, reason=data.reason)
+    consume_step_up_or_raise(
+        db, user, request,
+        purpose="expense_void", scope_hash=scope_hash, x_step_up_token=x_step_up_token,
+    )
+    try:
+        expense = services.void_expense(db, expense_id, voided_by=user.id, reason=data.reason)
+    except services.FinancialConfigurationError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {
+            "code": "FINANCIAL_CONFIGURATION_ERROR", "message": str(exc),
+        })
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    row = ExpenseRead.model_validate(expense).model_dump()
+    row["expense_account_code"] = expense.expense_account.code if expense.expense_account else ""
+    row["expense_account_name"] = expense.expense_account.name if expense.expense_account else ""
+    row["settlement_account_code"] = expense.settlement_account.code if expense.settlement_account else ""
+    return row
+
+
+@router.post(
+    "/finance/expenses/{expense_id}/pay", response_model=ExpenseRead,
+)
+def pay_expense(
+    expense_id: int, data: ExpensePaymentCreate, db: DbDep,
+    user=Depends(get_finance_user),
+):
+    """2026-08-19 (طلب Mohamed): سداد فعلي لسند مصروفات آجل (defer_payment=true
+    وقت الإنشاء). راجع services.pay_expense."""
+    expense = crud.get_expense(db, expense_id)
+    if not expense:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"سند المصروفات {expense_id} غير موجود")
+    try:
+        core_services.assert_branch_access(db, user, expense.branch_id, "سداد سند مصروفات")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+    try:
+        expense = services.pay_expense(db, expense_id, data, recorded_by=user.id)
+    except services.FinancialConfigurationError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {
+            "code": "FINANCIAL_CONFIGURATION_ERROR", "message": str(exc),
+        })
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    row = ExpenseRead.model_validate(expense).model_dump()
+    row["expense_account_code"] = expense.expense_account.code if expense.expense_account else ""
+    row["expense_account_name"] = expense.expense_account.name if expense.expense_account else ""
+    row["settlement_account_code"] = expense.settlement_account.code if expense.settlement_account else ""
+    return row
+
+
+@router.get("/finance/expenses/{expense_id}/payments", response_model=list[ExpensePaymentRead])
+def list_expense_payments(expense_id: int, db: DbDep, user=Depends(get_finance_user)):
+    expense = crud.get_expense(db, expense_id)
+    if not expense:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"سند المصروفات {expense_id} غير موجود")
+    try:
+        core_services.assert_branch_access(db, user, expense.branch_id, "عرض سدادات سند مصروفات")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+    return crud.list_expense_payments(db, expense_id)
+
+
+# ── العهدة (Custody / سلفة نقدية) — 2026-08-19 ─────────────────────────
+# صرف سلفة لموظف/مقاول لصرف بند معيّن (مقاولة/عمالة يومية...)، وتسويتها
+# لاحقًا بتوزيع فعلي على حسابات مصروفات حقيقية. راجع services.disburse_
+# custody/settle_custody/void_custody.
+
+@router.post("/finance/custodies", response_model=CustodyRead, status_code=status.HTTP_201_CREATED)
+def disburse_custody(
+    data: CustodyCreate, db: DbDep, branch_id: int = Query(...),
+    user=Depends(get_finance_user),
+):
+    """⚠️ باج حقيقي كان هنا (مراجعة Codex 2026-08-30، C-01): مفيش فحص عزل فرع."""
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "صرف عهدة نقدية")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+    try:
+        custody = services.disburse_custody(db, branch_id, data, disbursed_by=user.id)
+    except services.FinancialConfigurationError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {
+            "code": "FINANCIAL_CONFIGURATION_ERROR", "message": str(exc),
+        })
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    return custody
+
+
+@router.get("/finance/custodies", response_model=PaginatedResponse)
+def list_custodies(
+    db: DbDep,
+    user=Depends(get_finance_user),
+    branch_id: int = Query(...),
+    status_filter: Optional[str] = Query(None, alias="status", pattern=r"^(open|settled)$"),
+    page: int = Query(1, ge=1),
+    size: int = Query(30, ge=1, le=200),
+):
+    """⚠️ باج حقيقي كان هنا (2026-08-28): مفيش فحص عزل فرع."""
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "عرض عهد نقدية")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+    items, total = crud.list_custodies(db, branch_id, status_filter, page, size)
+    return PaginatedResponse(
+        total=total, page=page, size=size,
+        items=[CustodyRead.model_validate(c) for c in items],
+    )
+
+
+@router.get("/finance/custodies/{custody_id}", response_model=CustodyRead)
+def get_custody(custody_id: int, db: DbDep, user=Depends(get_finance_user)):
+    custody = crud.get_custody(db, custody_id)
+    if not custody:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"العهدة {custody_id} غير موجودة")
+    try:
+        core_services.assert_branch_access(db, user, custody.branch_id, "عرض عهدة نقدية")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+    return custody
+
+
+@router.get(
+    "/finance/custodies/{custody_id}/settlement-lines",
+    response_model=list[CustodySettlementLineRead],
+)
+def list_custody_settlement_lines(custody_id: int, db: DbDep, user=Depends(get_finance_user)):
+    custody = crud.get_custody(db, custody_id)
+    if not custody:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"العهدة {custody_id} غير موجودة")
+    try:
+        core_services.assert_branch_access(db, user, custody.branch_id, "عرض بنود تسوية عهدة")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+    return crud.list_custody_settlement_lines(db, custody_id)
+
+
+@router.post("/finance/custodies/{custody_id}/settle", response_model=CustodyRead)
+def settle_custody(
+    custody_id: int, data: CustodySettleRequest, db: DbDep,
+    user=Depends(get_finance_user),
+):
+    custody = crud.get_custody(db, custody_id)
+    if not custody:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"العهدة {custody_id} غير موجودة")
+    try:
+        core_services.assert_branch_access(db, user, custody.branch_id, "تسوية عهدة نقدية")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+    try:
+        return services.settle_custody(db, custody_id, data, settled_by=user.id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+@router.post(
+    "/finance/custodies/{custody_id}/void", response_model=CustodyRead,
+    dependencies=[Depends(require_permission("finance.void_custody", "execute", min_role_level=60))],
+)
+def void_custody(
+    custody_id: int, data: VoidPaymentRequest, db: DbDep, request: Request,
+    user=Depends(get_finance_user),
+    x_step_up_token: Optional[str] = Header(default=None, alias="X-Step-Up-Token"),
+):
+    """2026-08-19 (طلب Mohamed): إلغاء عهدة نقدية لسه open — نفس خطورة
+    إلغاء دفعة/سند مصروفات، محتاج step-up. راجع
+    app.core.kernel.auth.step_up.custody_void_scope."""
+    from app.core.kernel.auth.step_up import custody_void_scope  # noqa: PLC0415
+    from app.modules.core.api.step_up_utils import consume_step_up_or_raise  # noqa: PLC0415
+
+    custody = crud.get_custody(db, custody_id)
+    if not custody:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"العهدة {custody_id} غير موجودة")
+    try:
+        core_services.assert_branch_access(db, user, custody.branch_id, "إلغاء عهدة نقدية")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+
+    scope_hash = custody_void_scope(custody_id=custody_id, reason=data.reason)
+    consume_step_up_or_raise(
+        db, user, request,
+        purpose="custody_void", scope_hash=scope_hash, x_step_up_token=x_step_up_token,
+    )
+    try:
+        return services.void_custody(db, custody_id, voided_by=user.id, reason=data.reason)
+    except services.FinancialConfigurationError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {
+            "code": "FINANCIAL_CONFIGURATION_ERROR", "message": str(exc),
+        })
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+# ── إذن قبض عام (Generic Cash Receipt Voucher) — 2026-08-19 ────────────
+# تحصيل نقدية من مصدر متنوع مش مرتبط بمسار بيع قائم. راجع
+# services.record_cash_receipt/void_cash_receipt.
+
+@router.post("/finance/cash-receipts", response_model=CashReceiptRead, status_code=status.HTTP_201_CREATED)
+def create_cash_receipt(
+    data: CashReceiptCreate, db: DbDep, branch_id: int = Query(...),
+    user=Depends(get_finance_user),
+):
+    """⚠️ باج حقيقي كان هنا (مراجعة Codex 2026-08-30، C-01): مفيش فحص عزل فرع."""
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "تسجيل إذن قبض")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+    try:
+        receipt = services.record_cash_receipt(db, branch_id, data, recorded_by=user.id)
+    except services.FinancialConfigurationError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {
+            "code": "FINANCIAL_CONFIGURATION_ERROR", "message": str(exc),
+        })
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    row = CashReceiptRead.model_validate(receipt).model_dump()
+    row["destination_account_code"] = receipt.destination_account.code if receipt.destination_account else ""
+    row["destination_account_name"] = receipt.destination_account.name if receipt.destination_account else ""
+    row["source_account_code"] = receipt.source_account.code if receipt.source_account else ""
+    return row
+
+
+@router.get("/finance/cash-receipts", response_model=PaginatedResponse)
+def list_cash_receipts(
+    db: DbDep,
+    user=Depends(get_finance_user),
+    branch_id: int = Query(...),
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+    page: int = Query(1, ge=1),
+    size: int = Query(30, ge=1, le=200),
+):
+    """⚠️ باج حقيقي كان هنا (2026-08-28): مفيش فحص عزل فرع."""
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "عرض أذون قبض")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+    items, total = crud.list_cash_receipts(db, branch_id, date_from, date_to, page, size)
+    rows = []
+    for receipt in items:
+        row = CashReceiptRead.model_validate(receipt).model_dump()
+        row["destination_account_code"] = receipt.destination_account.code if receipt.destination_account else ""
+        row["destination_account_name"] = receipt.destination_account.name if receipt.destination_account else ""
+        row["source_account_code"] = receipt.source_account.code if receipt.source_account else ""
+        rows.append(row)
+    return PaginatedResponse(total=total, page=page, size=size, items=rows)
+
+
+@router.post(
+    "/finance/cash-receipts/{receipt_id}/void", response_model=CashReceiptRead,
+    dependencies=[Depends(require_permission("finance.void_cash_receipt", "execute", min_role_level=60))],
+)
+def void_cash_receipt(
+    receipt_id: int, data: VoidPaymentRequest, db: DbDep, request: Request,
+    user=Depends(get_finance_user),
+    x_step_up_token: Optional[str] = Header(default=None, alias="X-Step-Up-Token"),
+):
+    """2026-08-19 (طلب Mohamed): إلغاء إذن قبض اتسجّل بالفعل — نفس خطورة
+    إلغاء دفعة/سند مصروفات، محتاج step-up. راجع
+    app.core.kernel.auth.step_up.cash_receipt_void_scope."""
+    from app.core.kernel.auth.step_up import cash_receipt_void_scope  # noqa: PLC0415
+    from app.modules.core.api.step_up_utils import consume_step_up_or_raise  # noqa: PLC0415
+
+    receipt = crud.get_cash_receipt(db, receipt_id)
+    if not receipt:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"إذن القبض {receipt_id} غير موجود")
+    try:
+        core_services.assert_branch_access(db, user, receipt.branch_id, "إلغاء إذن قبض")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+
+    scope_hash = cash_receipt_void_scope(receipt_id=receipt_id, reason=data.reason)
+    consume_step_up_or_raise(
+        db, user, request,
+        purpose="cash_receipt_void", scope_hash=scope_hash, x_step_up_token=x_step_up_token,
+    )
+    try:
+        receipt = services.void_cash_receipt(db, receipt_id, voided_by=user.id, reason=data.reason)
+    except services.FinancialConfigurationError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {
+            "code": "FINANCIAL_CONFIGURATION_ERROR", "message": str(exc),
+        })
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    row = CashReceiptRead.model_validate(receipt).model_dump()
+    row["destination_account_code"] = receipt.destination_account.code if receipt.destination_account else ""
+    row["destination_account_name"] = receipt.destination_account.name if receipt.destination_account else ""
+    row["source_account_code"] = receipt.source_account.code if receipt.source_account else ""
+    return row
 
 
 # ── Revenue Audit Log ────────────────────────────────────────────────
@@ -714,11 +1175,20 @@ def get_journal_entry(entry_id: int, db: DbDep, _=Depends(get_manager_user)):
 @router.get("/finance/revenue-audit-logs", response_model=list[RevenueAuditLogRead])
 def list_revenue_audit_logs(
     db: DbDep,
-    _=Depends(get_manager_user),
+    user=Depends(get_finance_user),
     branch_id: int = Query(...),
-    entity_type: Optional[str] = Query(None, pattern=r"^(booking|folio|invoice|payment)$"),
+    entity_type: Optional[str] = Query(
+        None,
+        pattern=r"^(booking|folio|invoice|payment|expense|supplier_payment|custody|cash_receipt)$",
+    ),
     entity_id: Optional[int] = Query(None),
 ):
+    """⚠️ باج حقيقي كان هنا (مراجعة Codex 2026-08-30، C-01): سجل تدقيق مالي
+    (مين لغى/عدّل إيه) من غير فحص عزل فرع خالص."""
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "عرض سجل تدقيق مالي")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     items = crud.list_revenue_audit_logs(db, branch_id, entity_type, entity_id)
     return [RevenueAuditLogRead.model_validate(row) for row in items]
 
@@ -728,11 +1198,16 @@ def list_revenue_audit_logs(
 @router.get("/finance/periods", response_model=PaginatedResponse)
 def list_periods(
     db: DbDep,
-    _=Depends(get_manager_user),
+    user=Depends(get_finance_user),
     branch_id: int = Query(...),
     page: int = Query(1, ge=1),
     size: int = Query(50, ge=1, le=200),
 ):
+    """⚠️ باج حقيقي كان هنا (2026-08-28): مفيش فحص عزل فرع."""
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "عرض فترات محاسبية")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     items, total = crud.list_periods(db, branch_id, skip=(page - 1) * size, limit=size)
     return PaginatedResponse(total=total, page=page, size=size,
                              items=[AccountingPeriodRead.model_validate(p) for p in items])
@@ -747,6 +1222,13 @@ def close_period(
     db: DbDep,
     user=Depends(get_current_active_user),
 ):
+    """⚠️ باج حقيقي كان هنا (مراجعة Codex 2026-08-30، C-01): مفيش فحص عزل
+    فرع — require_permission بيتحقق من الصلاحية بس، مش من إن الفرع المطلوب
+    إقفاله هو فرع المستخدم فعليًا."""
+    try:
+        core_services.assert_branch_access(db, user, data.branch_id, "إقفال فترة محاسبية")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     try:
         period = services.close_accounting_period(
             db, data.branch_id, year, month, closed_by=user.id
@@ -756,22 +1238,55 @@ def close_period(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
+@router.post(
+    "/finance/periods/{year}/close-year", response_model=AccountingYearCloseRead,
+    dependencies=[Depends(require_permission("finance.close_year", "execute", min_role_level=80))],
+)
+def close_accounting_year(
+    year: int, db: DbDep, branch_id: int = Query(...),
+    user=Depends(get_current_active_user),
+):
+    """إقفال سنة محاسبية (2026-08-19، طلب Mohamed) — راجع
+    services.close_accounting_year. min_role_level=80 (admin) عمدًا —
+    أعلى من إقفال الشهر العادي (60) لأنها عملية لمرة واحدة بلا رجعة.
+
+    ⚠️ باج حقيقي كان هنا (مراجعة Codex 2026-08-30، C-01): مفيش فحص عزل فرع."""
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "إقفال سنة محاسبية")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+    try:
+        return services.close_accounting_year(db, branch_id, year, closed_by=user.id)
+    except services.FinancialConfigurationError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {
+            "code": "FINANCIAL_CONFIGURATION_ERROR", "message": str(exc),
+        })
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
 # ── Checks ────────────────────────────────────────────────────────────
 # شيكات بنكية (أدوات مالية حقيقية مستلمة من عملاء/موردين) — كانت الثلاثة
 # endpoints دي على get_current_active_user (أي موظف مسجّل دخول، حتى مستوى
 # waiter/kitchen=20/30) بينما باقي كل endpoint مالي حساس في نفس الملف
 # (folios/accounts/journal-entries/periods) على get_cashier_user (40+) أو
-# get_manager_user (60+) — باج صلاحيات حقيقي: أي موظف كان يقدر يسجّل شيك
+# get_finance_user (60+) — باج صلاحيات حقيقي: أي موظف كان يقدر يسجّل شيك
 # جديد أو ينقله received→deposited→cleared/bounced (قرار محاسبي/بنكي).
 
 @router.get("/finance/checks", response_model=list[CheckRead])
 def list_checks_endpoint(
     branch_id: int = Query(...),
-    status: str | None = Query(None),
+    # اسم مختلف عن `status` عمدًا — نفس سبب folio_status فوق (تظليل fastapi.status).
+    check_status: str | None = Query(None, alias="status"),
     db: Session = Depends(get_db),
-    _=Depends(get_cashier_user),
+    user=Depends(get_cashier_user),
 ):
-    checks = crud.list_checks(db, branch_id, status)
+    """⚠️ باج حقيقي كان هنا (2026-08-28): مفيش فحص عزل فرع."""
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "عرض شيكات")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+    checks = crud.list_checks(db, branch_id, check_status)
     return [CheckRead.model_validate(c) for c in checks]
 
 @router.post("/finance/checks", response_model=CheckRead,
@@ -781,6 +1296,11 @@ def create_check_endpoint(
     db: Session = Depends(get_db),
     current_user=Depends(get_cashier_user),
 ):
+    """⚠️ باج حقيقي كان هنا (مراجعة Codex 2026-08-30، C-01): مفيش فحص عزل فرع."""
+    try:
+        core_services.assert_branch_access(db, current_user, data.branch_id, "تسجيل شيك")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     check = services.create_check(db, data, created_by=current_user.id)
     return CheckRead.model_validate(check)
 
@@ -789,8 +1309,16 @@ def move_check_status_endpoint(
     check_id: int,
     body: CheckMoveStatus,
     db: Session = Depends(get_db),
-    current_user=Depends(get_manager_user),
+    current_user=Depends(get_finance_user),
 ):
+    """⚠️ باج حقيقي كان هنا (مراجعة Codex 2026-08-30، C-01): مفيش فحص عزل فرع."""
+    check_row = crud.get_check(db, check_id)
+    if not check_row:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"الشيك {check_id} غير موجود")
+    try:
+        core_services.assert_branch_access(db, current_user, check_row.branch_id, "تحديث حالة شيك")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     try:
         updated = services.move_check_status(db, check_id, body.to_status, current_user.id, body.notes)
     except services.CheckStatusTransitionError as exc:
@@ -803,15 +1331,25 @@ def move_check_status_endpoint(
 # ── Cost Centers ─────────────────────────────────────────────────────
 
 @router.get("/finance/cost-centers", response_model=list[CostCenterRead])
-def list_cost_centers(db: DbDep, _=Depends(get_manager_user),
+def list_cost_centers(db: DbDep, user=Depends(get_finance_user),
                       branch_id: int = Query(...), active_only: bool = Query(True)):
+    """⚠️ باج حقيقي كان هنا (2026-08-28): مفيش فحص عزل فرع."""
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "عرض مراكز تكلفة")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     return [CostCenterRead.model_validate(c)
             for c in crud.list_cost_centers(db, branch_id, active_only)]
 
 
 @router.post("/finance/cost-centers", response_model=CostCenterRead,
              status_code=status.HTTP_201_CREATED)
-def create_cost_center(data: CostCenterCreate, db: DbDep, _=Depends(get_admin_user)):
+def create_cost_center(data: CostCenterCreate, db: DbDep, user=Depends(get_admin_user)):
+    """⚠️ باج حقيقي كان هنا (مراجعة Codex 2026-08-30، C-01): مفيش فحص عزل فرع."""
+    try:
+        core_services.assert_branch_access(db, user, data.branch_id, "إضافة مركز تكلفة")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     obj = crud.create_cost_center(db, data)
     db.commit(); db.refresh(obj)
     return CostCenterRead.model_validate(obj)
@@ -819,11 +1357,17 @@ def create_cost_center(data: CostCenterCreate, db: DbDep, _=Depends(get_admin_us
 
 @router.get("/finance/cost-centers/report", response_model=CostCenterReport)
 def cost_center_report(
-    db: DbDep, _=Depends(get_manager_user),
+    db: DbDep, user=Depends(get_finance_user),
     branch_id: int = Query(...),
     date_from: date = Query(...), date_to: date = Query(...),
 ):
-    """إيراد كل مركز تكلفة (فندق/مطعم/كافيه/شاطئ/ملكية جزئية) كسطر منفصل."""
+    """إيراد كل مركز تكلفة (فندق/مطعم/كافيه/شاطئ/ملكية جزئية) كسطر منفصل.
+
+    ⚠️ باج حقيقي كان هنا (مراجعة Codex 2026-08-30، C-01): مفيش فحص عزل فرع."""
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "عرض تقرير مراكز تكلفة")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     return services.get_cost_center_report(db, branch_id, date_from, date_to)
 
 
@@ -843,7 +1387,7 @@ def list_exchange_rates(
 
 @router.post("/finance/exchange-rates", response_model=ExchangeRateRead,
              status_code=status.HTTP_201_CREATED)
-def create_exchange_rate(data: ExchangeRateCreate, db: DbDep, user=Depends(get_manager_user)):
+def create_exchange_rate(data: ExchangeRateCreate, db: DbDep, user=Depends(get_finance_user)):
     try:
         obj = services.create_exchange_rate(db, data, created_by=user.id)
     except ValueError as exc:
@@ -853,38 +1397,141 @@ def create_exchange_rate(data: ExchangeRateCreate, db: DbDep, user=Depends(get_m
 
 # ── Financial Reports ─────────────────────────────────────────────────
 
+def _assert_report_branch(db, user, branch_id: int, action_desc: str) -> None:
+    """⚠️ باج حقيقي كان هنا (مراجعة Codex 2026-08-30، C-01): كل تقارير
+    Finance الرئيسية (ميزان مراجعة/قائمة دخل/ميزانية/أعمار ديون + نسخ
+    PDF/Excel بتاعتهم) كانت من غير أي فحص عزل فرع خالص — أي محاسب في فرع A
+    كان يقدر يسحب الأرباح/الخسائر أو الميزانية الكاملة لفرع B بمجرد تغيير
+    branch_id في الرابط."""
+    try:
+        core_services.assert_branch_access(db, user, branch_id, action_desc)
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+
+
 @router.get("/finance/reports/trial-balance", response_model=TrialBalanceReport)
 def trial_balance_report(
-    db: DbDep, _=Depends(get_manager_user),
+    db: DbDep, user=Depends(get_finance_user),
     branch_id: int = Query(...),
     as_of: date = Query(...),
     group_by_parent: bool = Query(False, description="جمّع الحسابات تحت رؤوس المجموعات (Account.parent_id) بدل سطر لكل حساب فردي"),
 ):
     """ميزان المراجعة — كل حساب برصيده حتى تاريخ as_of، إجمالي المدين
     لازم يساوي إجمالي الدائن (is_balanced)."""
+    _assert_report_branch(db, user, branch_id, "عرض ميزان المراجعة")
     return services.get_trial_balance(db, branch_id, as_of, group_by_parent)
 
 
 @router.get("/finance/reports/income-statement", response_model=IncomeStatementReport)
 def income_statement_report(
-    db: DbDep, _=Depends(get_manager_user),
+    db: DbDep, user=Depends(get_finance_user),
     branch_id: int = Query(...),
     date_from: date = Query(...),
     date_to: date = Query(...),
 ):
     """قائمة الدخل — الإيرادات ناقص المصروفات خلال المدى، وصافي الربح."""
+    _assert_report_branch(db, user, branch_id, "عرض قائمة الدخل")
     return services.get_income_statement(db, branch_id, date_from, date_to)
 
 
 @router.get("/finance/reports/balance-sheet", response_model=BalanceSheetReport)
 def balance_sheet_report(
-    db: DbDep, _=Depends(get_manager_user),
+    db: DbDep, user=Depends(get_finance_user),
     branch_id: int = Query(...),
     as_of: date = Query(...),
 ):
     """الميزانية العمومية — الأصول = الخصوم + حقوق الملكية + الأرباح
     المحتجزة حتى تاريخ as_of (is_balanced)."""
+    _assert_report_branch(db, user, branch_id, "عرض الميزانية العمومية")
     return services.get_balance_sheet(db, branch_id, as_of)
+
+
+@router.get("/finance/reports/aging", response_model=AgingReport)
+def aging_report(
+    db: DbDep, user=Depends(get_finance_user),
+    branch_id: int = Query(...),
+    as_of: Optional[date] = Query(None),
+):
+    """تقرير أعمار الديون (2026-08-19، طلب Mohamed) — مين مديون لنا (فوليوهات
+    مفتوحة) ومين إحنا مديونين له (أوامر شراء + مصروفات آجلة)."""
+    _assert_report_branch(db, user, branch_id, "عرض تقرير أعمار الديون")
+    return services.get_aging_report(db, branch_id, as_of)
+
+
+# ── تصدير التقارير المالية الرئيسية PDF/Excel (2026-08-19) ────────────
+
+@router.get("/finance/reports/trial-balance/pdf", response_model=None)
+def trial_balance_pdf(
+    db: DbDep, user=Depends(get_finance_user),
+    branch_id: int = Query(...), as_of: date = Query(...),
+    group_by_parent: bool = Query(False),
+):
+    _assert_report_branch(db, user, branch_id, "تحميل ميزان المراجعة PDF")
+    pdf = services.generate_trial_balance_pdf(db, branch_id, as_of, group_by_parent)
+    return Response(content=pdf, media_type="application/pdf",
+                     headers={"Content-Disposition": f"inline; filename=trial-balance-{as_of}.pdf"})
+
+
+@router.get("/finance/reports/trial-balance/excel", response_model=None)
+def trial_balance_excel(
+    db: DbDep, user=Depends(get_finance_user),
+    branch_id: int = Query(...), as_of: date = Query(...),
+    group_by_parent: bool = Query(False),
+):
+    _assert_report_branch(db, user, branch_id, "تحميل ميزان المراجعة Excel")
+    xlsx = services.generate_trial_balance_excel(db, branch_id, as_of, group_by_parent)
+    return Response(
+        content=xlsx, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=trial-balance-{as_of}.xlsx"},
+    )
+
+
+@router.get("/finance/reports/income-statement/pdf", response_model=None)
+def income_statement_pdf(
+    db: DbDep, user=Depends(get_finance_user),
+    branch_id: int = Query(...), date_from: date = Query(...), date_to: date = Query(...),
+):
+    _assert_report_branch(db, user, branch_id, "تحميل قائمة الدخل PDF")
+    pdf = services.generate_income_statement_pdf(db, branch_id, date_from, date_to)
+    return Response(content=pdf, media_type="application/pdf",
+                     headers={"Content-Disposition": f"inline; filename=income-statement-{date_from}-{date_to}.pdf"})
+
+
+@router.get("/finance/reports/income-statement/excel", response_model=None)
+def income_statement_excel(
+    db: DbDep, user=Depends(get_finance_user),
+    branch_id: int = Query(...), date_from: date = Query(...), date_to: date = Query(...),
+):
+    _assert_report_branch(db, user, branch_id, "تحميل قائمة الدخل Excel")
+    xlsx = services.generate_income_statement_excel(db, branch_id, date_from, date_to)
+    return Response(
+        content=xlsx, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=income-statement-{date_from}-{date_to}.xlsx"},
+    )
+
+
+@router.get("/finance/reports/balance-sheet/pdf", response_model=None)
+def balance_sheet_pdf(
+    db: DbDep, user=Depends(get_finance_user),
+    branch_id: int = Query(...), as_of: date = Query(...),
+):
+    _assert_report_branch(db, user, branch_id, "تحميل الميزانية العمومية PDF")
+    pdf = services.generate_balance_sheet_pdf(db, branch_id, as_of)
+    return Response(content=pdf, media_type="application/pdf",
+                     headers={"Content-Disposition": f"inline; filename=balance-sheet-{as_of}.pdf"})
+
+
+@router.get("/finance/reports/balance-sheet/excel", response_model=None)
+def balance_sheet_excel(
+    db: DbDep, user=Depends(get_finance_user),
+    branch_id: int = Query(...), as_of: date = Query(...),
+):
+    _assert_report_branch(db, user, branch_id, "تحميل الميزانية العمومية Excel")
+    xlsx = services.generate_balance_sheet_excel(db, branch_id, as_of)
+    return Response(
+        content=xlsx, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=balance-sheet-{as_of}.xlsx"},
+    )
 
 
 # ── ETA E-Invoice ────────────────────────────────────────────────────
@@ -900,8 +1547,13 @@ def balance_sheet_report(
 async def submit_eta_invoice(
     data: ETAInvoiceSubmitRequest,
     db: DbDep,
-    _user=Depends(get_manager_user),
+    _user=Depends(get_finance_user),
 ):
+    """⚠️ باج حقيقي كان هنا (مراجعة Codex 2026-08-30، C-01): مفيش فحص عزل فرع."""
+    try:
+        core_services.assert_branch_access(db, _user, data.branch_id, "إصدار فاتورة إلكترونية")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     try:
         invoice = await services.submit_eta_invoice(db, settings, data)
         return ETAInvoiceRead.model_validate(invoice)
@@ -914,11 +1566,16 @@ async def submit_eta_invoice(
     response_model=PaginatedResponse,
 )
 def list_eta_invoices(
-    db: DbDep, _user=Depends(get_manager_user),
+    db: DbDep, user=Depends(get_finance_user),
     branch_id: int = Query(...),
     status_filter: Optional[str] = Query(None, alias="status"),
     page: int = Query(1, ge=1), size: int = Query(20, ge=1, le=100),
 ):
+    """⚠️ باج حقيقي كان هنا (2026-08-28): مفيش فحص عزل فرع."""
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "عرض فواتير ETA")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     items, total = crud.list_eta_invoices(db, branch_id, status_filter, (page - 1) * size, size)
     return PaginatedResponse(total=total, page=page, size=size,
                              items=[ETAInvoiceRead.model_validate(i) for i in items])
@@ -928,19 +1585,30 @@ def list_eta_invoices(
     "/finance/eta/invoices/{invoice_id}",
     response_model=ETAInvoiceRead,
 )
-def get_eta_invoice(invoice_id: int, db: DbDep, _user=Depends(get_manager_user)):
+def get_eta_invoice(invoice_id: int, db: DbDep, user=Depends(get_finance_user)):
+    """⚠️ باج حقيقي كان هنا (مراجعة Codex 2026-08-30، C-01): مفيش فحص عزل فرع."""
     invoice = crud.get_eta_invoice(db, invoice_id)
     if not invoice:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"الفاتورة {invoice_id} غير موجودة")
+    try:
+        core_services.assert_branch_access(db, user, invoice.branch_id, "عرض فاتورة إلكترونية")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     return ETAInvoiceRead.model_validate(invoice)
 
 
 # ── Fixed-Asset Depreciation ─────────────────────────────────────────
 
 @router.post("/finance/depreciation/run", response_model=DepreciationRunResult)
-def run_depreciation(data: DepreciationRunRequest, db: DbDep, user=Depends(get_manager_user)):
+def run_depreciation(data: DepreciationRunRequest, db: DbDep, user=Depends(get_finance_user)):
     """يشغّل دورة إهلاك خطي شهرية لكل الأصول المؤهّلة في الفرع — آمن لإعادة
-    التشغيل (أي أصل اتّرحّل له نفس الشهر قبل كده بيتخطّى تلقائيًا)."""
+    التشغيل (أي أصل اتّرحّل له نفس الشهر قبل كده بيتخطّى تلقائيًا).
+
+    ⚠️ باج حقيقي كان هنا (مراجعة Codex 2026-08-30، C-01): مفيش فحص عزل فرع."""
+    try:
+        core_services.assert_branch_access(db, user, data.branch_id, "تشغيل دورة إهلاك")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     try:
         return services.run_depreciation(db, data.branch_id, data.year, data.month, user.id)
     except ValueError as exc:
@@ -949,12 +1617,17 @@ def run_depreciation(data: DepreciationRunRequest, db: DbDep, user=Depends(get_m
 
 @router.get("/finance/depreciation/entries", response_model=PaginatedResponse)
 def list_depreciation_entries(
-    db: DbDep, _=Depends(get_manager_user),
+    db: DbDep, user=Depends(get_finance_user),
     branch_id: int = Query(...),
     asset_id: Optional[int] = Query(None),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
 ):
+    """⚠️ باج حقيقي كان هنا (2026-08-28): مفيش فحص عزل فرع."""
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "عرض قيود إهلاك")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     items, total = services.list_depreciation_entries(db, branch_id, asset_id, page, size)
     return PaginatedResponse(total=total, page=page, size=size,
                              items=[AssetDepreciationEntryRead.model_validate(e) for e in items])
@@ -962,9 +1635,27 @@ def list_depreciation_entries(
 
 # ── Bank Accounts ──────────────────────────────────────────────────────
 
+def _assert_bank_account_branch(db, user, bank_account_id: int, action_desc: str):
+    """جلب الحساب البنكي والتحقق من عزل الفرع — نفس نمط _assert_folio_branch/
+    _assert_shift_branch. ⚠️ باج حقيقي كان هنا (مراجعة Codex 2026-08-30، C-01):
+    مفقود من كل عمليات الحسابات البنكية وكشوف الحساب/المطابقة."""
+    bank_account = crud.get_bank_account(db, bank_account_id)
+    if not bank_account:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"الحساب البنكي {bank_account_id} غير موجود")
+    try:
+        core_services.assert_branch_access(db, user, bank_account.branch_id, action_desc)
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+    return bank_account
+
+
 @router.post("/finance/bank-accounts", response_model=BankAccountRead,
              status_code=status.HTTP_201_CREATED)
-def create_bank_account(data: BankAccountCreate, db: DbDep, _=Depends(get_manager_user)):
+def create_bank_account(data: BankAccountCreate, db: DbDep, user=Depends(get_finance_user)):
+    try:
+        core_services.assert_branch_access(db, user, data.branch_id, "إضافة حساب بنكي")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     try:
         return services.create_bank_account(db, data)
     except IntegrityError:
@@ -980,15 +1671,21 @@ def create_bank_account(data: BankAccountCreate, db: DbDep, _=Depends(get_manage
 
 @router.get("/finance/bank-accounts", response_model=list[BankAccountRead])
 def list_bank_accounts(
-    db: DbDep, _=Depends(get_manager_user),
+    db: DbDep, user=Depends(get_finance_user),
     branch_id: int = Query(...),
     active_only: bool = Query(True),
 ):
+    """⚠️ باج حقيقي كان هنا (2026-08-28): مفيش فحص عزل فرع."""
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "عرض حسابات بنكية")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     return [BankAccountRead.model_validate(a) for a in crud.list_bank_accounts(db, branch_id, active_only)]
 
 
 @router.patch("/finance/bank-accounts/{bank_account_id}", response_model=BankAccountRead)
-def update_bank_account(bank_account_id: int, data: BankAccountUpdate, db: DbDep, _=Depends(get_manager_user)):
+def update_bank_account(bank_account_id: int, data: BankAccountUpdate, db: DbDep, user=Depends(get_finance_user)):
+    _assert_bank_account_branch(db, user, bank_account_id, "تعديل حساب بنكي")
     try:
         return services.update_bank_account(db, bank_account_id, data)
     except ValueError as exc:
@@ -1003,10 +1700,11 @@ def update_bank_account(bank_account_id: int, data: BankAccountUpdate, db: DbDep
     status_code=status.HTTP_201_CREATED,
 )
 def import_bank_statement_lines(
-    bank_account_id: int, data: BankStatementImportRequest, db: DbDep, user=Depends(get_manager_user),
+    bank_account_id: int, data: BankStatementImportRequest, db: DbDep, user=Depends(get_finance_user),
 ):
     """استيراد سطور كشف حساب بنكي (يدوي/من ملف اتحوّل JSON على الفرونت
     إند) — كل سطر بيدخل الحالة unmatched لحد ما يتطابق (أوتوماتيك أو يدوي)."""
+    _assert_bank_account_branch(db, user, bank_account_id, "استيراد كشف حساب بنكي")
     try:
         return [
             BankStatementLineRead.model_validate(row)
@@ -1021,10 +1719,11 @@ def import_bank_statement_lines(
     response_model=PaginatedResponse,
 )
 def list_bank_statement_lines(
-    bank_account_id: int, db: DbDep, _=Depends(get_manager_user),
+    bank_account_id: int, db: DbDep, user=Depends(get_finance_user),
     status_filter: Optional[str] = Query(None, alias="status"),
     page: int = Query(1, ge=1), size: int = Query(20, ge=1, le=100),
 ):
+    _assert_bank_account_branch(db, user, bank_account_id, "عرض سطور كشف حساب بنكي")
     items, total = crud.list_bank_statement_lines(
         db, bank_account_id, status_filter, skip=(page - 1) * size, limit=size,
     )
@@ -1033,9 +1732,10 @@ def list_bank_statement_lines(
 
 
 @router.post("/finance/bank-accounts/{bank_account_id}/statement-lines/auto-match", response_model=AutoMatchResponse)
-def auto_match_bank_statement_lines(bank_account_id: int, db: DbDep, user=Depends(get_manager_user)):
+def auto_match_bank_statement_lines(bank_account_id: int, db: DbDep, user=Depends(get_finance_user)):
     """مطابقة أوتوماتيكية محافظة — بس لو مرشح دفعة واحد بالظبط لكل سطر،
     غير كده بيسيبه للمطابقة اليدوية. يرجّع عدد السطور اللي اتطابقت."""
+    _assert_bank_account_branch(db, user, bank_account_id, "مطابقة كشف حساب بنكي")
     try:
         matched = services.auto_match_bank_statement_lines(db, bank_account_id, user.id)
         return {"matched_count": matched}
@@ -1049,8 +1749,9 @@ def auto_match_bank_statement_lines(bank_account_id: int, db: DbDep, user=Depend
 )
 def match_bank_statement_line(
     bank_account_id: int, line_id: int, data: BankStatementMatchRequest, db: DbDep,
-    user=Depends(get_manager_user),
+    user=Depends(get_finance_user),
 ):
+    _assert_bank_account_branch(db, user, bank_account_id, "مطابقة سطر كشف حساب بنكي يدويًا")
     try:
         return services.match_bank_statement_line(db, bank_account_id, line_id, data.payment_id, user.id)
     except ValueError as exc:
@@ -1061,7 +1762,8 @@ def match_bank_statement_line(
     "/finance/bank-accounts/{bank_account_id}/statement-lines/{line_id}/unmatch",
     response_model=BankStatementLineRead,
 )
-def unmatch_bank_statement_line(bank_account_id: int, line_id: int, db: DbDep, _=Depends(get_manager_user)):
+def unmatch_bank_statement_line(bank_account_id: int, line_id: int, db: DbDep, user=Depends(get_finance_user)):
+    _assert_bank_account_branch(db, user, bank_account_id, "إلغاء مطابقة سطر كشف حساب بنكي")
     try:
         return services.unmatch_bank_statement_line(db, bank_account_id, line_id)
     except ValueError as exc:
@@ -1073,10 +1775,61 @@ def unmatch_bank_statement_line(bank_account_id: int, line_id: int, db: DbDep, _
     response_model=BankReconciliationSummary,
 )
 def get_bank_reconciliation_summary(
-    bank_account_id: int, db: DbDep, _=Depends(get_manager_user),
+    bank_account_id: int, db: DbDep, user=Depends(get_finance_user),
     as_of: date = Query(...),
 ):
+    _assert_bank_account_branch(db, user, bank_account_id, "عرض ملخص مطابقة بنكية")
     try:
         return services.get_bank_reconciliation_summary(db, bank_account_id, as_of)
     except ValueError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+
+
+# ── Payment Channels ─────────────────────────────────────────────────────
+
+@router.post("/finance/payment-channels", response_model=PaymentChannelRead,
+             status_code=status.HTTP_201_CREATED)
+def create_payment_channel(data: PaymentChannelCreate, db: DbDep, user=Depends(get_finance_user)):
+    try:
+        core_services.assert_branch_access(db, user, data.branch_id, "إضافة قناة تحصيل")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+    try:
+        return services.create_payment_channel(db, data)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "كود القناة ده مستخدم بالفعل في هذا الفرع")
+
+
+@router.get("/finance/payment-channels", response_model=list[PaymentChannelRead])
+def list_payment_channels(
+    db: DbDep, user=Depends(get_finance_user),
+    branch_id: int = Query(...),
+    active_only: bool = Query(False),
+    method: Optional[str] = Query(None, pattern=r"^(cash|card|wallet)$"),
+):
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "عرض قنوات التحصيل")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+    return services.list_payment_channels(db, branch_id, active_only, method)
+
+
+@router.patch("/finance/payment-channels/{channel_id}", response_model=PaymentChannelRead)
+def update_payment_channel(
+    channel_id: int, data: PaymentChannelUpdate, db: DbDep, user=Depends(get_finance_user),
+):
+    try:
+        channel = services.get_payment_channel_or_404(db, channel_id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+    try:
+        core_services.assert_branch_access(db, user, channel.branch_id, "تعديل قناة تحصيل")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+    try:
+        return services.update_payment_channel(db, channel_id, data)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))

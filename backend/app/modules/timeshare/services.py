@@ -263,15 +263,25 @@ def pay_installment(
        يعني كل تحصيلات الأقساط (اللي هي معظم إيراد الملكية الجزئية على مدار سنين
        العقد) كانت غايبة تمامًا عن الدفاتر المحاسبية — مخالفة مباشرة لـ
        "Finance First" (§5.2 في CLAUDE.md بيذكر أقساط الملكية الجزئية بالاسم صراحةً).
-    """
+
+    4. ⚠️ مراجعة Codex 2026-08-30 (H-05): ترتيب الأقفال كان معكوس مقارنة
+       بـcancel_contract (بتقفل العقد الأول). هنا كان بيتقفل القسط الأول
+       والعقد بيتقرا من غير قفل — ترتيب أقفال غير ثابت بين المسارين ده
+       بالظبط اللي بيسمح بحالة سباق: دفع وإلغاء متزامنين ممكن الاتنين
+       يعدّوا من غير ما أي واحد يشوف تأثير التاني، فيتلزّموا مع بعض
+       (دفعة على عقد اتلغى، أو رد مبلغ محسوب من غير آخر تحصيل). دلوقتي
+       العقد بيتقفل الأول دايمًا (نفس ترتيب cancel_contract بالظبط)."""
+    inst_lookup = crud.get_installment(db, inst_id)
+    if not inst_lookup:
+        raise ValueError(f"القسط {inst_id} غير موجود")
+    contract = crud.lock_contract_for_update(db, inst_lookup.contract_id)
+    if not contract:
+        raise ValueError(f"العقد المرتبط بالقسط {inst_id} غير موجود")
     inst = _lock_installment_or_raise(db, inst_id)
     try:
         if inst.status == "paid":
             raise ValueError("القسط مدفوع بالكامل مسبقاً")
 
-        contract = crud.get_contract(db, inst.contract_id)
-        if not contract:
-            raise ValueError(f"العقد المرتبط بالقسط {inst_id} غير موجود")
         if contract.status == "cancelled":
             raise ValueError(f"العقد {contract.contract_number} ملغي — لا يمكن تحصيل أقساط عليه")
         if contract.status == "expired":
@@ -437,15 +447,21 @@ def pay_maintenance_due(
 ) -> TimeshareMaintenanceDue:
     """تحصيل مستحق صيانة سنوي — مرآة كاملة لـ pay_installment (نفس تسلسل
     التحقق بالضبط: موجود؟ مدفوع بالفعل؟ العقد ملغي/منتهي؟ المبلغ زيادة عن
-    المتبقي؟) بس على TimeshareMaintenanceDue بدل TimeshareInstallment."""
+    المتبقي؟) بس على TimeshareMaintenanceDue بدل TimeshareInstallment.
+
+    ⚠️ مراجعة Codex 2026-08-30 (H-05): نفس إصلاح ترتيب الأقفال بتاع
+    pay_installment بالظبط — العقد بيتقفل الأول دايمًا (راجع تعليقها)."""
+    due_lookup = crud.get_maintenance_due(db, due_id)
+    if not due_lookup:
+        raise ValueError(f"مستحق الصيانة {due_id} غير موجود")
+    contract = crud.lock_contract_for_update(db, due_lookup.contract_id)
+    if not contract:
+        raise ValueError(f"العقد المرتبط بمستحق الصيانة {due_id} غير موجود")
     due = _lock_maintenance_due_or_raise(db, due_id)
     try:
         if due.status == "paid":
             raise ValueError("مستحق الصيانة مدفوع بالكامل مسبقاً")
 
-        contract = crud.get_contract(db, due.contract_id)
-        if not contract:
-            raise ValueError(f"العقد المرتبط بمستحق الصيانة {due_id} غير موجود")
         if contract.status == "cancelled":
             raise ValueError(f"العقد {contract.contract_number} ملغي — لا يمكن تحصيل صيانة عليه")
         if contract.status == "expired":
@@ -1064,6 +1080,30 @@ def get_available_weeks(
     }
 
 
+def get_units_availability(
+    db: Session, branch_id: int, unit_type: str, check_in, check_out,
+) -> list[dict]:
+    """خريطة الوحدات لفترة معيّنة — كل وحدة من النوع المطلوب مع is_available
+    (مش تحت صيانة ومفيش زيارة scheduled/active متقاطعة معاها في الفترة دي).
+    2026-08-16: كان مفيش أي طريقة للموظف يشوف/يختار وحدة فعلية وقت تأكيد
+    زيارة — الاختيار كان أوتوماتيكي بالكامل (find_available_unit). الشاشة
+    دي بتوفّر البيانات لخريطة بصرية حقيقية بدل التخصيص الأعمى."""
+    units = crud.list_units(db, branch_id, unit_type=unit_type)
+    return [
+        {
+            "id": unit.id,
+            "unit_number": unit.unit_number,
+            "unit_type": unit.unit_type,
+            "status": unit.status,
+            "is_available": (
+                unit.status != "maintenance"
+                and not crud.has_overlapping_visit(db, unit.id, check_in, check_out)
+            ),
+        }
+        for unit in units
+    ]
+
+
 def get_upcoming_visits(db: Session, branch_id: int, days: int = 30) -> list[dict]:
     from app.core.config import settings  # noqa: PLC0415
     from app.resort_os.timeshare_engine import find_next_visit  # noqa: PLC0415
@@ -1476,10 +1516,32 @@ def create_visit(db: Session, data: TimeshareVisitCreate) -> TimeshareVisit:
         return _create_entitlement_pair_visit(db, contract, data, nights)
 
     if contract.unit_id:
+        # عقد بوحدة ثابتة (متعاقد عليها بالاسم) — الاختيار اليدوي ميتجاهلش
+        # هنا، ده مش اختيار حر زي العقد العائم. تغيير وحدة عقد ثابت عملية
+        # مقصودة منفصلة (reassign_contract_unit فوق)، مش جزء من تأكيد زيارة.
+        if data.unit_id and data.unit_id != contract.unit_id:
+            raise ValueError(
+                f"العقد {contract.contract_number} مربوط بوحدة ثابتة — "
+                "لتغييرها استخدم إعادة تخصيص الوحدة على العقد نفسه، مش تأكيد الزيارة"
+            )
         candidate_id = contract.unit_id
+    elif data.unit_id:
+        # عقد عائم واختار الموظف وحدة معيّنة من خريطة الوحدات (2026-08-16)
+        # بدل الاختيار الأوتوماتيكي — نوع/فرع الوحدة يتأكدوا هنا، وباقي
+        # الفحوصات (تعارض/صيانة) بتحصل بعد القفل تحت زي أي مسار تاني بالظبط.
+        manual_unit = crud.get_unit(db, data.unit_id)
+        if not manual_unit or manual_unit.branch_id != contract.branch_id:
+            raise ValueError(f"الوحدة {data.unit_id} غير موجودة في هذا الفرع")
+        if manual_unit.unit_type != contract.room_type:
+            raise ValueError(
+                f"الوحدة {manual_unit.unit_number} نوعها {manual_unit.unit_type} "
+                f"لا يطابق نوع عقد {contract.contract_number} ({contract.room_type})"
+            )
+        candidate_id = manual_unit.id
     else:
-        # عقد عائم — ابحث عن أي وحدة متاحة من نفس نوع الغرفة (قبل القفل، مجرد
-        # ترشيح أولي) ثم اقفلها وأعد التحقق تحت الحماية فعليًا تحت.
+        # عقد عائم بدون اختيار يدوي — ابحث عن أي وحدة متاحة من نفس نوع
+        # الغرفة (قبل القفل، مجرد ترشيح أولي) ثم اقفلها وأعد التحقق تحت
+        # الحماية فعليًا تحت.
         found = crud.find_available_unit(db, contract.branch_id, contract.room_type, data.check_in, data.check_out)
         if not found:
             raise ValueError(f"لا توجد وحدة متاحة من نوع {contract.room_type} في الفترة المطلوبة")
@@ -1954,10 +2016,12 @@ def _notify_admin_new_visit_request(contract: "TimeshareContract", req: "Timesha
 
 def approve_visit_request(
     db: Session, request_id: int, check_in, check_out, approved_by: int,
+    unit_id: Optional[int] = None,
 ) -> TimeshareVisitRequest:
     """موافقة مدير — بيحدد التواريخ الفعلية بنفسه (مش بالضرورة نفس تفضيل
     العميل)، وبتمرّ بنفس create_visit الموجودة فوق حرفيًا — صفر تكرار
-    لمنطق منع التعارض/التجميد/انتهاء العقد."""
+    لمنطق منع التعارض/التجميد/انتهاء العقد. unit_id: اختيار يدوي من خريطة
+    الوحدات (2026-08-16) — لعقد عائم بس، create_visit بترفضه لعقد ثابت."""
     req = crud.get_visit_request(db, request_id)
     if not req:
         raise ValueError(f"طلب الزيارة {request_id} غير موجود")
@@ -1967,6 +2031,7 @@ def approve_visit_request(
     visit = create_visit(db, TimeshareVisitCreate(
         branch_id=req.branch_id, contract_id=req.contract_id,
         check_in=check_in, check_out=check_out, notes=req.notes,
+        unit_id=unit_id,
     ))
     req.status = "approved"
     req.reviewed_by = approved_by
@@ -2091,7 +2156,8 @@ def update_ticket_status(db: Session, ticket_id: int, new_status: str) -> Timesh
 
 def provision_timeshare_agent(
     db: Session, *, email: str, full_name: str, phone: Optional[str],
-    branch_id: int, created_by: int, preferred_language: str = "ar",
+    employee_id: int, branch_id: int, created_by: int,
+    preferred_language: str = "ar",
 ) -> dict:
     """⚠️ باج توثيقي حقيقي اتصلح هنا: deps.py's get_timeshare_user كان
     بيدّعي إن timeshare_agent "بيحصل على UserPermission صريح على
@@ -2106,6 +2172,7 @@ def provision_timeshare_agent(
     from app.core.kernel.models.user import User  # noqa: PLC0415
     from app.core.kernel.security import get_password_hash, validate_email_format  # noqa: PLC0415
     from app.modules.core.models import AuditLog, Branch, UserBranchMembership, UserPermission  # noqa: PLC0415
+    from app.modules.hr.models import Employee  # noqa: PLC0415
 
     normalized_email = (email or "").strip().casefold()
     normalized_name = (full_name or "").strip()
@@ -2121,6 +2188,17 @@ def provision_timeshare_agent(
     branch = db.query(Branch).filter(Branch.id == branch_id, Branch.is_active.is_(True)).first()
     if branch is None:
         raise ValueError("الفرع غير موجود أو غير نشط")
+
+    employee = db.query(Employee).filter(
+        Employee.id == employee_id,
+        Employee.branch_id == branch_id,
+    ).with_for_update().first()
+    if employee is None:
+        raise ValueError("ملف الموظف غير موجود في فرع التشغيل")
+    if employee.user_id is not None:
+        raise ValueError("ملف الموظف مرتبط بحساب دخول بالفعل")
+    if employee.status == "terminated":
+        raise ValueError("لا يمكن إنشاء حساب لموظف منتهي الخدمة")
 
     existing = db.query(User).filter(func.lower(User.email) == normalized_email).first()
     if existing is not None:
@@ -2143,6 +2221,7 @@ def provision_timeshare_agent(
     )
     db.add(user)
     db.flush()
+    employee.user_id = user.id
     db.add(UserBranchMembership(
         user_id=user.id, branch_id=branch_id, is_default=True, is_active=True, created_by=created_by,
     ))
@@ -2153,14 +2232,35 @@ def provision_timeshare_agent(
     db.add(AuditLog(
         user_id=created_by, branch_id=branch_id, action="timeshare_agent_provisioned",
         entity_type="user", entity_id=user.id, old_data=None,
-        new_data=json.dumps({"email": normalized_email, "full_name": normalized_name}, ensure_ascii=False),
+        new_data=json.dumps({
+            "email": normalized_email,
+            "full_name": normalized_name,
+            "employee_id": employee_id,
+        }, ensure_ascii=False),
     ))
     db.commit()
     db.refresh(user)
     return {
-        "id": user.id, "email": user.email, "full_name": user.full_name,
+        "id": user.id, "employee_id": employee_id,
+        "email": user.email, "full_name": user.full_name,
         "temporary_password": temporary_password, "must_change_password": True,
     }
+
+
+def list_eligible_timeshare_employees(db: Session, branch_id: int) -> list:
+    """Return only the non-sensitive HR fields needed by the account picker."""
+    from app.modules.hr.models import Employee  # noqa: PLC0415
+
+    return (
+        db.query(Employee)
+        .filter(
+            Employee.branch_id == branch_id,
+            Employee.user_id.is_(None),
+            Employee.status != "terminated",
+        )
+        .order_by(Employee.full_name, Employee.id)
+        .all()
+    )
 
 
 def list_timeshare_staff(db: Session, branch_id: int) -> list:

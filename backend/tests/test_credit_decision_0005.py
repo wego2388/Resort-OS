@@ -363,6 +363,7 @@ def test_beach_credit_sale_and_void_are_atomic_without_cash_artifacts(db):
     )
 
     charge = db.query(CreditTransaction).filter_by(ref_beach_tx_id=sale.id).one()
+    assert sale.vat_amount == Decimal("0.00")
     expected = (sale.total_amount + sale.vat_amount).quantize(Decimal("0.01"))
     assert charge.amount == expected
     assert charge.balance_delta == expected

@@ -557,7 +557,14 @@ def _seed_chart_of_accounts(db: Session) -> None:
         # فعليًا غير متوازن (مدين ≠ دائن) في أي كشف فيه سلفة. راجع
         # hr.services._post_payroll_journal.
         {"code": "1180", "name": "سلف موظفين مستحقة",             "account_type": "asset"},
+        # 2026-08-19 (طلب Mohamed صراحةً — عهدة نقدية لمقاولات/مشاريع):
+        # راجع finance.models.Custody + services.disburse_custody/settle_custody.
+        {"code": "1190", "name": "عهد نقدية تحت التسوية",          "account_type": "asset"},
         {"code": "1210", "name": "مصروفات مدفوعة مقدمًا",        "account_type": "asset"},
+        # 2026-08-20 (طلب Mohamed صراحةً — استبدال نموذج عقود B2B الشاطئ
+        # بمبلغ شهري ثابت): راجع beach.models.B2BContract/B2BContractMonth +
+        # services.post_b2b_monthly_fees/settle_b2b_contract.
+        {"code": "1165", "name": "ذمم فنادق شريكة (B2B)",         "account_type": "asset"},
         {"code": "1500", "name": "أرض",                          "account_type": "asset"},
         {"code": "1510", "name": "مباني",                         "account_type": "asset"},
         {"code": "1515", "name": "مسبح ومناظر طبيعية",           "account_type": "asset"},
@@ -1276,6 +1283,20 @@ def _seed_beach_locations(db: Session, branch_id: int | None = None) -> None:
     cashier = db.query(User).filter(User.email == "cashier@resortos.local").first()
     cashier_id = cashier.id if cashier else None
 
+    # دفع مباشر (زي أي checkin هنا) محتاج وردية كاشير مفتوحة (راجع
+    # beach.services.NoOpenShiftError) — فتح واحدة تشغيلية للبيانات
+    # التوضيحية دي، نفس ما كان بيحصل ضمنيًا قبل ما القاعدة دي تتفرض.
+    if cashier_id:
+        from app.modules.finance import crud as finance_crud
+        from app.modules.finance import services as finance_services
+        from app.modules.finance.schemas import CashierShiftOpen
+
+        if not finance_crud.get_open_shift(db, branch.id, cashier_id):
+            finance_services.open_shift(
+                db, cashier_id=cashier_id, opened_by=cashier_id,
+                data=CashierShiftOpen(branch_id=branch.id, opening_float=Decimal("0")),
+            )
+
     demo_checkins = [
         (umbrellas[0], "منى إبراهيم السيد", "01012345678", 2, True),
         (umbrellas[3], "كريم عبد الرحمن",    "01298765432", 1, False),
@@ -1318,6 +1339,7 @@ def _seed_b2b_contracts(db: Session, branch_id: int | None = None) -> None:
     Idempotent: لو فيه أي عقد للفرع أصلاً → يتجاهَل تمامًا (مايكررش)."""
     from datetime import timedelta
 
+    from app.modules.beach import crud as beach_crud
     from app.modules.beach.models import B2BContract, B2BContractDay
     from app.modules.core.models import Branch
 
@@ -1328,23 +1350,26 @@ def _seed_b2b_contracts(db: Session, branch_id: int | None = None) -> None:
         return
 
     today = date.today()
+    # 2026-08-20: نموذج العقد بقى مبلغ شهري ثابت + حد أقصى استرشادي — القيم
+    # دي معادِلة اقتصاديًا لقيم العرض اليومي القديمة (سعر × حصة × 30 يوم)،
+    # نفس صيغة الـ backfill في migration 45aabf472620.
     specs = [
-        # (hotel_name, hotel_name_ar, phone, daily_quota, entry_price, towel_price,
+        # (hotel_name, hotel_name_ar, phone, monthly_fee, monthly_guest_cap,
         #  checked_in_today, credit_limit, is_overdue_demo)
-        ("Sunrise Grand Sharm",   "صنرايز جراند شرم",   "+201001112233", 40, Decimal("120"), Decimal("30"),
-         6,  Decimal("5000"), False),
-        ("Palm Oasis Resort",    "بالم أوازيس ريزورت", "+201002223344", 15, Decimal("100"), Decimal("25"),
-         12, Decimal("2000"), True),
-        ("Coral Bay Hotel",      "كورال باي هوتيل",    "+201003334455", 60, Decimal("150"), Decimal("40"),
-         0,  None,            False),
+        ("Sunrise Grand Sharm",   "صنرايز جراند شرم",   "+201001112233", Decimal("144000"), 1200,
+         6,  Decimal("300000"), False),
+        ("Palm Oasis Resort",    "بالم أوازيس ريزورت", "+201002223344", Decimal("45000"),  450,
+         12, Decimal("100000"), True),
+        ("Coral Bay Hotel",      "كورال باي هوتيل",    "+201003334455", Decimal("270000"), 1800,
+         0,  None,              False),
     ]
 
     created = 0
-    for hotel_en, hotel_ar, phone, quota, entry_price, towel_price, checked_in, credit_limit, overdue_demo in specs:
+    for hotel_en, hotel_ar, phone, monthly_fee, guest_cap, checked_in, credit_limit, overdue_demo in specs:
         contract = B2BContract(
             branch_id=branch.id,
             hotel_name=hotel_en, hotel_name_ar=hotel_ar, contact_phone=phone,
-            daily_quota=quota, entry_price=entry_price, towel_price=towel_price,
+            monthly_fee=monthly_fee, monthly_guest_cap=guest_cap,
             valid_from=today.replace(day=1),
             valid_until=date(today.year, 12, 31),
             is_active=True,
@@ -1359,18 +1384,35 @@ def _seed_b2b_contracts(db: Session, branch_id: int | None = None) -> None:
             db.add(B2BContractDay(
                 contract_id=contract.id, day=today,
                 checked_in_count=checked_in,
-                total_amount=entry_price * checked_in,
             ))
         if overdue_demo:
-            # رصيد قديم (45 يوم) لسه مش متسوّى — أقدم من مهلة السداد
-            # (30 يوم)، فهو اللي فعليًا بيخلي is_overdue=True صحيح حسابيًا
-            # (مش بس علم مضبوط يدويًا) لو الـ Celery task اتشغّل، وبيخلي
-            # outstanding_balance يتخطى credit_limit من أول تشغيل.
+            # رسم شهري توضيحي لشهر قديم (45 يوم) لسه مش متسوّى — أقدم من
+            # مهلة السداد (30 يوم)، فهو اللي فعليًا بيخلي is_overdue=True
+            # صحيح حسابيًا (مش بس علم مضبوط يدويًا) لو الـ Celery task
+            # اتشغّل، وبيخلي outstanding_balance يظهر رقم حقيقي في اللوحة
+            # الحيّة. قيد محاسبي حقيقي (Dr 1165 / Cr 4300) عبر نفس الدالة
+            # اللي post_b2b_monthly_fees بتستخدمها فعليًا — مش بيانات وهمية
+            # منفصلة عن الدفاتر.
             old_day = today - timedelta(days=45)
+            from app.modules.finance.services import post_taxed_sale_journal  # noqa: PLC0415
+
+            old_month_start = old_day.replace(day=1)
+            entry = post_taxed_sale_journal(
+                db, branch.id, old_day,
+                debit_account_code="1165", revenue_account_code="4300",
+                net_revenue_amount=Decimal("2500"),
+                reference=f"B2B-MONTHLY-{contract.id}-{old_month_start.isoformat()}",
+                description=f"رسم شهري ثابت توضيحي — {contract.hotel_name} ({old_month_start:%Y-%m})",
+                source="beach_b2b_monthly", source_id=contract.id,
+                cost_center_code="BEACH", commit_cost_centers=False,
+            )
             db.add(B2BContractDay(
                 contract_id=contract.id, day=old_day,
-                checked_in_count=20, total_amount=Decimal("2500"),
+                checked_in_count=20,
             ))
+            beach_crud.create_b2b_contract_month(
+                db, contract.id, old_month_start, 20, Decimal("2500"), entry.id,
+            )
         created += 1
 
     db.flush()
@@ -1767,6 +1809,7 @@ def _seed_settings(db: Session) -> None:
         "beach.price.child":            "50",
         "beach.price.resident":         "70",
         "beach.price.towel":            "30",
+        "beach.price.outside_food_fee": "50",
         "no_show_policy":               "full_first_night",
         "no_show_deadline_hour":        "18",
         "discount_approval_threshold":  "500",

@@ -13,14 +13,21 @@ export default {
   theme: {
     extend: {
       colors: {
-        'owner-bg':     '#0A0908',
-        'owner-card':   '#1C1B1A',
-        'owner-border': '#2C2B2A',
-        'owner-text':   '#F5F5F4',
-        'owner-muted':  '#A8A29E',
-        'owner-green':  '#22C55E',
-        'owner-red':    '#EF4444',
-        'owner-amber':  '#F59E0B',
+        // Resolved from CSS custom properties (light values on :root, dark
+        // overrides under .dark — see src/assets/main.css) so every existing
+        // `owner-*` utility class across the app automatically repaints for
+        // both themes with zero changes at the call site. The
+        // `rgb(var(--x) / <alpha-value>)` shape also makes Tailwind's opacity
+        // modifiers (e.g. `bg-owner-red/10`) work correctly in both themes —
+        // same convention as `@resort-os/ui`'s tailwind-preset.js.
+        'owner-bg':     'rgb(var(--owner-bg) / <alpha-value>)',
+        'owner-card':   'rgb(var(--owner-card) / <alpha-value>)',
+        'owner-border': 'rgb(var(--owner-border) / <alpha-value>)',
+        'owner-text':   'rgb(var(--owner-text) / <alpha-value>)',
+        'owner-muted':  'rgb(var(--owner-muted) / <alpha-value>)',
+        'owner-green':  'rgb(var(--owner-green) / <alpha-value>)',
+        'owner-red':    'rgb(var(--owner-red) / <alpha-value>)',
+        'owner-amber':  'rgb(var(--owner-amber) / <alpha-value>)',
       },
     },
   },

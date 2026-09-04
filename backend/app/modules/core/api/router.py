@@ -92,6 +92,9 @@ from app.modules.core.schemas import (
     UserRead,
     UserRoleUpdate,
     ForceTwoFactorResetRequest,
+    TwoFactorResetResult,
+    ResetStaffCredentialsRequest,
+    ResetStaffCredentialsResult,
 )
 
 router = APIRouter(tags=["core"])
@@ -183,7 +186,15 @@ async def guest_alerts_websocket(ws: WebSocket, branch_id: int, db: DbDep):
     محتاج ?token= JWT صالح بمستوى نادل+، وبقى (Gate 1 containment، جولة
     تصحيح ثانية) بيتحقق كمان إن الفرع ده فرع المستخدم نفسه — نفس باج
     GET/PATCH /alerts الأصلي، كان أي نادل يقدر يشترك في بث فرع تاني تمامًا."""
-    user = await get_websocket_user(ws, db, min_level=30)
+    user = await get_websocket_user(
+        ws,
+        db,
+        min_level=30,
+        allowed_roles={
+            "waiter", "cashier", "receptionist", "supervisor",
+            "manager", "admin", "super_admin",
+        },
+    )
     if not user:
         return
     try:
@@ -377,6 +388,8 @@ def upsert_setting(
             status.HTTP_409_CONFLICT,
             {"error_code": "ACTOR_AUTHORIZATION_CHANGED", "message": str(exc)},
         )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
 # ─────────────────────── Audit Logs ──────────────────────────────────
@@ -387,7 +400,7 @@ def upsert_setting(
 )
 def list_audit_logs(
     db: DbDep,
-    _user=Depends(get_manager_user),
+    user=Depends(get_manager_user),
     branch_id: Optional[int] = Query(None),
     entity_type: Optional[str] = Query(None),
     entity_id: Optional[int] = Query(None),
@@ -398,6 +411,14 @@ def list_audit_logs(
     page: int = Query(1, ge=1),
     size: int = Query(50, ge=1, le=200),
 ):
+    # مراجعة Codex 2026-08-31 (SEC-01): branch_id كان اختياري بدون أي
+    # فرض فعلي — أي مدير (مش super_admin بس) كان يقدر يشوف سجل تدقيق كل
+    # الفروع (موافقات PIN، إلغاءات، تغييرات رواتب) بمجرد حذف الفلتر من
+    # الطلب. نفس نمط _require_branch_or_global_read الموجود فعلاً في
+    # الملف ده لإعدادات الفرع (Gate 2B3A): branch_id فاضي = عرض عام،
+    # متاح لـsuper_admin بس؛ branch_id محدد = لازم يطابق فرع الجلسة
+    # الفعلي عبر assert_branch_access.
+    _require_branch_or_global_read(db, user, branch_id, "عرض سجل التدقيق")
     skip = (page - 1) * size
     items, total = crud.list_audit_logs(
         db,
@@ -637,13 +658,14 @@ def unlock_user_account(
 
 @router.post(
     "/users/{user_id}/force-2fa-reset",
-    response_model=UserRead,
+    response_model=TwoFactorResetResult,
 )
 def force_reset_2fa(
     user_id: int,
     data: ForceTwoFactorResetRequest,
     db: DbDep,
     request: Request,
+    response: Response,
     user=Depends(get_super_admin_user),
     x_step_up_token: Optional[str] = Header(default=None, alias="X-Step-Up-Token"),
 ):
@@ -658,14 +680,64 @@ def force_reset_2fa(
         purpose="user_force_2fa_reset", scope_hash=scope_hash, x_step_up_token=x_step_up_token,
     )
     try:
-        updated = services.force_reset_2fa(
+        result = services.force_reset_2fa(
             db, user_id, reset_by=user.id, reason=data.reason,
             step_up_public_reference=step_up["public_reference"],
             assurance_method=step_up["assurance_method"],
         )
-        return UserRead.model_validate(updated)
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Pragma"] = "no-cache"
+        return TwoFactorResetResult(
+            user=UserRead.model_validate(result["user"]),
+            enrollment_token=result["enrollment_token"],
+            enrollment_expires_at=result["enrollment_expires_at"],
+        )
     except services.UserNotFoundError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+
+
+@router.post(
+    "/users/{user_id}/reset-credentials",
+    response_model=ResetStaffCredentialsResult,
+)
+def reset_staff_credentials(
+    user_id: int,
+    data: ResetStaffCredentialsRequest,
+    db: DbDep,
+    request: Request,
+    response: Response,
+    user=Depends(get_super_admin_user),
+    x_step_up_token: Optional[str] = Header(default=None, alias="X-Step-Up-Token"),
+):
+    """Gate 2B3A + بديل ويب لـ`admin_bootstrap recover` الـCLI: باسورد
+    مؤقت جديد + رابط تفعيل 2FA جديد لموظف عادي نسي/غلط بيانات دخوله —
+    بلا حاجة لـSSH على السيرفر. super_admin/owner مرفوضين هنا صراحةً
+    (403) — يفضلوا CLI-only، راجع services.reset_staff_credentials."""
+    from app.core.kernel.auth.step_up import staff_credentials_reset_scope  # noqa: PLC0415
+
+    scope_hash = staff_credentials_reset_scope(user_id=user_id, reason=data.reason)
+    step_up = _consume_step_up_or_raise(
+        db, user, request,
+        purpose="staff_credentials_reset", scope_hash=scope_hash, x_step_up_token=x_step_up_token,
+    )
+    try:
+        result = services.reset_staff_credentials(
+            db, user_id, reset_by=user.id, reason=data.reason,
+            step_up_public_reference=step_up["public_reference"],
+            assurance_method=step_up["assurance_method"],
+        )
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Pragma"] = "no-cache"
+        return ResetStaffCredentialsResult(
+            user=UserRead.model_validate(result["user"]),
+            temporary_password=result["temporary_password"],
+            enrollment_token=result["enrollment_token"],
+            enrollment_expires_at=result["enrollment_expires_at"],
+        )
+    except services.UserNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
 
 
 @router.get("/users/{user_id}/sessions")
@@ -1142,15 +1214,34 @@ def pin_switch(data: PinSwitchRequest, db: DbDep, _user=Depends(get_waiter_user)
 
 
 @router.get("/pins/{user_id}", response_model=PinCredentialRead)
-def get_user_pin_status(user_id: int, db: DbDep, _user=Depends(get_manager_user)):
+def get_user_pin_status(user_id: int, db: DbDep, user=Depends(get_manager_user)):
     """مدير بيشوف حالة PIN موظف تاني (موجود/مقفول) — للتأكد قبل تعيين
-    مهمة أو لتشخيص لو موظف بيشتكي إن الـ PIN بتاعه بيترفض دايمًا."""
+    مهمة أو لتشخيص لو موظف بيشتكي إن الـ PIN بتاعه بيترفض دايمًا.
+
+    ⚠️ باج حقيقي كان هنا (مراجعة Codex 2026-08-30، M-02): مفيش تحقق فرع
+    ولا مستوى نسبي على الهدف."""
+    try:
+        services.assert_can_manage_target_pin(db, user, user_id, "عرض حالة PIN")
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     return _pin_status_response(user_id, services.get_pin_status(db, user_id))
 
 
 @router.post("/pins/{user_id}", response_model=PinCredentialRead, status_code=status.HTTP_201_CREATED)
 def set_user_pin(user_id: int, data: PinSetRequest, db: DbDep, user=Depends(get_manager_user)):
     """مدير يضبط/يجدّد PIN موظف تاني — أونبوردنج كاشير جديد، أو استعادة
-    بعد نسيان/قفل. created_by بيسجّل مين المدير اللي عمل كده."""
+    بعد نسيان/قفل. created_by بيسجّل مين المدير اللي عمل كده.
+
+    ⚠️ باج حقيقي كان هنا (مراجعة Codex 2026-08-30، M-02): مفيش تحقق فرع
+    ولا مستوى نسبي على الهدف — مدير كان يقدر يعيد ضبط PIN مدير نظير أو
+    أعلى في فرع تاني تمامًا."""
+    try:
+        services.assert_can_manage_target_pin(db, user, user_id, "ضبط PIN")
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     cred = services.set_pin(db, user_id, data.pin, created_by=user.id)
     return _pin_status_response(user_id, cred)

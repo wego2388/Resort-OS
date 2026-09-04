@@ -52,7 +52,12 @@ interface UserRow {
 }
 interface BootstrapResult {
   user: UserRow; temporary_password: string
-  enrollment_token: string; enrollment_expires_at: string
+  enrollment_token: string | null; enrollment_expires_at: string | null
+}
+interface TwoFactorRecoveryResult {
+  user: UserRow
+  enrollment_token: string | null
+  enrollment_expires_at: string | null
 }
 interface EmployeeOption {
   id: number; full_name: string; employee_code: string; user_id: number | null
@@ -61,6 +66,7 @@ interface EmployeeOption {
 }
 type PendingAction = { kind: 'create' } | { kind: 'status'; user: UserRow; nextActive: boolean }
   | { kind: 'unlock'; user: UserRow } | { kind: 'force2fa'; user: UserRow }
+  | { kind: 'reset_creds'; user: UserRow }
   | { kind: 'revoke_session'; user: UserRow; sessionRef: string }
 
 const users = ref<UserRow[]>([])
@@ -75,6 +81,7 @@ const pending = ref<PendingAction | null>(null)
 const stepUpBusy = ref(false)
 const stepUpError = ref('')
 const bootstrap = ref<BootstrapResult | null>(null)
+const twoFactorRecovery = ref<TwoFactorRecoveryResult | null>(null)
 
 const roleValues = [
   'admin', 'accountant', 'hr_manager', 'manager', 'supervisor', 'receptionist',
@@ -106,6 +113,12 @@ const pendingEmployeeAccounts = computed(() => employees.value.filter(employee =
 const activeSuperAdminCount = computed(() => allUsersSnapshot.value.filter(user =>
   user.role === 'super_admin' && user.is_active,
 ).length)
+const mandatoryTwoFactorRoles = new Set(['super_admin', 'accountant', 'owner'])
+function canRecoverTwoFactor(user: UserRow): boolean {
+  return user.two_factor_enabled
+    || user.two_factor_bootstrap_required
+    || mandatoryTwoFactorRoles.has(user.role)
+}
 
 // كروت "نشط/بانتظار أمان/آخر super_admin" لازم تعكس كل حساب فعليًا مش أول
 // صفحة بس — نظام فيه أكتر من 100 حساب كان هيدّي عدد super_admin نشط غلط
@@ -197,12 +210,25 @@ function requestForce2FAReset(user: UserRow) {
   pending.value = { kind: 'force2fa', user }
   stepUpError.value = ''
 }
+// 2026-08-16: بديل ويب لـ`admin_bootstrap recover` الـCLI — موظف نسي/غلط
+// باسورده المؤقت كان محتاج SSH فعلي على السيرفر قبل كده (باج حقيقي حصل
+// فعليًا: محاسب اتقفل حسابه بعد 5 محاولات غلط ومكانش قدامنا غير الـCLI).
+// super_admin/owner متعمّد إخفاء الزرار ليهم — الباك إند برضو بيرفضهم
+// صراحةً (403)، الإخفاء هنا تجربة استخدام بس مش الحماية الحقيقية.
+function canResetCredentials(user: UserRow): boolean {
+  return user.role !== 'super_admin' && user.role !== 'owner'
+}
+function requestResetCredentials(user: UserRow) {
+  pending.value = { kind: 'reset_creds', user }
+  stepUpError.value = ''
+}
 
 const stepUpPurpose = computed(() => {
   const kind = pending.value?.kind
   if (kind === 'status') return 'user_role_update' as const
   if (kind === 'unlock') return 'user_unlock' as const
   if (kind === 'force2fa') return 'user_force_2fa_reset' as const
+  if (kind === 'reset_creds') return 'staff_credentials_reset' as const
   if (kind === 'revoke_session') return 'admin_session_revoke' as const
   return 'user_provision' as const
 })
@@ -213,6 +239,8 @@ const stepUpIntent = computed<Record<string, unknown>>(() => {
   if (pending.value?.kind === 'unlock')
     return { user_id: pending.value.user.id }
   if (pending.value?.kind === 'force2fa')
+    return { user_id: pending.value.user.id }
+  if (pending.value?.kind === 'reset_creds')
     return { user_id: pending.value.user.id }
   if (pending.value?.kind === 'revoke_session')
     return { target_user_id: pending.value.user.id, session_ref: pending.value.sessionRef }
@@ -233,6 +261,8 @@ const stepUpDescription = computed(() => {
     return t('backoffice.accounts.confirmUnlock', { name: pending.value.user.full_name })
   if (pending.value?.kind === 'force2fa')
     return t('backoffice.accounts.confirmForce2FAReset', { name: pending.value.user.full_name })
+  if (pending.value?.kind === 'reset_creds')
+    return t('backoffice.accounts.confirmResetCredentials', { name: pending.value.user.full_name })
   if (pending.value?.kind === 'revoke_session')
     return t('backoffice.accounts.sessionsRevokeDescription', { name: pending.value.user.full_name })
   return t('backoffice.accounts.confirmCreate', { name: form.value.full_name.trim() })
@@ -278,9 +308,17 @@ async function onStepUpConfirmed({ stepUpToken, reason }: { stepUpToken: string;
     } else if (action.kind === 'force2fa') {
       const res = await api.post(ENDPOINTS.users.force2FAReset(action.user.id), { reason },
         { headers: { 'X-Step-Up-Token': stepUpToken } })
-      users.value = users.value.map(u => u.id === res.data.id ? res.data : u)
-      allUsersSnapshot.value = allUsersSnapshot.value.map(u => u.id === res.data.id ? res.data : u)
+      users.value = users.value.map(u => u.id === res.data.user.id ? res.data.user : u)
+      allUsersSnapshot.value = allUsersSnapshot.value.map(u => u.id === res.data.user.id ? res.data.user : u)
+      twoFactorRecovery.value = res.data
       toast.success(t('backoffice.accounts.force2FAResetDone'))
+    } else if (action.kind === 'reset_creds') {
+      const res = await api.post(ENDPOINTS.users.resetCredentials(action.user.id), { reason },
+        { headers: { 'X-Step-Up-Token': stepUpToken } })
+      users.value = users.value.map(u => u.id === res.data.user.id ? res.data.user : u)
+      allUsersSnapshot.value = allUsersSnapshot.value.map(u => u.id === res.data.user.id ? res.data.user : u)
+      bootstrap.value = res.data
+      toast.success(t('backoffice.accounts.resetCredentialsDone'))
     } else {
       await api.delete(ENDPOINTS.users.revokeSession(action.user.id, action.sessionRef),
         { headers: { 'X-Step-Up-Token': stepUpToken } })
@@ -310,6 +348,15 @@ async function copyBootstrap() {
   }
   lines.push(`${t('backoffice.accounts.loginUrl')}: ${window.location.origin}/login`)
   await navigator.clipboard.writeText(lines.join('\n'))
+  toast.success(t('backoffice.accounts.copied'))
+}
+
+async function copyTwoFactorRecovery() {
+  if (!twoFactorRecovery.value?.enrollment_token) return
+  await navigator.clipboard.writeText([
+    `${t('backoffice.accounts.email')}: ${twoFactorRecovery.value.user.email}`,
+    `${t('backoffice.accounts.enrollmentToken')}: ${twoFactorRecovery.value.enrollment_token}`,
+  ].join('\n'))
   toast.success(t('backoffice.accounts.copied'))
 }
 
@@ -760,9 +807,16 @@ onMounted(() => {
                       :disabled="stepUpBusy" @click="requestUnlock(row)">
                       {{ t('backoffice.accounts.unlock') }}
                     </button>
-                    <button v-if="row.two_factor_enabled" class="font-semibold text-orange-600 hover:underline disabled:opacity-50 dark:text-orange-400"
+                    <button v-if="canRecoverTwoFactor(row)" class="font-semibold text-orange-600 hover:underline disabled:opacity-50 dark:text-orange-400"
                       :disabled="stepUpBusy" @click="requestForce2FAReset(row)">
                       {{ t('backoffice.accounts.force2FAReset') }}
+                    </button>
+                    <!-- 2026-08-16: باسورد+2FA مؤقتين جداد لموظف نسي/غلط
+                    بيانات دخوله — بديل ويب لـ`admin_bootstrap recover`
+                    الـCLI، كان قبل كده لازم SSH فعلي على السيرفر. -->
+                    <button v-if="canResetCredentials(row)" class="font-semibold text-purple-600 hover:underline disabled:opacity-50 dark:text-purple-400"
+                      :disabled="stepUpBusy" @click="requestResetCredentials(row)">
+                      {{ t('backoffice.accounts.resetCredentials') }}
                     </button>
                     <button class="font-semibold text-blue-700 hover:underline dark:text-blue-400"
                       @click="openSessionsModal(row)">
@@ -925,6 +979,27 @@ onMounted(() => {
           </div>
         </template>
       </AppModal>
+
+      <!-- Role-aware 2FA recovery proof. Mandatory roles need this token on
+           their next login; optional roles intentionally receive none. -->
+      <AppModal v-if="twoFactorRecovery" :open="true" :title="t('backoffice.accounts.credentialsTitle')" size="md" @close="twoFactorRecovery = null">
+        <div class="space-y-4">
+          <p class="rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm text-gray-700 dark:text-gray-200">
+            {{ t('backoffice.accounts.credentialsWarning') }}
+          </p>
+          <dl class="space-y-3 text-sm">
+            <div><dt class="text-gray-500">{{ t('backoffice.accounts.email') }}</dt><dd class="font-mono break-all">{{ twoFactorRecovery.user.email }}</dd></div>
+            <div v-if="twoFactorRecovery.enrollment_token"><dt class="text-gray-500">{{ t('backoffice.accounts.enrollmentToken') }}</dt><dd class="rounded bg-stone-100 p-2 font-mono break-all dark:bg-surface-2">{{ twoFactorRecovery.enrollment_token }}</dd></div>
+          </dl>
+          <p class="text-xs text-gray-500">{{ twoFactorRecovery.enrollment_token ? t('backoffice.accounts.onboardingHint') : t('backoffice.accounts.force2FAResetDone') }}</p>
+        </div>
+        <template #footer>
+          <div class="flex gap-2">
+            <button class="flex-1 rounded-lg border border-stone-200 px-4 py-2 font-semibold dark:border-border" @click="twoFactorRecovery = null">{{ t('backoffice.accounts.close') }}</button>
+            <button v-if="twoFactorRecovery.enrollment_token" class="flex-1 rounded-lg bg-primary-700 px-4 py-2 font-bold text-white" @click="copyTwoFactorRecovery">{{ t('backoffice.accounts.copy') }}</button>
+          </div>
+        </template>
+      </AppModal>
     </div>
 
     <!-- ═══ TAB: PERMISSIONS ═══ -->
@@ -1010,7 +1085,7 @@ onMounted(() => {
       <div v-else-if="auditError" class="text-red-600 text-sm">⚠️ {{ auditError }}</div>
       <AppCard v-else-if="auditLogs.length > 0" padding="none">
         <div class="overflow-x-auto">
-          <table class="w-full min-w-[800px] text-sm">
+          <table class="responsive-card-table w-full min-w-[800px] text-sm">
             <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr class="text-xs font-bold text-gray-500 uppercase tracking-wide">
                 <th class="px-4 py-3 text-start">#</th>
@@ -1023,12 +1098,12 @@ onMounted(() => {
             </thead>
             <tbody class="divide-y divide-stone-100 dark:divide-border">
               <tr v-for="log in auditLogs" :key="log.id" class="hover:bg-stone-50 dark:hover:bg-gray-800/40 transition-colors">
-                <td class="px-4 py-3 text-gray-400 text-xs">{{ log.id }}</td>
-                <td class="px-4 py-3"><span class="font-mono text-xs bg-stone-100 dark:bg-gray-700 px-2 py-0.5 rounded">{{ log.action }}</span></td>
-                <td class="px-4 py-3 text-xs text-gray-600 dark:text-gray-300">{{ log.entity_type }}<span v-if="log.entity_id" class="text-gray-400"> #{{ log.entity_id }}</span></td>
-                <td class="px-4 py-3 text-xs text-gray-500">{{ actorLabel(log.user_id) }}</td>
-                <td class="px-4 py-3 text-xs text-gray-400 whitespace-nowrap">{{ new Date(log.created_at).toLocaleString(locale) }}</td>
-                <td class="px-4 py-3 text-xs text-gray-400 max-w-xs truncate" :title="log.new_data ?? ''">
+                <td data-primary class="px-4 py-3 text-gray-400 text-xs">#{{ log.id }}</td>
+                <td :data-label="t('backoffice.superAdmin.audit.colAction')" class="px-4 py-3"><span class="font-mono text-xs bg-stone-100 dark:bg-gray-700 px-2 py-0.5 rounded">{{ log.action }}</span></td>
+                <td :data-label="t('backoffice.superAdmin.audit.colEntity')" class="px-4 py-3 text-xs text-gray-600 dark:text-gray-300">{{ log.entity_type }}<span v-if="log.entity_id" class="text-gray-400"> #{{ log.entity_id }}</span></td>
+                <td :data-label="t('backoffice.superAdmin.audit.colActor')" class="px-4 py-3 text-xs text-gray-500">{{ actorLabel(log.user_id) }}</td>
+                <td :data-label="t('backoffice.superAdmin.audit.colTime')" class="px-4 py-3 text-xs text-gray-400 whitespace-nowrap">{{ new Date(log.created_at).toLocaleString(locale) }}</td>
+                <td :data-label="t('backoffice.superAdmin.audit.colDetails')" class="px-4 py-3 text-xs text-gray-400 max-w-xs truncate" :title="log.new_data ?? ''">
                   {{ log.new_data ? (JSON.parse(log.new_data)?.reason ?? log.new_data.slice(0, 60)) : '—' }}
                 </td>
               </tr>

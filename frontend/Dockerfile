@@ -53,9 +53,17 @@ FROM nginx:1.30.4-alpine AS runtime
 ARG APP_NAME
 ENV APP_NAME=${APP_NAME}
 
+# Defaults to the strict production file — every real deploy (domain+TLS) is
+# unaffected. Only docker-compose.prod.ip-only.yml overrides this, to
+# `security-headers-ip-only.conf` (drops `upgrade-insecure-requests`, which
+# is correct with real TLS but breaks a plain-HTTP-only test deployment —
+# every asset request gets force-upgraded to HTTPS and fails outright since
+# there's no TLS listener on those ports).
+ARG SECURITY_HEADERS_FILE=security-headers.conf
+
 COPY --from=build /workspace/apps/${APP_NAME}/dist /usr/share/nginx/html
 COPY nginx.spa.conf /etc/nginx/conf.d/default.conf
-COPY security-headers.conf /etc/nginx/snippets/security-headers.conf
+COPY ${SECURITY_HEADERS_FILE} /etc/nginx/snippets/security-headers.conf
 
 EXPOSE 80
 

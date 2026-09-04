@@ -32,6 +32,20 @@ def make_branch_committed(db):
     return b
 
 
+def manager_headers_for_branch(db, branch):
+    """مراجعة Codex 2026-08-30 (H-02) أضافت assert_branch_access لكل
+    endpoints التحليلات — manager_headers العالمية (مالهاش أي عضوية فرع)
+    بقت تفشل بـ403 على أي فرع جديد اتعمل بـmake_branch_committed هنا، نفس
+    نمط role_headers_for_branch في test_hr_http.py بالظبط."""
+    from tests.conftest import _create_test_user, _make_token, assign_test_user_to_branch
+
+    email = f"analytics-manager-{uuid.uuid4().hex[:8]}@test.local"
+    user_id = _create_test_user(email, "manager")
+    assign_test_user_to_branch(db, user_id, branch.id)
+    db.commit()
+    return {"Authorization": f"Bearer {_make_token(email, branch_id=branch.id)}"}
+
+
 def seed_utility_accounts(db, branch):
     from app.modules.finance.models import Account
     db.add_all([
@@ -57,6 +71,7 @@ def make_booking_committed(db, branch):
 class TestUtilityReadingFlow:
     def test_create_reading_computes_total_cost_and_posts_journal(self, client: TestClient, db, manager_headers):
         branch = make_branch_committed(db)
+        headers = manager_headers_for_branch(db, branch)
         seed_utility_accounts(db, branch)
 
         resp = client.post(
@@ -66,7 +81,7 @@ class TestUtilityReadingFlow:
                 "utility_type": "electricity", "reading_value": "500.000",
                 "unit": "kWh", "unit_cost": "2.50",
             },
-            headers=manager_headers,
+            headers=headers,
         )
         assert resp.status_code == 201, resp.text
         reading = resp.json()
@@ -85,13 +100,14 @@ class TestUtilityReadingFlow:
 
     def test_list_utilities_filters_by_period(self, client: TestClient, db, manager_headers):
         branch = make_branch_committed(db)
+        headers = manager_headers_for_branch(db, branch)
         client.post(
             "/api/v1/analytics/utilities",
             json={
                 "branch_id": branch.id, "reading_date": "2026-01-15",
                 "utility_type": "water", "reading_value": "10.000", "unit_cost": "5.00",
             },
-            headers=manager_headers,
+            headers=headers,
         )
         client.post(
             "/api/v1/analytics/utilities",
@@ -99,13 +115,13 @@ class TestUtilityReadingFlow:
                 "branch_id": branch.id, "reading_date": "2026-02-15",
                 "utility_type": "water", "reading_value": "12.000", "unit_cost": "5.00",
             },
-            headers=manager_headers,
+            headers=headers,
         )
 
         resp = client.get(
             "/api/v1/analytics/utilities",
             params={"branch_id": branch.id, "period": "2026-01"},
-            headers=manager_headers,
+            headers=headers,
         )
         assert resp.status_code == 200, resp.text
         assert len(resp.json()) == 1
@@ -113,6 +129,7 @@ class TestUtilityReadingFlow:
 
     def test_energy_kpi_computes_cost_per_guest_night(self, client: TestClient, db, manager_headers):
         branch = make_branch_committed(db)
+        headers = manager_headers_for_branch(db, branch)
         from app.modules.analytics.models import DailyStats
         db.add(DailyStats(branch_id=branch.id, stat_date=date(2026, 3, 10), occupied_rooms=10, total_rooms=20))
         db.commit()
@@ -123,13 +140,13 @@ class TestUtilityReadingFlow:
                 "branch_id": branch.id, "reading_date": "2026-03-10",
                 "utility_type": "electricity", "reading_value": "100.000", "unit_cost": "3.00",
             },
-            headers=manager_headers,
+            headers=headers,
         )
 
         resp = client.get(
             "/api/v1/analytics/energy",
             params={"branch_id": branch.id, "period": "2026-03"},
-            headers=manager_headers,
+            headers=headers,
         )
         assert resp.status_code == 200, resp.text
         body = resp.json()
@@ -139,19 +156,20 @@ class TestUtilityReadingFlow:
     def test_energy_trend_includes_reading_month_and_is_chronological(self, client: TestClient, db, manager_headers):
         """wagdy.md #18: اتجاه شهري بدل لقطة شهر واحد فقط."""
         branch = make_branch_committed(db)
+        headers = manager_headers_for_branch(db, branch)
         client.post(
             "/api/v1/analytics/utilities",
             json={
                 "branch_id": branch.id, "reading_date": "2026-02-10",
                 "utility_type": "electricity", "reading_value": "50.000", "unit_cost": "3.00",
             },
-            headers=manager_headers,
+            headers=headers,
         )
 
         resp = client.get(
             "/api/v1/analytics/energy/trend",
             params={"branch_id": branch.id, "end_period": "2026-03", "months": 4},
-            headers=manager_headers,
+            headers=headers,
         )
         assert resp.status_code == 200, resp.text
         body = resp.json()
@@ -162,10 +180,11 @@ class TestUtilityReadingFlow:
 
     def test_energy_trend_export_returns_valid_excel(self, client: TestClient, db, manager_headers):
         branch = make_branch_committed(db)
+        headers = manager_headers_for_branch(db, branch)
         resp = client.get(
             "/api/v1/analytics/energy/trend/export",
             params={"branch_id": branch.id, "end_period": "2026-03", "months": 3},
-            headers=manager_headers,
+            headers=headers,
         )
         assert resp.status_code == 200, resp.text
         assert resp.headers["content-type"] == (
@@ -232,11 +251,12 @@ class TestGuestReviewSubmitValidation:
 
     def _get_token(self, client, db, manager_headers):
         branch = make_branch_committed(db)
+        headers = manager_headers_for_branch(db, branch)
         booking = make_booking_committed(db, branch)
         token_resp = client.get(
             f"/api/v1/analytics/reviews/survey-token/{booking.id}",
             params={"branch_id": branch.id},
-            headers=manager_headers,
+            headers=headers,
         )
         assert token_resp.status_code == 200, token_resp.text
         return token_resp.json()["token"]
@@ -287,12 +307,13 @@ class TestGuestReviewSubmitValidation:
 class TestGuestReviewInsights:
     def test_review_insights_surfaces_category_breakdown(self, client: TestClient, db, manager_headers):
         branch = make_branch_committed(db)
+        headers = manager_headers_for_branch(db, branch)
         booking = make_booking_committed(db, branch)
 
         token_resp = client.get(
             f"/api/v1/analytics/reviews/survey-token/{booking.id}",
             params={"branch_id": branch.id},
-            headers=manager_headers,
+            headers=headers,
         )
         assert token_resp.status_code == 200, token_resp.text
         token = token_resp.json()["token"]
@@ -312,7 +333,7 @@ class TestGuestReviewInsights:
         assert submit_resp.status_code == 200, submit_resp.text
 
         insights_resp = client.get(
-            "/api/v1/analytics/reviews/insights", params={"branch_id": branch.id}, headers=manager_headers,
+            "/api/v1/analytics/reviews/insights", params={"branch_id": branch.id}, headers=headers,
         )
         assert insights_resp.status_code == 200, insights_resp.text
         body = insights_resp.json()
@@ -322,10 +343,37 @@ class TestGuestReviewInsights:
         assert cats["cleanliness"]["avg_rating"] == 5.0
         assert cats["service"]["avg_rating"] == 4.0
 
+    def test_submit_review_rejects_replayed_survey_token(self, client: TestClient, db, manager_headers):
+        """مراجعة Codex 2026-08-30 (M-03): survey token صالح 7 أيام بلا أي
+        تتبع "تم استهلاكه" — نفس اللينك كان يقدر يتبعت عدد غير محدود من
+        المرات، كل مرة بتنشئ صف تقييم جديد."""
+        branch = make_branch_committed(db)
+        headers = manager_headers_for_branch(db, branch)
+        booking = make_booking_committed(db, branch)
+
+        token_resp = client.get(
+            f"/api/v1/analytics/reviews/survey-token/{booking.id}",
+            params={"branch_id": branch.id},
+            headers=headers,
+        )
+        token = token_resp.json()["token"]
+        payload = {"guest_name": "ضيف", "overall_rating": 4}
+
+        first = client.post("/api/v1/analytics/reviews/submit", params={"token": token}, json=payload)
+        assert first.status_code == 200, first.text
+
+        second = client.post("/api/v1/analytics/reviews/submit", params={"token": token}, json=payload)
+        assert second.status_code == 409, second.text
+
+        from app.modules.analytics.models import GuestReview
+        count = db.query(GuestReview).filter(GuestReview.booking_id == booking.id).count()
+        assert count == 1
+
     def test_review_insights_empty_when_no_reviews(self, client: TestClient, db, manager_headers):
         branch = make_branch_committed(db)
+        headers = manager_headers_for_branch(db, branch)
         resp = client.get(
-            "/api/v1/analytics/reviews/insights", params={"branch_id": branch.id}, headers=manager_headers,
+            "/api/v1/analytics/reviews/insights", params={"branch_id": branch.id}, headers=headers,
         )
         assert resp.status_code == 200
         assert resp.json()["overall_avg"] is None
@@ -341,6 +389,7 @@ class TestGuestReviewInsights:
         from app.modules.timeshare import services as ts_services
 
         branch = make_branch_committed(db)
+        headers = manager_headers_for_branch(db, branch)
         unit = TimeshareUnit(branch_id=branch.id, unit_number="A-101", unit_type="Studio")
         db.add(unit); db.commit()
 
@@ -359,7 +408,7 @@ class TestGuestReviewInsights:
         token_resp = client.get(
             f"/api/v1/analytics/reviews/survey-token/timeshare/{visit.id}",
             params={"branch_id": branch.id},
-            headers=manager_headers,
+            headers=headers,
         )
         assert token_resp.status_code == 200, token_resp.text
         assert "token" in token_resp.json() and "expires_in_days" in token_resp.json()
@@ -388,11 +437,15 @@ class TestGuestReviewInsights:
         real_branch = make_branch_committed(db)
         other_branch = make_branch_committed(db)
         booking = make_booking_committed(db, real_branch)
+        # الـheaders لازم تكون لنفس other_branch (الفرع المطلوب في الرابط) —
+        # عشان نتأكد إن الرفض جاي من عدم تطابق booking↔other_branch (404)،
+        # مش من غياب سياق فرع الفاعل نفسه (403، H-02).
+        headers = manager_headers_for_branch(db, other_branch)
 
         resp = client.get(
             f"/api/v1/analytics/reviews/survey-token/{booking.id}",
             params={"branch_id": other_branch.id},
-            headers=manager_headers,
+            headers=headers,
         )
         assert resp.status_code == 404
 
@@ -421,11 +474,14 @@ class TestGuestReviewInsights:
             branch_id=real_branch.id, contract_id=contract.id,
             check_in=date(2026, 8, 1), check_out=date(2026, 8, 8),
         ))
+        # نفس ملاحظة test_survey_token_rejects_booking_from_a_different_branch —
+        # headers لازم تكون لـother_branch (المطلوب في الرابط)، مش real_branch.
+        headers = manager_headers_for_branch(db, other_branch)
 
         resp = client.get(
             f"/api/v1/analytics/reviews/survey-token/timeshare/{visit.id}",
             params={"branch_id": other_branch.id},
-            headers=manager_headers,
+            headers=headers,
         )
         assert resp.status_code == 404
 
@@ -442,6 +498,7 @@ class TestGuestReviewInsights:
         from app.modules.timeshare import services as ts_services
 
         branch = make_branch_committed(db)
+        headers = manager_headers_for_branch(db, branch)
         unit = TimeshareUnit(branch_id=branch.id, unit_number="A-102", unit_type="Studio")
         db.add(unit); db.commit()
 
@@ -461,7 +518,7 @@ class TestGuestReviewInsights:
         resp = client.post(
             f"/api/v1/analytics/reviews/survey-token/timeshare/{visit.id}/send",
             params={"branch_id": branch.id},
-            headers=manager_headers,
+            headers=headers,
         )
         assert resp.status_code == 202, resp.text
         assert resp.json()["queued"] is True
@@ -475,9 +532,10 @@ class TestGuestReviewInsights:
 
     def test_send_timeshare_survey_nonexistent_visit_404(self, client: TestClient, db, manager_headers):
         branch = make_branch_committed(db)
+        headers = manager_headers_for_branch(db, branch)
         resp = client.post(
             "/api/v1/analytics/reviews/survey-token/timeshare/999999/send",
             params={"branch_id": branch.id},
-            headers=manager_headers,
+            headers=headers,
         )
         assert resp.status_code == 404

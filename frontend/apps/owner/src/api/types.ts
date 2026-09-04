@@ -205,6 +205,23 @@ export interface ExpenseAnalyticsResponse {
   computed_at: string
 }
 
+// ─── تفصيل الإيراد بالحساب (2026-08-17) — نظير Expense Analytics فوق ──
+
+export interface RevenueLine {
+  account_code: string
+  account_name: string
+  amount: string
+}
+
+export interface RevenueBreakdownResponse {
+  period_from: string
+  period_to: string
+  total_revenue: string
+  revenue_lines: RevenueLine[]
+  is_provisional: boolean
+  computed_at: string
+}
+
 // ─── Phase 6: Procurement ────────────────────────────────────────────
 
 export interface SupplierSpendRow {
@@ -500,6 +517,25 @@ export interface ExpenseDetailResponse extends PaginationMeta {
   period_from: string
   period_to: string
   lines: ExpenseJournalLine[]
+  total_amount: string
+  computed_at: string
+}
+
+export interface RevenueJournalLine {
+  entry_id: number
+  entry_date: string
+  reference: string
+  description: string
+  amount: string
+  source: string | null
+}
+
+export interface RevenueDetailResponse extends PaginationMeta {
+  account_code: string
+  account_name: string
+  period_from: string
+  period_to: string
+  lines: RevenueJournalLine[]
   total_amount: string
   computed_at: string
 }

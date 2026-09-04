@@ -516,18 +516,28 @@ def list_all_installments(
 
 
 def installments_summary(db: Session, branch_id: int) -> dict:
+    """⚠️ باج حقيقي كان هنا (مراجعة Codex 2026-08-30، M-01): مفيش استبعاد
+    للعقود الملغاة — REL-22 منعت أقساط عقد ملغي من "تتحول" overdue لأول
+    مرة بعد الإلغاء، لكن قسط كان overdue بالفعل *قبل* الإلغاء (أو لسه
+    pending) يفضل محسوب هنا للأبد كأنه لسه مستحق تحصيل فعليًا."""
     from sqlalchemy import func  # noqa: PLC0415
 
     overdue = (
         db.query(func.coalesce(func.sum(TimeshareInstallment.amount), 0))
         .join(TimeshareContract, TimeshareContract.id == TimeshareInstallment.contract_id)
-        .filter(TimeshareContract.branch_id == branch_id, TimeshareInstallment.status == "overdue")
+        .filter(
+            TimeshareContract.branch_id == branch_id, TimeshareContract.status != "cancelled",
+            TimeshareInstallment.status == "overdue",
+        )
         .scalar()
     )
     pending = (
         db.query(func.coalesce(func.sum(TimeshareInstallment.amount), 0))
         .join(TimeshareContract, TimeshareContract.id == TimeshareInstallment.contract_id)
-        .filter(TimeshareContract.branch_id == branch_id, TimeshareInstallment.status == "pending")
+        .filter(
+            TimeshareContract.branch_id == branch_id, TimeshareContract.status != "cancelled",
+            TimeshareInstallment.status == "pending",
+        )
         .scalar()
     )
     return {"overdue_total": overdue or Decimal("0"), "pending_total": pending or Decimal("0")}
@@ -563,19 +573,26 @@ def list_all_maintenance_dues(
 
 
 def maintenance_dues_summary(db: Session, branch_id: int) -> dict:
-    """مرآة installments_summary."""
+    """مرآة installments_summary — بما فيه استبعاد العقود الملغاة (مراجعة
+    Codex 2026-08-30، M-01)."""
     from sqlalchemy import func  # noqa: PLC0415
 
     overdue = (
         db.query(func.coalesce(func.sum(TimeshareMaintenanceDue.amount), 0))
         .join(TimeshareContract, TimeshareContract.id == TimeshareMaintenanceDue.contract_id)
-        .filter(TimeshareContract.branch_id == branch_id, TimeshareMaintenanceDue.status == "overdue")
+        .filter(
+            TimeshareContract.branch_id == branch_id, TimeshareContract.status != "cancelled",
+            TimeshareMaintenanceDue.status == "overdue",
+        )
         .scalar()
     )
     pending = (
         db.query(func.coalesce(func.sum(TimeshareMaintenanceDue.amount), 0))
         .join(TimeshareContract, TimeshareContract.id == TimeshareMaintenanceDue.contract_id)
-        .filter(TimeshareContract.branch_id == branch_id, TimeshareMaintenanceDue.status == "pending")
+        .filter(
+            TimeshareContract.branch_id == branch_id, TimeshareContract.status != "cancelled",
+            TimeshareMaintenanceDue.status == "pending",
+        )
         .scalar()
     )
     return {"overdue_total": overdue or Decimal("0"), "pending_total": pending or Decimal("0")}
@@ -660,6 +677,8 @@ def cancellation_summary(db: Session, branch_id: int) -> dict:
 
 
 def overall_collection(db: Session, branch_id: int) -> dict:
+    """⚠️ باج حقيقي كان هنا (مراجعة Codex 2026-08-30، M-01): مفيش استبعاد
+    للعقود الملغاة — راجع تعليق installments_summary لنفس السبب بالظبط."""
     from sqlalchemy import case, func  # noqa: PLC0415
 
     row = (
@@ -669,7 +688,7 @@ def overall_collection(db: Session, branch_id: int) -> dict:
             func.coalesce(func.sum(case((TimeshareInstallment.status == "overdue", TimeshareInstallment.amount), else_=0)), 0),
         )
         .join(TimeshareContract, TimeshareContract.id == TimeshareInstallment.contract_id)
-        .filter(TimeshareContract.branch_id == branch_id)
+        .filter(TimeshareContract.branch_id == branch_id, TimeshareContract.status != "cancelled")
         .first()
     )
     collected, pending, overdue = row[0] or Decimal("0"), row[1] or Decimal("0"), row[2] or Decimal("0")

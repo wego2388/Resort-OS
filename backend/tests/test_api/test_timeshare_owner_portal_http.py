@@ -51,6 +51,20 @@ def make_owner_contract(db, branch, *, phone="01055512345", status="active"):
 
 
 class TestOwnerPortalOtpFlow:
+    def test_portal_config_exposes_current_consent_versions(self, client: TestClient):
+        from app.modules.timeshare.schemas import (
+            TIMESHARE_BOOKING_RULES_VERSION,
+            TIMESHARE_TERMS_VERSION,
+        )
+
+        response = client.get("/api/v1/timeshare/public/portal-config")
+        assert response.status_code == 200, response.text
+        assert response.json() == {
+            "resort_name": "El Kheima Beach Resort",
+            "terms_version": TIMESHARE_TERMS_VERSION,
+            "booking_rules_version": TIMESHARE_BOOKING_RULES_VERSION,
+        }
+
     def test_full_verify_flow_issues_token_and_reaches_dashboard(self, client: TestClient, db, fake_redis):
         """OTP request → confirm → توكن حقيقي → GET /my-contract بيه ينجح."""
         import app.core.kernel.whatsapp as wa_module

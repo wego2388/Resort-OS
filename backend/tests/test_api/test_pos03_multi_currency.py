@@ -655,8 +655,8 @@ def _make_beach_branch(db):
     )
     db.add(b)
     db.commit()
-    # OPS-DATA-02 FIN-TAX-01: post_taxed_sale_journal (strict) needs these
-    # for any real sale — every beach sale has vat_amount > 0.
+    # The strict Beach journal needs cash/revenue. VAT payable remains in the
+    # fixture for historical compatibility; new Beach sales store VAT zero.
     db.add_all([
         Account(branch_id=b.id, code="1100", name="Cash", account_type="asset"),
         Account(branch_id=b.id, code="4300", name="Beach Revenue", account_type="revenue"),

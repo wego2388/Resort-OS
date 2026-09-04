@@ -2,7 +2,7 @@
 app/modules/beach/models.py
 Beach Module
 Tables: beach_inventory, beach_transactions, b2b_contracts, b2b_contract_days,
-        beach_reservations, beach_locations
+        b2b_contract_months, beach_reservations, beach_locations
 """
 from __future__ import annotations
 
@@ -48,13 +48,14 @@ class BeachTransaction(Base, TimestampMixin):
     # entry|entry_towel|towel_rent|towel_return
     quantity:        Mapped[int]          = mapped_column(Integer, default=1)
     unit_price:      Mapped[Decimal]      = mapped_column(Numeric(10, 2))
-    # total_amount: صافي بعد الخصم (net) — هو المبلغ الفعلي المُحمَّل/المُحصَّل
-    # ومصدر الحقيقة لكل ترحيل مالي (folio charge/journal/إحصائية CRM). سعر
-    # الوحدة (unit_price) بيفضل السعر المعلن الأصلي زي ما هو، من غير خصم.
+    # total_amount: الإجمالي النهائي بعد الخصم — هو المبلغ الفعلي الظاهر
+    # والمُحمَّل/المُحصَّل ومصدر الحقيقة لكل ترحيل مالي (وردية/folio/
+    # journal/CRM). قرار التشغيل 2026-08-15: الشاطئ بلا VAT؛ vat_amount
+    # محفوظ للتوافق التاريخي فقط وتكون قيمته صفر لكل عملية جديدة.
     total_amount:    Mapped[Decimal]      = mapped_column(Numeric(10, 2))
     # خصم مجموعة العميل الدائم (crm.CustomerGroup.discount_percentage) —
     # تلقائي بالكامل لو customer_id مرتبط بمجموعة نشطة، بيتحسب على
-    # unit_price × quantity قبل الـ VAT (راجع services.sell_ticket).
+    # unit_price × quantity (راجع services.sell_ticket).
     # صفر لبيع عادي/بدون عميل مسجّل — لا يوجد مفهوم خصم شرطي (Happy Hour)
     # على الشاطئ حاليًا، فده أول وأوحد نوع خصم هنا.
     discount_amount: Mapped[Decimal]      = mapped_column(Numeric(10, 2), default=Decimal("0"))
@@ -65,6 +66,14 @@ class BeachTransaction(Base, TimestampMixin):
     # Persist the tender selected at sale time. Credit posting validates this
     # source-of-truth field so a cash ticket cannot later be charged to credit.
     payment_method:  Mapped[str | None]   = mapped_column(String(30), nullable=True)
+    # قناة التحصيل المحاسبية المختارة (مثلاً Visa CIB/Vodafone Cash/الصندوق)
+    # مع snapshot للحساب الفعلي حتى ينعكس الـvoid على نفس GL التاريخي.
+    payment_channel_id: Mapped[int | None] = mapped_column(
+        ForeignKey("payment_channels.id", ondelete="SET NULL"), nullable=True, index=True,
+    )
+    payment_channel_code: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    payment_channel_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    settlement_account_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
     folio_id:        Mapped[int | None]   = mapped_column(ForeignKey("folios.id", ondelete="SET NULL"), nullable=True)
     b2b_contract_id: Mapped[int | None]   = mapped_column(ForeignKey("b2b_contracts.id", ondelete="SET NULL"), nullable=True)
     notes:           Mapped[str | None]   = mapped_column(String(300), nullable=True)
@@ -88,27 +97,37 @@ class BeachTransaction(Base, TimestampMixin):
 
 
 class B2BContract(Base, TimestampMixin):
-    """عقد فندق B2B — علاقة ائتمانية متكررة: الفندق الشريك بيبعت ضيوفه للشاطئ
-    على مدار الشهر وبيتحاسب (يتسوّى) دوريًا، مش كاش فوري لحظة الدخول (راجع
-    _post_beach_revenue_journal في services.py — القيد المحاسبي الحالي
-    بيسجّل الإيراد كأنه كاش فوري حتى لعقود B2B، فجوة معمارية معروفة، خارج
-    نطاق هذا التعديل). الحقول التالية (credit_limit/payment_terms_days/
-    last_settled_at/is_overdue/notified_overdue) بتضيف ضبط ائتماني حقيقي:
-    حد أقصى للرصيد المستحق + تتبّع تأخر السداد، بدل ما ده يفضل بلا حدود."""
+    """عقد فندق B2B (2026-08-20، طلب Mohamed صراحةً — استبدال كامل لنموذج
+    التسعير القديم): الفندق الشريك بيدفع **مبلغ شهري ثابت** (``monthly_fee``)
+    مقابل دخول ضيوفه للشاطئ، بغض النظر عن العدد الفعلي، مع **حد أقصى استرشادي**
+    لعدد الدخول الشهري (``monthly_guest_cap``) — تخطي الحد **مسموح صراحةً**
+    (قرار Mohamed: "عادي لو دخل زياده")، مفيش رفض ولا رسوم إضافية، بس بيولّد
+    تنبيه واتساب واحد للفندق زي تحذير الحصة القديم بالظبط. ده نموذج مختلف
+    جذريًا عن القديم (سعر لكل ضيف × حصة يومية — كان مناسب لفندق زي HIST
+    التاريخي بس مش لعقد "اشتراك شهري" حقيقي زي بانوراما). المبلغ الشهري
+    بيترحّل كإيراد فعلي مرة واحدة لكل شهر تقويمي عبر مهمة Celery دورية
+    (راجع services.post_b2b_monthly_fees + tasks/beach_tasks.py) — على عكس
+    القديم اللي كان بيرحّل إيراد وهمي "كاش فوري" مع كل تشيك-إن (فجوة معمارية
+    معروفة كانت موثّقة هنا قبل التعديل)، دلوقتي بيترحّل Dr. 1165 (ذمم فنادق
+    شريكة B2B) / Cr. 4300 — إيراد حقيقي كـ receivable، مش كاش، لحد ما الفندق
+    يسدّد فعليًا (راجع services.settle_b2b_contract). الحقول التالية
+    (credit_limit/payment_terms_days/last_settled_at/is_overdue/
+    notified_overdue) بتضيف ضبط ائتماني حقيقي: حد أقصى للرصيد المستحق +
+    تتبّع تأخر السداد، بدل ما ده يفضل بلا حدود — نفس المفهوم القديم بالظبط،
+    بس الرصيد المستحق دلوقتي مصدره B2BContractMonth مش B2BContractDay."""
     __tablename__ = "b2b_contracts"
 
-    id:             Mapped[int]        = mapped_column(primary_key=True)
-    branch_id:      Mapped[int]        = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"))
-    hotel_name:     Mapped[str]        = mapped_column(String(200))
-    hotel_name_ar:  Mapped[str | None] = mapped_column(String(200), nullable=True)
-    contact_phone:  Mapped[str | None] = mapped_column(String(20), nullable=True)
-    daily_quota:    Mapped[int]        = mapped_column(Integer, default=50)
-    entry_price:    Mapped[Decimal]    = mapped_column(Numeric(10, 2))
-    towel_price:    Mapped[Decimal]    = mapped_column(Numeric(10, 2), default=Decimal("0"))
-    valid_from:     Mapped[date]       = mapped_column(Date)
-    valid_until:    Mapped[date]       = mapped_column(Date)
-    is_active:      Mapped[bool]       = mapped_column(Boolean, default=True)
-    notes:          Mapped[str | None] = mapped_column(Text, nullable=True)
+    id:               Mapped[int]        = mapped_column(primary_key=True)
+    branch_id:        Mapped[int]        = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"))
+    hotel_name:       Mapped[str]        = mapped_column(String(200))
+    hotel_name_ar:    Mapped[str | None] = mapped_column(String(200), nullable=True)
+    contact_phone:    Mapped[str | None] = mapped_column(String(20), nullable=True)
+    monthly_fee:      Mapped[Decimal]    = mapped_column(Numeric(12, 2))
+    monthly_guest_cap: Mapped[int]       = mapped_column(Integer, default=100)
+    valid_from:       Mapped[date]       = mapped_column(Date)
+    valid_until:      Mapped[date]       = mapped_column(Date)
+    is_active:        Mapped[bool]       = mapped_column(Boolean, default=True)
+    notes:            Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # ── ائتمان/تحصيل (credit & dunning) ─────────────────────────────────
     # nullable: مش كل فندق شريك محتاج حد ائتمان — الافتراضي بلا حد (زي
@@ -124,12 +143,20 @@ class B2BContract(Base, TimestampMixin):
     # يمنع تكرار إشعار واتساب التأخر كل يوم — بيترجع False تلقائيًا عند
     # التسوية (raise settle_b2b_contract) عشان لو اتأخر تاني يتبعت تنبيه جديد.
     notified_overdue:    Mapped[bool]           = mapped_column(Boolean, default=False)
+    # آخر شهر (أول يوم فيه) اتبعت له تنبيه اقتراب الحد الشهري — بيتصفّر
+    # ضمنيًا كل شهر جديد (بيتقارن بـ period الحالي، مش flag ثابت).
+    notified_quota_warning_period: Mapped[date | None] = mapped_column(Date, nullable=True)
 
-    days: Mapped[list["B2BContractDay"]] = relationship("B2BContractDay", back_populates="contract", lazy="select")
+    days:   Mapped[list["B2BContractDay"]]   = relationship("B2BContractDay", back_populates="contract", lazy="select")
+    months: Mapped[list["B2BContractMonth"]] = relationship("B2BContractMonth", back_populates="contract", lazy="select")
 
 
 class B2BContractDay(Base, TimestampMixin):
-    """تتبع استخدام حصة الفندق يومياً."""
+    """تتبّع عدد ضيوف الفندق اللي دخلوا فعليًا كل يوم — سجل عدّاد بحت
+    (headcount) دلوقتي، مفيش قيمة مالية لكل يوم خالص (النموذج الشهري
+    الثابت مالوش سعر لكل ضيف — راجع B2BContract). بيُستخدم لـ: (أ) عرض
+    "دخل النهاردة" للكاشير، (ب) حساب إجمالي الشهر مقابل monthly_guest_cap
+    (تحذير بس، مش رفض)."""
     __tablename__ = "b2b_contract_days"
     __table_args__ = (
         UniqueConstraint("contract_id", "day", name="uq_b2b_contract_day"),
@@ -139,10 +166,32 @@ class B2BContractDay(Base, TimestampMixin):
     contract_id:      Mapped[int]     = mapped_column(ForeignKey("b2b_contracts.id", ondelete="CASCADE"))
     day:              Mapped[date]    = mapped_column(Date)
     checked_in_count: Mapped[int]     = mapped_column(Integer, default=0)
-    total_amount:     Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0"))
-    notified_quota_warning: Mapped[bool] = mapped_column(Boolean, default=False)
 
     contract: Mapped["B2BContract"] = relationship("B2BContract", back_populates="days")
+
+
+class B2BContractMonth(Base, TimestampMixin):
+    """ترحيل الرسم الشهري الثابت لعقد B2B — صف واحد لكل (عقد، شهر) بمجرد ما
+    يترحّل فعليًا (راجع services.post_b2b_monthly_fees). الـ UniqueConstraint
+    هي آلية idempotency المهمة الدورية: لو الصف موجود بالفعل لشهر معيّن،
+    المهمة تتخطاه (ميترحّلش مرتين). ``amount`` لقطة (snapshot) من
+    ``contract.monthly_fee`` وقت الترحيل — لو السعر اتغيّر بعدين، الشهور
+    القديمة تفضل موثّقة بسعرها الأصلي وقتها، مش بالسعر الحالي بأثر رجعي."""
+    __tablename__ = "b2b_contract_months"
+    __table_args__ = (
+        UniqueConstraint("contract_id", "period_month", name="uq_b2b_contract_month"),
+    )
+
+    id:               Mapped[int]        = mapped_column(primary_key=True)
+    contract_id:      Mapped[int]        = mapped_column(ForeignKey("b2b_contracts.id", ondelete="CASCADE"))
+    # أول يوم في الشهر المُرحَّل (مثال: 2026-08-01) — مفتاح الـ idempotency.
+    period_month:     Mapped[date]       = mapped_column(Date)
+    guests_count:     Mapped[int]        = mapped_column(Integer, default=0)
+    amount:           Mapped[Decimal]    = mapped_column(Numeric(12, 2))
+    journal_entry_id: Mapped[int]        = mapped_column(ForeignKey("journal_entries.id", ondelete="RESTRICT"))
+    billed_at:        Mapped[datetime]   = mapped_column(DateTime, default=datetime.utcnow)
+
+    contract: Mapped["B2BContract"] = relationship("B2BContract", back_populates="months")
 
 
 class BeachReservation(Base, TimestampMixin):

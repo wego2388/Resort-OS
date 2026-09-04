@@ -32,6 +32,8 @@ describe('homeRouteFor — role landing map', () => {
     ['receptionist', '/ops/reception'],
     ['manager', '/admin/dashboard'],
     ['super_admin', '/admin/dashboard'],
+    ['accountant', '/admin/finance'],
+    ['hr_manager', '/admin/hr'],
     ['timeshare_admin', '/admin/timeshare'],
     ['timeshare_agent', '/admin/timeshare'],
   ])('routes %s to %s', (role, expected) => {

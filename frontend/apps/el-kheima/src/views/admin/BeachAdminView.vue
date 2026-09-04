@@ -33,15 +33,16 @@ interface BeachTransaction {
 }
 interface B2BContract {
   id: number; hotel_name: string; hotel_name_ar: string | null
-  contact_phone: string | null; daily_quota: number; entry_price: number
-  towel_price: number; valid_from: string; valid_until: string
+  contact_phone: string | null; monthly_fee: number; monthly_guest_cap: number
+  valid_from: string; valid_until: string
   is_active: boolean; credit_limit: number | null; payment_terms_days: number
   last_settled_at: string | null; is_overdue: boolean; created_at: string
 }
 interface B2BStatus {
-  contract_id: number; hotel_name: string; daily_quota: number
-  used_today: number; remaining: number; quota_warning: boolean
-  is_overdue: boolean; outstanding_balance: number | null
+  contract_id: number; hotel_name: string
+  checked_in_today: number; checked_in_this_month: number
+  monthly_guest_cap: number; remaining_monthly_quota: number
+  quota_warning: boolean; is_overdue: boolean; outstanding_balance: number | null
 }
 interface EodReport {
   date: string; total_entries: number; b2b_entries: number
@@ -76,7 +77,7 @@ const b2bModal = ref(false)
 const savingB2b = ref(false)
 const b2bForm = ref({
   hotel_name: '', hotel_name_ar: '', contact_phone: '',
-  daily_quota: '50', entry_price: '', towel_price: '0',
+  monthly_fee: '', monthly_guest_cap: '100',
   valid_from: new Date().toISOString().slice(0, 10),
   valid_until: '', credit_limit: '', payment_terms_days: '30',
 })
@@ -197,6 +198,34 @@ async function downloadTicket(txId: number) {
   } catch { toast.error(t('backoffice.beachAdmin.ticketDownloadError')) }
 }
 
+// ── إلغاء معاملة — الصلاحية الحقيقية على الـbackend (require_permission
+// min_role_level=60)، الزر هنا مجرد واجهة؛ السبب إجباري ومُسجَّل في سجل
+// التدقيق مع القيد المحاسبي المعكوس (راجع beach.services.void_transaction).
+const voidingTx = ref<BeachTransaction | null>(null)
+const voidReason = ref('')
+const voidSubmitting = ref(false)
+
+function openVoidModal(tx: BeachTransaction) {
+  voidingTx.value = tx
+  voidReason.value = ''
+}
+
+async function confirmVoid() {
+  if (!voidingTx.value || voidReason.value.trim().length < 3) return
+  voidSubmitting.value = true
+  try {
+    await api.post(ENDPOINTS.beach.transactionVoid(voidingTx.value.id), { reason: voidReason.value.trim() })
+    toast.success(t('backoffice.beachAdmin.voidSuccess'))
+    voidingTx.value = null
+    await loadTransactions()
+  } catch (e: unknown) {
+    const detail = (e as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
+    toast.error(typeof detail === 'string' ? detail : t('backoffice.beachAdmin.voidError'))
+  } finally {
+    voidSubmitting.value = false
+  }
+}
+
 async function downloadEodPdf() {
   downloadingPdf.value = true
   try {
@@ -211,7 +240,7 @@ async function downloadEodPdf() {
 }
 
 async function createB2BContract() {
-  if (!b2bForm.value.hotel_name || !b2bForm.value.entry_price || !b2bForm.value.valid_until) {
+  if (!b2bForm.value.hotel_name || !b2bForm.value.monthly_fee || !b2bForm.value.valid_until) {
     toast.error(t('backoffice.beachAdmin.b2bFieldsRequired')); return
   }
   savingB2b.value = true
@@ -221,9 +250,8 @@ async function createB2BContract() {
       hotel_name: b2bForm.value.hotel_name,
       hotel_name_ar: b2bForm.value.hotel_name_ar || null,
       contact_phone: b2bForm.value.contact_phone || null,
-      daily_quota: parseInt(b2bForm.value.daily_quota),
-      entry_price: b2bForm.value.entry_price,
-      towel_price: b2bForm.value.towel_price || '0',
+      monthly_fee: b2bForm.value.monthly_fee,
+      monthly_guest_cap: parseInt(b2bForm.value.monthly_guest_cap),
       valid_from: b2bForm.value.valid_from,
       valid_until: b2bForm.value.valid_until,
       credit_limit: b2bForm.value.credit_limit || null,
@@ -231,8 +259,8 @@ async function createB2BContract() {
     })
     toast.success(t('backoffice.beachAdmin.b2bContractCreated'))
     b2bModal.value = false
-    b2bForm.value = { hotel_name: '', hotel_name_ar: '', contact_phone: '', daily_quota: '50',
-      entry_price: '', towel_price: '0', valid_from: new Date().toISOString().slice(0, 10),
+    b2bForm.value = { hotel_name: '', hotel_name_ar: '', contact_phone: '', monthly_fee: '',
+      monthly_guest_cap: '100', valid_from: new Date().toISOString().slice(0, 10),
       valid_until: '', credit_limit: '', payment_terms_days: '30' }
     await loadB2B()
   } catch(e: any) {
@@ -298,6 +326,7 @@ const txTypeLabels = computed<Record<string, string>>(() => ({
   entry_resident: t('backoffice.beachAdmin.txType.entryResident'),
   entry_towel: t('backoffice.beachAdmin.txType.entryTowel'), towel_rent: t('backoffice.beachAdmin.txType.towelRent'),
   towel_return: t('backoffice.beachAdmin.txType.towelReturn'),
+  outside_food_fee: t('backoffice.beachAdmin.txType.outsideFoodFee'),
 }))
 
 onMounted(() => switchTab('summary'))
@@ -341,6 +370,7 @@ onMounted(() => switchTab('summary'))
             <div :class="['text-3xl font-black', capacityTextColor]">
               {{ inventory?.capacity_used ?? 0 }} / {{ inventory?.capacity_max ?? 0 }}
             </div>
+            <div class="text-xs text-gray-400 dark:text-gray-400">{{ t('backoffice.beachAdmin.currentCapacityHint') }}</div>
             <div class="mt-3 h-3 rounded-full bg-gray-100 dark:bg-gray-700">
               <div :class="['h-3 rounded-full transition-all', capacityColor]"
                 :style="{ width: (inventory?.capacity_pct ?? 0) + '%' }"></div>
@@ -440,9 +470,11 @@ onMounted(() => switchTab('summary'))
                   <AppBadge v-else-if="tx.surge_applied" variant="warning">{{ t('backoffice.beachAdmin.surge') }}</AppBadge>
                   <AppBadge v-else variant="success">{{ t('backoffice.beachAdmin.completed') }}</AppBadge>
                 </td>
-                <td class="px-4 py-3">
+                <td class="px-4 py-3 whitespace-nowrap">
                   <button v-if="!tx.voided_at" @click="downloadTicket(tx.id)"
-                    class="text-xs text-blue-600 hover:underline dark:text-blue-300">🖨️ {{ t('backoffice.beachAdmin.ticket') }}</button>
+                    class="text-xs text-blue-600 hover:underline dark:text-blue-300 me-3">🖨️ {{ t('backoffice.beachAdmin.ticket') }}</button>
+                  <button v-if="!tx.voided_at && auth.hasRole('manager')" @click="openVoidModal(tx)"
+                    class="text-xs text-red-600 hover:underline dark:text-red-300">✕ {{ t('backoffice.beachAdmin.void') }}</button>
                 </td>
               </tr>
             </tbody>
@@ -466,7 +498,7 @@ onMounted(() => switchTab('summary'))
               ? 'border border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950/35 dark:text-red-300'
               : 'border border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950/35 dark:text-amber-300']">
           {{ s.is_overdue ? t('backoffice.beachAdmin.overduePrefix') : t('backoffice.beachAdmin.lowQuotaPrefix') }} {{ s.hotel_name }}
-          {{ t('backoffice.beachAdmin.slotsRemainingToday', { count: s.remaining }) }}
+          {{ t('backoffice.beachAdmin.slotsRemainingThisMonth', { count: s.remaining_monthly_quota }) }}
         </div>
       </div>
 
@@ -478,8 +510,8 @@ onMounted(() => switchTab('summary'))
             <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
                 <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.beachAdmin.hotel') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.beachAdmin.dailyQuota') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.beachAdmin.price') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.beachAdmin.monthlyGuestCap') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.beachAdmin.monthlyFee') }}</th>
                 <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.beachAdmin.creditLimit') }}</th>
                 <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.beachAdmin.paymentTerms') }}</th>
                 <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.beachAdmin.statusCol') }}</th>
@@ -493,8 +525,8 @@ onMounted(() => switchTab('summary'))
                   <div class="font-semibold text-sm text-gray-900 dark:text-gray-100">{{ c.hotel_name }}</div>
                   <div v-if="c.hotel_name_ar" class="text-xs text-gray-500 dark:text-gray-400">{{ c.hotel_name_ar }}</div>
                 </td>
-                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ c.daily_quota }}</td>
-                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ fmtMoney(c.entry_price) }} {{ t('backoffice.beachAdmin.egp') }}</td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ c.monthly_guest_cap }}</td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ fmtMoney(c.monthly_fee) }} {{ t('backoffice.beachAdmin.egp') }}</td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
                   {{ c.credit_limit != null ? `${fmtMoney(c.credit_limit)} ${t('backoffice.beachAdmin.egp')}` : '—' }}
                 </td>
@@ -621,16 +653,12 @@ onMounted(() => switchTab('summary'))
             <input v-model="b2bForm.contact_phone" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
           </div>
           <div>
-            <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">{{ t('backoffice.beachAdmin.dailyQuota') }}</label>
-            <input v-model="b2bForm.daily_quota" type="number" min="1" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+            <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">{{ t('backoffice.beachAdmin.monthlyFeeRequired') }}</label>
+            <input v-model="b2bForm.monthly_fee" type="number" min="0" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
           </div>
           <div>
-            <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">{{ t('backoffice.beachAdmin.entryPriceRequired') }}</label>
-            <input v-model="b2bForm.entry_price" type="number" min="0" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
-          </div>
-          <div>
-            <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">{{ t('backoffice.beachAdmin.towelPriceEgp') }}</label>
-            <input v-model="b2bForm.towel_price" type="number" min="0" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+            <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">{{ t('backoffice.beachAdmin.monthlyGuestCap') }}</label>
+            <input v-model="b2bForm.monthly_guest_cap" type="number" min="1" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
           </div>
           <div>
             <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">{{ t('backoffice.beachAdmin.fromDate') }}</label>
@@ -688,6 +716,25 @@ onMounted(() => switchTab('summary'))
         <div class="flex gap-3 justify-end">
           <AppButton variant="ghost" @click="creditModal = false">{{ t('backoffice.beachAdmin.cancel') }}</AppButton>
           <AppButton :loading="savingCredit" @click="saveCreditEdit">{{ t('backoffice.beachAdmin.save') }}</AppButton>
+        </div>
+      </div>
+    </AppModal>
+
+    <!-- ══ MODAL: VOID TRANSACTION ══ -->
+    <AppModal :open="!!voidingTx" @close="voidingTx = null" :title="t('backoffice.beachAdmin.voidModalTitle', { id: voidingTx?.id ?? '' })">
+      <div class="space-y-4">
+        <p class="text-sm text-gray-600 dark:text-gray-400">{{ t('backoffice.beachAdmin.voidHint') }}</p>
+        <div>
+          <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">{{ t('backoffice.beachAdmin.voidReason') }}</label>
+          <textarea v-model="voidReason" rows="2" minlength="3" maxlength="200"
+            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            :placeholder="t('backoffice.beachAdmin.voidReasonPlaceholder')" />
+        </div>
+        <div class="flex gap-3 justify-end">
+          <AppButton variant="ghost" @click="voidingTx = null">{{ t('backoffice.beachAdmin.cancel') }}</AppButton>
+          <AppButton variant="danger" :disabled="voidReason.trim().length < 3" :loading="voidSubmitting" @click="confirmVoid">
+            {{ t('backoffice.beachAdmin.confirmVoid') }}
+          </AppButton>
         </div>
       </div>
     </AppModal>

@@ -71,6 +71,10 @@ from app.modules.owner.schemas import (
     PeriodSnapshot,
     PRPOVarianceRow,
     ProcurementAnalyticsResponse,
+    RevenueBreakdownResponse,
+    RevenueDetailResponse,
+    RevenueJournalLine,
+    RevenueLineResponse,
     SalesPerformanceResponse,
     SearchResultItem,
     ShiftHistoryItem,
@@ -352,11 +356,15 @@ def _build_outlet_breakdown(
 def _fetch_b2b_receivables(db: Session, branch_id: int) -> tuple[list[B2BReceivableItem], Decimal]:
     """A-4: ذمم B2B — كل عقد نشط مع رصيده غير المسوّى منذ last_settled_at.
 
-    الرصيد = مجموع B2BContractDay.total_amount بعد last_settled_at.
-    لا يحتوي الـ response على اسم ضيف أو هاتف (Decision 0004 §Isolation
-    model item 7 — B2B per hotel/contract only, never per named guest).
+    2026-08-20: الرصيد بقى مجموع B2BContractMonth.amount (الرسم الشهري
+    الثابت المُرحَّل) بعد last_settled_at، بدل B2BContractDay.total_amount
+    القديمة — راجع beach.crud.get_b2b_outstanding_balance (نفس الدالة اللي
+    beach.services بتستخدمها، مش تكرار منطق منفصل هنا). لا يحتوي الـ
+    response على اسم ضيف أو هاتف (Decision 0004 §Isolation model item 7 —
+    B2B per hotel/contract only, never per named guest).
     """
-    from app.modules.beach.models import B2BContract, B2BContractDay  # noqa: PLC0415
+    from app.modules.beach import crud as beach_crud  # noqa: PLC0415
+    from app.modules.beach.models import B2BContract  # noqa: PLC0415
 
     contracts = (
         db.query(B2BContract)
@@ -371,15 +379,7 @@ def _fetch_b2b_receivables(db: Session, branch_id: int) -> tuple[list[B2BReceiva
     total = Decimal("0")
 
     for contract in contracts:
-        # نحسب الرصيد غير المسوّى منذ last_settled_at
-        q = db.query(B2BContractDay).filter(
-            B2BContractDay.contract_id == contract.id,
-        )
-        if contract.last_settled_at is not None:
-            q = q.filter(B2BContractDay.day > contract.last_settled_at)
-
-        days = q.all()
-        outstanding = sum((d.total_amount for d in days), Decimal("0"))
+        outstanding = beach_crud.get_b2b_outstanding_balance(db, contract.id, contract.last_settled_at)
         total += outstanding
 
         items.append(B2BReceivableItem(
@@ -982,7 +982,7 @@ def get_channel_analytics(
     - B2BContract: outstanding وoverdue (من _fetch_b2b_receivables)
     """
     from sqlalchemy import func as sa_func  # noqa: PLC0415
-    from app.modules.beach.models import B2BContract, B2BContractDay  # noqa: PLC0415
+    from app.modules.beach.models import B2BContract, B2BContractDay, B2BContractMonth  # noqa: PLC0415
     from app.modules.dining.models import DiningOrder  # noqa: PLC0415
 
     range_start_utc, range_end_utc = _utc_date_bounds(date_from, date_to)
@@ -1005,12 +1005,11 @@ def get_channel_analytics(
 
     contract_ids = [c.id for c in contracts]
 
-    # Beach revenue + checkins في الفترة
-    beach_rows = (
+    # Beach checkins في الفترة — عدّاد بحت (راجع models.B2BContractDay).
+    checkin_rows = (
         db.query(
             B2BContractDay.contract_id,
             sa_func.sum(B2BContractDay.checked_in_count).label("checkins"),
-            sa_func.sum(B2BContractDay.total_amount).label("beach_rev"),
         )
         .filter(
             B2BContractDay.contract_id.in_(contract_ids),
@@ -1020,7 +1019,26 @@ def get_channel_analytics(
         .group_by(B2BContractDay.contract_id)
         .all()
     )
-    beach_by_contract = {r.contract_id: r for r in beach_rows}
+    checkins_by_contract = {r.contract_id: int(r.checkins or 0) for r in checkin_rows}
+
+    # Beach revenue في الفترة (2026-08-20: الرسم الشهري الثابت المُرحَّل —
+    # راجع models.B2BContract/B2BContractMonth — مش مبلغ لكل تشيك-إن فردي.
+    # بيتحسب حسب الشهر اللي اتُرحّل فيه (period_month)، مش تاريخ تشيك-إن
+    # ضيف بعينه.
+    revenue_rows = (
+        db.query(
+            B2BContractMonth.contract_id,
+            sa_func.sum(B2BContractMonth.amount).label("beach_rev"),
+        )
+        .filter(
+            B2BContractMonth.contract_id.in_(contract_ids),
+            B2BContractMonth.period_month >= date_from,
+            B2BContractMonth.period_month <= date_to,
+        )
+        .group_by(B2BContractMonth.contract_id)
+        .all()
+    )
+    revenue_by_contract = {r.contract_id: Decimal(str(r.beach_rev or 0)) for r in revenue_rows}
 
     # F&B attach: مجموع dining orders بـ b2b_contract_id في الفترة
     fnb_rows = (
@@ -1040,7 +1058,6 @@ def get_channel_analytics(
     fnb_by_contract = {r.b2b_contract_id: Decimal(str(r.fnb_total or 0)) for r in fnb_rows}
 
     # Outstanding per contract (نفس منطق _fetch_b2b_receivables)
-    _, _ = _fetch_b2b_receivables(db, branch_id)   # نعيد الحساب مؤقتاً
     b2b_items_map, _ = _fetch_b2b_receivables(db, branch_id)
     outstanding_map = {item.contract_id: item.outstanding for item in b2b_items_map}
     overdue_map     = {item.contract_id: item.is_overdue  for item in b2b_items_map}
@@ -1048,9 +1065,8 @@ def get_channel_analytics(
 
     contract_rows = []
     for c in contracts:
-        bd = beach_by_contract.get(c.id)
-        checkins    = int(bd.checkins or 0) if bd else 0
-        beach_rev   = Decimal(str(bd.beach_rev or 0)) if bd else Decimal("0")
+        checkins    = checkins_by_contract.get(c.id, 0)
+        beach_rev   = revenue_by_contract.get(c.id, Decimal("0"))
         fnb_attach  = fnb_by_contract.get(c.id, Decimal("0"))
         fnb_avg     = (fnb_attach / checkins).quantize(Decimal("0.01")) if checkins > 0 else Decimal("0")
 
@@ -1179,6 +1195,49 @@ def get_expense_analytics(
             for el in enriched
         ],
         payroll=payroll_summary,
+        is_provisional=is_prov,
+        computed_at=datetime.utcnow(),
+    )
+
+
+def get_revenue_breakdown(
+    db: Session,
+    branch_id: int,
+    date_from: date,
+    date_to: date,
+) -> RevenueBreakdownResponse:
+    """
+    تفصيل الإيراد بالحساب لأي فترة (2026-08-17، طلب Mohamed الصريح بعد
+    تجربة تطبيق المالك: الضغط على كارت إيراد اليوم لازم يوريه من أنهي
+    حسابات جه الرقم ده).
+
+    مصدر: finance.services.get_income_statement — نفس الدالة المستخدمة
+    لكل رقم مالي أساسي تاني في التطبيق (Decision 0004 §Numbers must equal
+    source). صفر حساب جديد هنا — مجرد تحويل شكل الاستجابة.
+    """
+    from app.modules.finance.services import get_income_statement  # noqa: PLC0415
+
+    stmt = get_income_statement(db, branch_id, date_from, date_to)
+    is_prov = _is_period_provisional(db, branch_id, date_to)
+
+    revenue_lines = sorted(
+        (
+            RevenueLineResponse(
+                account_code=line.account_code,
+                account_name=line.account_name,
+                amount=line.amount,
+            )
+            for line in stmt.revenue_lines
+        ),
+        key=lambda item: item.amount,
+        reverse=True,
+    )
+
+    return RevenueBreakdownResponse(
+        period_from=date_from,
+        period_to=date_to,
+        total_revenue=stmt.total_revenue,
+        revenue_lines=revenue_lines,
         is_provisional=is_prov,
         computed_at=datetime.utcnow(),
     )
@@ -2183,6 +2242,71 @@ def get_expense_detail(
     ]
 
     return ExpenseDetailResponse(
+        account_code=account_code,
+        account_name=account.name,
+        period_from=date_from,
+        period_to=date_to,
+        lines=lines,
+        total_amount=total_amount,
+        **_pagination_meta(page, size, total_items),
+        computed_at=datetime.utcnow(),
+    )
+
+
+def get_revenue_detail(
+    db: Session, branch_id: int, account_code: str, date_from: date, date_to: date,
+    *, page: int = 1, size: int = 50,
+) -> RevenueDetailResponse:
+    """كل قيود اليومية (سطور الدائن) داخل حساب إيراد معيّن — نظير
+    get_expense_detail بالظبط على الجانب الآخر (الإيراد يزيد بالدائن،
+    عكس المصروف اللي يزيد بالمدين)."""
+    from sqlalchemy import func as sa_func  # noqa: PLC0415
+    from app.modules.finance.models import Account, JournalEntry, JournalLine  # noqa: PLC0415
+
+    account = db.query(Account).filter(
+        Account.branch_id == branch_id, Account.code == account_code,
+    ).first()
+    if not account:
+        return RevenueDetailResponse(
+            account_code=account_code, account_name=account_code,
+            period_from=date_from, period_to=date_to, lines=[],
+            total_amount=Decimal("0"), computed_at=datetime.utcnow(),
+            **_pagination_meta(page, size, 0),
+        )
+
+    base_query = (
+        db.query(JournalLine, JournalEntry)
+        .join(JournalEntry, JournalEntry.id == JournalLine.entry_id)
+        .filter(
+            JournalLine.account_id == account.id,
+            JournalEntry.branch_id == branch_id,
+            JournalEntry.entry_date >= date_from,
+            JournalEntry.entry_date <= date_to,
+            JournalLine.credit > 0,
+        )
+    )
+
+    total_items = base_query.count()
+    total_amount = Decimal(str(
+        base_query.with_entities(sa_func.sum(JournalLine.credit)).scalar() or 0
+    ))
+    rows = (
+        base_query.order_by(JournalEntry.entry_date.desc(), JournalEntry.id.desc())
+        .offset((page - 1) * size).limit(size).all()
+    )
+    lines = [
+        RevenueJournalLine(
+            entry_id=entry.id,
+            entry_date=entry.entry_date,
+            reference=entry.reference,
+            description=line.description or entry.description,
+            amount=line.credit,
+            source=entry.source,
+        )
+        for line, entry in rows
+    ]
+
+    return RevenueDetailResponse(
         account_code=account_code,
         account_name=account.name,
         period_from=date_from,

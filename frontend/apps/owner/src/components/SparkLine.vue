@@ -8,11 +8,13 @@ import { computed } from 'vue'
 
 const props = withDefaults(defineProps<{
   values: number[]
+  /** لون صريح اختياري — لو مش متمرر، اللون بياخد اتجاه القيم (صاعد/هابط/ثابت)
+   * من متغيرات الـ CSS الحالية (--owner-green/red/muted)، فبيتغيّر صح مع
+   * تبديل الوضع الفاتح/الداكن من غير أي منطق إضافي هنا. */
   color?: string
   height?: number
   showDot?: boolean
 }>(), {
-  color: '#22C55E',
   height: 40,
   showDot: true,
 })
@@ -64,10 +66,10 @@ const trend = computed(() => {
 })
 
 const lineColor = computed(() => {
-  if (props.color !== '#22C55E') return props.color
-  if (trend.value === 'up')   return '#22C55E'
-  if (trend.value === 'down') return '#EF4444'
-  return '#A8A29E'
+  if (props.color) return props.color
+  if (trend.value === 'up')   return 'rgb(var(--owner-green))'
+  if (trend.value === 'down') return 'rgb(var(--owner-red))'
+  return 'rgb(var(--owner-muted))'
 })
 </script>
 
