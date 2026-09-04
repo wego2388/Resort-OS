@@ -1026,12 +1026,17 @@ class TestB2BCredit:
         assert contract.is_overdue is True
 
     def test_mark_overdue_ignores_recent_balance(self, db):
+        """باج حقيقي في التست نفسه (اتكشف 2026-09-05): is_contract_overdue
+        بيحسب الأيام من بداية الشهر المرحّل، مش من تاريخ الترحيل الفعلي —
+        date.today()-relative قرب حدود الشهر كان بيدّي نتيجة غلط. تاريخ
+        مرجعي ثابت بدل النسبي عشان التست يفضل حتمي."""
         branch = make_branch(db)
         contract = make_contract(db, branch, payment_terms_days=30)
-        recent_day = date.today() - timedelta(days=5)
-        bill_month(db, recent_day)
+        month_start = date(2026, 6, 1)
+        bill_month(db, month_start + timedelta(days=15))
+        check_today = month_start + timedelta(days=5)
 
-        services.mark_b2b_contracts_overdue(db, date.today())
+        services.mark_b2b_contracts_overdue(db, check_today)
         db.commit()
         db.refresh(contract)
         assert contract.is_overdue is False

@@ -158,15 +158,25 @@ class TestBeachB2BOverdue:
         assert contract.is_overdue is True
 
     def test_contract_within_terms_not_overdue(self, db):
-        """عقد الشهر المرحّل له لسه ضمن المهلة لا يُصبح overdue"""
+        """عقد الشهر المرحّل له لسه ضمن المهلة لا يُصبح overdue.
+
+        باج حقيقي في التست نفسه اتكشف 2026-09-05: is_contract_overdue
+        بيحسب الأيام من *بداية* الشهر المرحّل (month_start)، مش من تاريخ
+        الترحيل الفعلي — فلو "النهاردة الحقيقي" أول الشهر (زي 5 سبتمبر)،
+        "date.today() - 5 أيام" بتقع في الشهر اللي فات (31 أغسطس)، فالفاتورة
+        بتترحّل لشهر أغسطس كامل (month_start=1 أغسطس) بدل "منذ 5 أيام" الفعلية
+        — يعني الفرق الحقيقي المحسوب كان أكتر من 30 يوم بالغلط. الإصلاح:
+        تاريخ مرجعي ثابت بعيد عن حدود الشهر (مش date.today() نسبي) عشان
+        التست يفضل حتمي بغض النظر عن تاريخ التشغيل الفعلي."""
         branch = _make_branch(db)
         _seed_finance_accounts(db, branch)
         contract = _make_b2b_contract(db, branch, payment_terms_days=30)
-        recent_day = date.today() - timedelta(days=5)
-        _bill_month(db, recent_day)
+        month_start = date(2026, 6, 1)
+        _bill_month(db, month_start + timedelta(days=15))  # منتصف الشهر، بعيد عن أي حد شهر
+        check_today = month_start + timedelta(days=5)
 
         from app.modules.beach.services import mark_b2b_contracts_overdue
-        mark_b2b_contracts_overdue(db, date.today())
+        mark_b2b_contracts_overdue(db, check_today)
         db.commit()
         db.refresh(contract)
 

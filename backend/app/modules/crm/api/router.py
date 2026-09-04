@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.core.deps import (
     DbDep, get_admin_user, get_booking_operator_user, get_crm_user,
-    get_pos_customer_user, require_permission,
+    get_current_active_user, get_pos_customer_user, require_permission,
 )
 from app.modules.crm import crud, services
 from app.modules.crm.schemas import (
