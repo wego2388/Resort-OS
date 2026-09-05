@@ -218,14 +218,13 @@ async function submit() {
         <label class="block text-xs font-semibold text-owner-muted mb-1" for="password">
           كلمة المرور
         </label>
-        <div class="relative">
+        <div class="relative" dir="ltr">
           <input
             id="password"
             ref="passwordInputRef"
             v-model="password"
             :type="showPassword ? 'text' : 'password'"
             autocomplete="current-password"
-            dir="ltr"
             class="w-full bg-owner-bg border border-owner-border rounded-xl px-4 py-3 pe-11 text-owner-text text-sm outline-none focus:border-owner-green transition-colors"
             :disabled="loading"
             required
@@ -235,7 +234,7 @@ async function submit() {
           <button
             type="button"
             class="absolute inset-y-0 end-0 flex items-center px-3 text-owner-muted hover:text-owner-text transition-colors"
-            aria-label="إظهار/إخفاء كلمة المرور"
+            :aria-label="showPassword ? 'إخفاء كلمة المرور' : 'إظهار كلمة المرور'"
             tabindex="-1"
             @click="showPassword = !showPassword"
           >

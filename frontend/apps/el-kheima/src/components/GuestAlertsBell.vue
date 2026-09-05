@@ -13,10 +13,12 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api, useAuthStore, useResortWebSocket, ENDPOINTS } from '@resort-os/core'
+import { useAlertSound } from '@resort-os/core/composables'
 import { AppBadge, useToast } from '@resort-os/ui'
 
 const auth = useAuthStore()
 const toast = useToast()
+const { playAlertSound } = useAlertSound()
 const { locale, t } = useI18n()
 // لا تستخدم ?? 0 هنا — branchId=0 يفتح WS بـ branch غير صالح ويحرق 4 اتصالات
 // فاشلة في الكونسول. الصح هو إيقاف WS والـ polling كاملاً لما branchId=null.
@@ -79,11 +81,21 @@ function timeAgo(iso: string) {
   return t('backoffice.guestAlerts.hoursAgo', { count: Math.floor(mins / 60) })
 }
 
+// عشان صوت التنبيه يشتغل من مسار الـpolling برضو (fallback لو الـWebSocket
+// واقع) لازم نعرف مين كان معروف قبل كده — أول تحميل عند فتح الشاشة مايستاهلش
+// صوت (مش تنبيه جديد فعليًا)، بس أي تنبيه يظهر في polling بعد كده يستاهل.
+let knownAlertIds = new Set<number>()
+let hasFetchedOnce = false
+
 async function fetchAlerts() {
   if (!branchId.value) return
   try {
     const { data } = await api.get(ENDPOINTS.core.alerts, { params: { branch_id: branchId.value, size: 50 } })
-    alerts.value = data.items ?? []
+    const items: GuestAlert[] = data.items ?? []
+    if (hasFetchedOnce && items.some(a => !knownAlertIds.has(a.id))) playAlertSound()
+    knownAlertIds = new Set(items.map(a => a.id))
+    hasFetchedOnce = true
+    alerts.value = items
   } catch {
     // فشل صامت — الـ polling هو fallback وليس مصدر حرج؛ الـ toast هنا كان يظهر
     // خطأ كل 20 ثانية للسوبر أدمن لما يكون على شاشة لا تحتاج alerts.
@@ -119,6 +131,8 @@ const { onMessage } = useResortWebSocket(wsUrl)
 onMessage((data: any) => {
   if (data?.type === 'new_alert') {
     alerts.value.unshift(data.alert)
+    knownAlertIds.add(data.alert.id)
+    playAlertSound()
     toast.info(`${alertUi(data.alert).icon} ${alertLabel(data.alert)} — ${contextLabel(data.alert)}`)
   } else if (data?.type === 'alert_status_changed') {
     const a = data.alert as GuestAlert

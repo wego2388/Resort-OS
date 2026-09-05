@@ -28,6 +28,11 @@ const props = defineProps<{
   // ── فيتشر الفنادق (2026-08-07) ──────────────────────────────────────
   branchId: number | null
   selectedContractId: number | null
+  // الدفع المباشر يتطلب صلاحية كاشير فأعلى فعليًا في الباك إند
+  // (dining/api/router.py: user_level(user) &lt; 40 → 403) بدون أي مسار
+  // موافقة PIN بديل — عكس الخصم/الإلغاء اللي بيسمح لمستوى أقل بموافقة
+  // مدير. فالنادل محتاج ميشوفش زرار هيفشل مضمون، مش يتفاجئ بـ403.
+  canSettlePayment: boolean
 }>()
 
 const emit = defineEmits<{
@@ -273,9 +278,9 @@ const cartGroups = computed(() => {
           </AppButton>
         </div>
       </div>
-      <div v-else class="grid grid-cols-2 gap-2">
+      <div v-else class="grid gap-2" :class="canSettlePayment ? 'grid-cols-2' : 'grid-cols-1'">
         <AppButton
-          :variant="payPrimary ? 'outline' : 'primary'"
+          :variant="(payPrimary && canSettlePayment) ? 'outline' : 'primary'"
           size="lg"
           :disabled="cart.length === 0"
           :loading="submitting"
@@ -284,6 +289,7 @@ const cartGroups = computed(() => {
           🍳 {{ t('backoffice.pos.sendToKitchen') }}
         </AppButton>
         <AppButton
+          v-if="canSettlePayment"
           :variant="payPrimary ? 'primary' : 'outline'"
           size="lg"
           :disabled="cart.length === 0 || !online"
@@ -293,7 +299,7 @@ const cartGroups = computed(() => {
           💳 {{ t('backoffice.pos.cart.payNow') }}
         </AppButton>
       </div>
-      <p v-if="!isAppendMode && !online" class="text-xs text-amber-700 dark:text-amber-300 text-center">
+      <p v-if="!isAppendMode && canSettlePayment && !online" class="text-xs text-amber-700 dark:text-amber-300 text-center">
         {{ t('backoffice.pos.cart.paymentOffline') }}
       </p>
     </div>

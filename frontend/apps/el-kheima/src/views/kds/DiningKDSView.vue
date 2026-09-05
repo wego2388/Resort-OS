@@ -28,6 +28,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { api, useResortWebSocket, parseApiTimestamp, ENDPOINTS , useAuthStore } from '@resort-os/core'
+import { useAlertSound } from '@resort-os/core/composables'
 import { useStaffFormat } from '@resort-os/core/i18n/staff'
 import { useToast } from '@resort-os/ui'
 
@@ -91,25 +92,8 @@ const initialLoading = ref(true)
 let refreshInterval: ReturnType<typeof setInterval>
 let clockInterval: ReturnType<typeof setInterval>
 
-// ── صوت التنبيه للتذاكر الجديدة ─────────────────────────────────────
-// نولّد صوت beep بسيط بـ Web Audio API (مش محتاج ملف صوت خارجي)
-let audioCtx: AudioContext | null = null
-function playNewTicketSound() {
-  try {
-    if (!audioCtx) audioCtx = new AudioContext()
-    const osc = audioCtx.createOscillator()
-    const gain = audioCtx.createGain()
-    osc.connect(gain)
-    gain.connect(audioCtx.destination)
-    osc.type = 'sine'
-    osc.frequency.setValueAtTime(880, audioCtx.currentTime)
-    osc.frequency.setValueAtTime(660, audioCtx.currentTime + 0.1)
-    gain.gain.setValueAtTime(0.3, audioCtx.currentTime)
-    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.4)
-    osc.start(audioCtx.currentTime)
-    osc.stop(audioCtx.currentTime + 0.4)
-  } catch { /* صامت لو المتصفح مش بيدعم AudioContext */ }
-}
+// ── صوت التنبيه للتذاكر الجديدة (composable مشترك، راجع useAlertSound) ──
+const { playAlertSound: playNewTicketSound } = useAlertSound()
 const soundEnabled = ref(true)
 let knownTicketIds = new Set<number>()
 
