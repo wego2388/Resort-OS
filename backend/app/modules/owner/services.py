@@ -77,6 +77,7 @@ from app.modules.owner.schemas import (
     RevenueLineResponse,
     SalesPerformanceResponse,
     SearchResultItem,
+    ShiftCategorySummaryLine,
     ShiftHistoryItem,
     ShiftHistoryResponse,
     ShiftMonitorItem,
@@ -1428,6 +1429,8 @@ def get_shift_monitor(db: Session, branch_id: int) -> ShiftMonitorResponse:
             is_closed=False,
         )
 
+        from app.modules.dining.services import get_shift_category_summary  # noqa: PLC0415
+
         shift_items.append(ShiftMonitorItem(
             shift_id=s.shift_id,
             cashier_id=s.cashier_id,
@@ -1442,6 +1445,7 @@ def get_shift_monitor(db: Session, branch_id: int) -> ShiftMonitorResponse:
             is_closed=False,
             cash_movements=cash_movements,
             variance_tier=variance_result.tier,
+            category_summary=[ShiftCategorySummaryLine(**row) for row in get_shift_category_summary(db, s.shift_id)],
         ))
 
     return ShiftMonitorResponse(
@@ -1623,7 +1627,7 @@ def get_shift_history(db: Session, branch_id: int, days: int = 7) -> ShiftHistor
     مصدر: CashierShift (status='closed') + CashMovement.
     المالك يقرأ فقط — لا actions.
     """
-    from app.modules.finance.models import CashierShift, CashMovement  # noqa: PLC0415
+    from app.modules.finance.models import CashierShift, CashMovement, Payment  # noqa: PLC0415
     from app.core.kernel.models.user import User  # noqa: PLC0415
 
     cutoff = datetime.utcnow() - timedelta(days=max(1, min(days, 30)))
@@ -1666,6 +1670,25 @@ def get_shift_history(db: Session, branch_id: int, days: int = 7) -> ShiftHistor
     else:
         performer_names = {}
 
+    # 2026-09-05 — باج حقيقي اتكشف: total_sales/invoice_count كانوا بيتحسبوا
+    # غلط للورديات المغلقة (شيلهم تحت). المصدر الصح هو Payment.shift_id
+    # نفسه المستخدم في build_active_shifts_response للورديات المفتوحة —
+    # مُجمَّع دفعة واحدة لكل الورديات هنا (مش N+1) بنفس نمط cash_movements فوق.
+    sales_map: dict[int, tuple["Decimal", int]] = {sid: (Decimal("0"), 0) for sid in shift_ids}
+    if shift_ids:
+        payments = (
+            db.query(Payment)
+            .filter(Payment.shift_id.in_(shift_ids), Payment.voided_at.is_(None))
+            .all()
+        )
+        totals: dict[int, Decimal] = {sid: Decimal("0") for sid in shift_ids}
+        counts: dict[int, int] = {sid: 0 for sid in shift_ids}
+        for p in payments:
+            if p.amount > 0:
+                totals[p.shift_id] += p.amount
+                counts[p.shift_id] += 1
+        sales_map = {sid: (totals[sid], counts[sid]) for sid in shift_ids}
+
     result_shifts: list[ShiftHistoryItem] = []
     for shift in raw_shifts:
         mvs_list = movements_map.get(shift.id, [])
@@ -1689,6 +1712,9 @@ def get_shift_history(db: Session, branch_id: int, days: int = 7) -> ShiftHistor
         else:
             variance_tier = "normal"
 
+        from app.modules.dining.services import get_shift_category_summary  # noqa: PLC0415
+
+        shift_total_sales, shift_invoice_count = sales_map.get(shift.id, (Decimal("0"), 0))
         result_shifts.append(ShiftHistoryItem(
             shift_id=shift.id,
             cashier_id=shift.cashier_id,
@@ -1696,10 +1722,11 @@ def get_shift_history(db: Session, branch_id: int, days: int = 7) -> ShiftHistor
             opened_at=shift.opened_at,
             closed_at=shift.closed_at,
             opening_float=shift.opening_float or Decimal("0"),
-            total_sales=shift.expected_cash or Decimal("0"),  # expected = total_sales في الورديات المغلقة
+            total_sales=shift_total_sales,
             total_cash=shift.counted_cash or Decimal("0"),
             expected_cash=shift.expected_cash or Decimal("0"),
-            invoice_count=0,  # لا يُحسب هنا — بيانات تاريخية
+            invoice_count=shift_invoice_count,
+            category_summary=[ShiftCategorySummaryLine(**row) for row in get_shift_category_summary(db, shift.id)],
             variance=variance,
             variance_tier=variance_tier,
             cash_movements=[
@@ -1721,6 +1748,19 @@ def get_shift_history(db: Session, branch_id: int, days: int = 7) -> ShiftHistor
         days=days,
         shifts=result_shifts,
         computed_at=datetime.utcnow(),
+    )
+
+
+def get_shift_invoices(db: Session, shift_id: int):
+    """2026-09-05 — طلب Mohamed: تفصيل حقيقي لكل فاتورة في وردية معيّنة
+    (مش بس ملخص فئات) — نفس بيانات شاشة "سجل الفواتير" في FinanceView
+    (المحاسب)، بس من غير قيد ownership/موافقة PIN لأن get_owner_reader
+    (owner أو super_admin بس) هو البوابة الكافية هنا — راجع
+    finance.services.list_shift_invoices's bypass_ownership_check."""
+    from app.modules.finance import services as finance_services  # noqa: PLC0415
+
+    return finance_services.list_shift_invoices(
+        db, shift_id, requesting_user=None, bypass_ownership_check=True,
     )
 
 

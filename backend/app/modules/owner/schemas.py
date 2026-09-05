@@ -438,6 +438,16 @@ class CashMovementItem(BaseModel):
     created_at:    datetime
 
 
+class ShiftCategorySummaryLine(BaseModel):
+    """2026-09-05 — طلب Mohamed بعد ما جرّب تطبيق الأونر بنفسه: مش كفاية
+    يشوف "3 فواتير بـ1190ج"، عايز يعرف الأنواع (ساندوتش/بيتزا/مشروبات).
+    مصدر: dining.services.get_shift_category_summary."""
+    name:     str
+    name_ar:  str
+    quantity: int
+    revenue:  Decimal
+
+
 class ShiftMonitorItem(BaseModel):
     """وردية واحدة مع حركات الكاش — للمراقبة فقط، لا actions."""
     shift_id:       int
@@ -453,6 +463,7 @@ class ShiftMonitorItem(BaseModel):
     is_closed:      bool
     cash_movements: list[CashMovementItem]
     variance_tier:  str                = "normal"   # 'critical'|'attention'|'normal'
+    category_summary: list[ShiftCategorySummaryLine] = []
 
 
 class ShiftMonitorResponse(BaseModel):
@@ -540,6 +551,7 @@ class ShiftHistoryItem(BaseModel):
     variance:       Optional[Decimal] = None
     cash_movements: list[CashMovementItem]
     variance_tier:  str = "normal"
+    category_summary: list[ShiftCategorySummaryLine] = []
 
 
 class ShiftHistoryResponse(BaseModel):

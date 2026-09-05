@@ -3151,6 +3151,110 @@ def apply_order_discount(
     return order
 
 
+# ─────────────────────── Reporting / Shift Sold Items ──────────────────
+# 2026-09-05 — طلب Mohamed بعد ما جرّب تطبيق الأونر بنفسه: الوردية كانت
+# بتوري "3 فواتير بـ1190ج" من غير أي فكرة عن نوع اللي اتباع فعليًا (ساندوتش/
+# بيتزا/مشروبات). مصدر واحد هنا يغذّي 3 واجهات: شاشة المحاسب (FinanceView
+# shift detail)، تطبيق الأونر (كارت تصنيف + تفصيل فاتورة)، والفاتورة
+# المطبوعة عند قفل الوردية. المصدر: DiningSettlement.shift_id — بيغطي كل
+# طرق الدفع بما فيها الغرفة (عكس Payment.shift_id اللي بيفوّت تسويات
+# الغرفة تمامًا، لأنها ذمّة على الفوليو مش صف Payment مباشر).
+
+class ShiftSoldItemLine:
+    __slots__ = ("item_id", "name", "name_ar", "category_name", "category_name_ar", "quantity", "revenue")
+
+    def __init__(self, item_id, name, name_ar, category_name, category_name_ar, quantity, revenue):
+        self.item_id = item_id
+        self.name = name
+        self.name_ar = name_ar
+        self.category_name = category_name
+        self.category_name_ar = category_name_ar
+        self.quantity = quantity
+        self.revenue = revenue
+
+
+class ShiftOrderItems:
+    __slots__ = ("order_id", "order_number", "outlet_name", "items")
+
+    def __init__(self, order_id, order_number, outlet_name, items):
+        self.order_id = order_id
+        self.order_number = order_number
+        self.outlet_name = outlet_name
+        self.items = items
+
+
+def get_shift_sold_items(db: Session, shift_id: int) -> list[ShiftOrderItems]:
+    """كل الأصناف الحقيقية المباعة في وردية معيّنة، مجمّعة حسب الطلب. أصناف
+    الطلب الملغاة/المرتجعة مستبعدة (status in cancelled|refunded) — الهدف
+    هنا "إيه اللي بيعناه فعلاً" مش سجل تاريخي كامل لكل حركة."""
+    from app.modules.dining.models import DiningCategory, DiningOrderItem, DiningSettlement  # noqa: PLC0415
+
+    order_ids = [
+        r[0] for r in
+        db.query(DiningSettlement.order_id).filter(DiningSettlement.shift_id == shift_id).all()
+    ]
+    if not order_ids:
+        return []
+
+    orders = {
+        o.id: o for o in db.query(DiningOrder).filter(DiningOrder.id.in_(order_ids)).all()
+    }
+    outlet_ids = {o.outlet_id for o in orders.values()}
+    outlet_names = {
+        out.id: (out.name_ar or out.name)
+        for out in db.query(Outlet).filter(Outlet.id.in_(outlet_ids)).all()
+    }
+
+    rows = (
+        db.query(DiningOrderItem, DiningCategory.name, DiningCategory.name_ar)
+        .join(DiningItem, DiningItem.id == DiningOrderItem.item_id)
+        .outerjoin(DiningCategory, DiningCategory.id == DiningItem.category_id)
+        .filter(DiningOrderItem.order_id.in_(order_ids))
+        .filter(DiningOrderItem.status.notin_(("cancelled", "refunded")))
+        .all()
+    )
+
+    by_order: dict[int, list[ShiftSoldItemLine]] = defaultdict(list)
+    for oi, cat_name, cat_name_ar in rows:
+        unit = oi.listed_unit_price if oi.listed_unit_price is not None else oi.unit_price
+        by_order[oi.order_id].append(ShiftSoldItemLine(
+            item_id=oi.item_id, name=oi.name, name_ar=oi.name_ar,
+            category_name=cat_name, category_name_ar=cat_name_ar,
+            quantity=oi.quantity, revenue=(unit * oi.quantity).quantize(Decimal("0.01")),
+        ))
+
+    return [
+        ShiftOrderItems(
+            order_id=order_id,
+            order_number=orders[order_id].order_number,
+            outlet_name=outlet_names.get(orders[order_id].outlet_id, "—"),
+            items=items,
+        )
+        for order_id, items in by_order.items()
+        if order_id in orders
+    ]
+
+
+def get_shift_category_summary(db: Session, shift_id: int) -> list[dict]:
+    """ملخص سريع مجمّع حسب الفئة لكارت الوردية (مطعم/كافيه/كل فئة على
+    حدة) — نفس مصدر get_shift_sold_items، مجمّع بس. يرجّع list[{name, name_ar,
+    quantity, revenue}] مرتبة الأعلى إيرادًا أولًا."""
+    orders = get_shift_sold_items(db, shift_id)
+    agg: dict[str, dict] = {}
+    for order in orders:
+        for item in order.items:
+            key = item.category_name or "أخرى"
+            bucket = agg.setdefault(key, {
+                "name": item.category_name or "Other",
+                "name_ar": item.category_name_ar or "أخرى",
+                "quantity": 0,
+                "revenue": Decimal("0"),
+            })
+            bucket["quantity"] += item.quantity
+            bucket["revenue"] += item.revenue
+    return sorted(agg.values(), key=lambda b: b["revenue"], reverse=True)
+
+
 # ─────────────────────── Reporting / Food Cost ────────────────────────
 
 def get_food_cost_report(

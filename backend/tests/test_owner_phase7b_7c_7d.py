@@ -10,6 +10,7 @@ Decision 0004 §7e: performance breakdown field
 """
 from __future__ import annotations
 
+import uuid
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
@@ -74,6 +75,45 @@ class TestShiftHistorySchema:
         from app.modules.owner.api.router import router
         names = {r.name for r in router.routes if hasattr(r, "name")}
         assert "owner_shifts_history" in names
+
+    def test_shift_history_uses_real_payments_not_expected_cash(self, db):
+        """باج حقيقي اتكشف 2026-09-05 (Mohamed جرّب تطبيق المالك بنفسه قبل
+        النشر): get_shift_history كانت بترجع invoice_count=0 دايمًا (hardcoded)
+        وtotal_sales=shift.expected_cash (بيشمل opening_float غلط) لكل وردية
+        مغلقة — يعني كل وردية سابقة في تاريخ المالك كانت بتظهر "0 فاتورة"
+        وإجمالي مبيعات مضخّم برصيد الافتتاح. المصدر الصح هو Payment.shift_id
+        نفسه المستخدم في build_active_shifts_response للورديات المفتوحة."""
+        from app.modules.core.models import Branch
+        from app.modules.finance.models import CashierShift, Payment
+        from app.modules.owner.services import get_shift_history
+
+        branch = Branch(name="Shift History Branch", name_ar="فرع اختبار الورديات",
+                         code=f"SHF-{uuid.uuid4().hex[:6].upper()}")
+        db.add(branch); db.flush()
+
+        opened = datetime.utcnow() - timedelta(hours=2)
+        closed = datetime.utcnow() - timedelta(minutes=5)
+        shift = CashierShift(
+            branch_id=branch.id, cashier_id=1, opened_at=opened, opened_by=1,
+            opening_float=Decimal("500.00"), status="closed", closed_at=closed,
+            closed_by=1, expected_cash=Decimal("1690.00"), counted_cash=Decimal("1440.60"),
+            variance=Decimal("-249.40"),
+        )
+        db.add(shift); db.flush()
+
+        for amount in (Decimal("412.70"), Decimal("222.22"), Decimal("309.51")):
+            db.add(Payment(
+                branch_id=branch.id, folio_id=None, amount=amount, method="cash",
+                posted_at=closed, cashier_id=1, shift_id=shift.id,
+            ))
+        db.commit()
+
+        result = get_shift_history(db, branch.id, days=1)
+        assert len(result.shifts) == 1
+        item = result.shifts[0]
+        # قبل الإصلاح: invoice_count=0، total_sales=1690.00 (=expected_cash)
+        assert item.invoice_count == 3
+        assert item.total_sales == Decimal("944.43")
 
     def test_shift_history_is_not_in_write_allowlist(self):
         """owner_shifts_history هو GET — لا يحتاج allowlist (يُمرَّر تلقائياً)."""

@@ -378,6 +378,17 @@ class ShiftEndReport(BaseModel):
     # لـtotal_cash/total_card فوق. دفعات legacy (بلا قناة) بتتجمّع تحت اسم
     # الطريقة الخام (cash/card/wallet) بدل ما تختفي من التقرير.
     channel_breakdown:     list["ShiftChannelSummary"] = Field(default_factory=list)
+    # 2026-09-05 — طلب Mohamed: إيه اللي اتباع فعليًا (ساندوتش/بيتزا/مشروبات)
+    # مش بس فلوس/عدد فواتير. فاضية لو الوردية مالهاش أي تسوية دايننج (شاطئ
+    # بس مثلًا). راجع dining.services.get_shift_category_summary.
+    category_summary:      list["ShiftCategorySummary"] = Field(default_factory=list)
+
+
+class ShiftCategorySummary(BaseModel):
+    name:     str
+    name_ar:  str
+    quantity: int
+    revenue:  Decimal
 
 
 class ShiftChannelSummary(BaseModel):
@@ -414,13 +425,28 @@ class ActiveShiftsResponse(BaseModel):
     as_of:        datetime      # وقت البناء — لعرض "آخر تحديث" في الـ frontend
 
 
+class ShiftInvoiceItemLine(BaseModel):
+    """2026-09-05 — طلب Mohamed: صنف واحد حقيقي بيع ضمن فاتورة دايننج،
+    مش رقم مجمّع. مصدر: dining.services.get_shift_sold_items."""
+    item_id:          int
+    name:             str
+    name_ar:          Optional[str]
+    category_name:    Optional[str]
+    category_name_ar: Optional[str]
+    quantity:         int
+    revenue:          Decimal
+
+
 class ShiftInvoiceLine(BaseModel):
     """سطر واحد في سجل فواتير الوردية (InvoiceLogModal، wagdy.md بند S-02) —
     دفعة حقيقية مربوطة بالوردية عبر Payment.shift_id، مع اسم الضيف من
     الفوليو المرتبط. مختلف عن ``invoice_count`` الإجمالي في ShiftEndReport:
     هنا كل فاتورة سطر مستقل بتفاصيلها، مش رقم مجمّع بس. ``folio_id``
     اختياري — دفعة POS مباشرة (بيع شاطئ/دايننج كاش فوري، مش محمّل على
-    غرفة، راجع finance.crud.create_direct_payment) مالهاش فوليو خالص."""
+    غرفة، راجع finance.crud.create_direct_payment) مالهاش فوليو خالص.
+
+    ``items`` (2026-09-05): الأصناف الحقيقية المباعة ضمن هذه الفاتورة —
+    فاضية لو الفاتورة مش دايننج (مثلاً بيع شاطئ) أو الطلب اتلغى بالكامل."""
     payment_id: int
     folio_id:   Optional[int]
     guest_name: str
@@ -430,6 +456,7 @@ class ShiftInvoiceLine(BaseModel):
     posted_at:  datetime
     is_voided:  bool
     voided_at:  Optional[datetime]
+    items:      list[ShiftInvoiceItemLine] = []
 
 
 class DiscountCalculateRequest(BaseModel):

@@ -23,6 +23,7 @@ import type {
   SupplierDetailResponse,
   ProductDetailResponse,
   OwnerSearchResponse,
+  ShiftInvoiceLine,
 } from './types'
 
 /**
@@ -103,6 +104,11 @@ export async function fetchExceptions(): Promise<ExceptionsResponse> {
 
 export async function fetchShiftHistory(days = 7): Promise<ShiftHistoryResponse> {
   const res = await api.get<ShiftHistoryResponse>('/api/v1/owner/shifts/history', { params: { days } })
+  return res.data
+}
+
+export async function fetchShiftInvoices(shiftId: number): Promise<ShiftInvoiceLine[]> {
+  const res = await api.get<ShiftInvoiceLine[]>(`/api/v1/owner/shifts/${shiftId}/invoices`)
   return res.data
 }
 

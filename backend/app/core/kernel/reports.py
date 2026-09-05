@@ -212,6 +212,13 @@ class ReportBuilder:
         c.drawRightString(W - margin, H - 20, ts)
 
         # ── Summary box ──────────────────────────────────────────────────
+        # باج حقيقي اتكشف 2026-09-05 (وقت اختبار تقرير نهاية الوردية بأصناف
+        # حقيقية): summary[:4] كانت بتقصّ أي بند بعد الرابع بصمت — تقارير
+        # زي نهاية الوردية بتبني 10+ بند (عدد فواتير/كاش متوقع/معدود/فرق/
+        # عدّ الفئات/عملات أجنبية/الآن تصنيف المبيعات) وكانت كلها بتختفي من
+        # المطبوع فعليًا من غير أي خطأ. الحل: أول 4 بند كروت "hero" زي ما
+        # كانت بالظبط (صفر تغيير بصري لأي تقرير ≤4 بنود)، والباقي صفوف
+        # نص/قيمة مضغوطة تحتها — مفيش بند يختفي بصمت تاني.
         y = H - 95
         if summary:
             box_h = 18
@@ -226,6 +233,24 @@ class ReportBuilder:
                 self._draw_mixed(c, bx, y - 2, label.upper(), 7, color=gray)
                 self._draw_mixed(c, bx, y - box_h + 2, str(val), 11, bold=True, color=primary)
             y -= box_h + 22
+
+            extra = summary[4:]
+            if extra:
+                row_h2 = 14
+                for label, val in extra:
+                    if val == "":
+                        # سطر عنوان فرعي (زي "— عدّ الكاش بالفئة —") — نص واحد بس،
+                        # مطابق لنمط الاستدعاء الحالي (summary.append((title, ""))).
+                        y -= 4
+                        self._draw_mixed(c, margin, y, str(label), 8, bold=True, color=gray)
+                        y -= row_h2 - 4
+                        continue
+                    self._draw_mixed(c, margin, y, str(label), 8, color=gray)
+                    c.setFont(FONT_LATIN, 8)
+                    c.setFillColor(colors.black)
+                    c.drawRightString(W - margin, y, str(val))
+                    y -= row_h2
+                y -= 8
 
         # ── Table ─────────────────────────────────────────────────────────
         n_cols = len(headers)

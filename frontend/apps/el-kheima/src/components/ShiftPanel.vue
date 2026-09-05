@@ -12,12 +12,14 @@ import { useI18n } from 'vue-i18n'
 import { api, ENDPOINTS } from '@resort-os/core'
 import { useAuthStore } from '@resort-os/core'
 import { useStaffFormat } from '@resort-os/core/i18n/staff'
+import { usePrintDocument } from '@resort-os/core/composables'
 import { AppModal, AppButton, AppInput, useToast } from '@resort-os/ui'
 
 const auth = useAuthStore()
 const toast = useToast()
 const { t } = useI18n()
 const { formatMoney, formatTime } = useStaffFormat()
+const { printBlob } = usePrintDocument()
 
 // branchId اختياري — لو مش ممرور يُقرأ من auth store (السلوك الافتراضي).
 // تصريحه صريحًا هنا يسمح بـ: (1) استخدام الـ component في سياق branch محدد
@@ -236,8 +238,25 @@ function applyCloseResult(data: any) {
   emit('shift-changed')
 }
 
+// طلب صريح من محمد: عند قفل الوردية، تطلع الفاتورة/التقرير النهائي المطبوع
+// تلقائيًا بكل مبيعات الوردية بالتفصيل — من غير ما الكاشير يدوّر على زرار
+// طباعة منفصل. نفس نمط الطباعة التلقائية المستخدم بالفعل في POS (Beach/
+// Dining، usePrintDocument) — فشل الطباعة (popup محظور، خطأ شبكة) ميرجعش
+// القفل نفسه ولا يوقف الكاشير، بس بيبلّغه لو الطباعة اتحولت لتنزيل ملف.
+async function autoPrintShiftReport(shiftId: number) {
+  try {
+    const res = await api.get(ENDPOINTS.finance.shiftReportPdf(shiftId), { responseType: 'blob' })
+    const outcome = printBlob(res.data, `shift-report-${shiftId}.pdf`)
+    if (outcome.downloadedInstead) toast.warning(t('backoffice.pos.receiptDownloadedInstead'))
+  } catch {
+    // التقرير متاح لاحقًا يدويًا من شاشة المحاسب (FinanceView) — فشل الطباعة
+    // التلقائية هنا مجرد إزعاج، مش خطأ تشغيلي يستحق منع القفل أو تكراره.
+  }
+}
+
 async function confirmClose() {
   if (!shift.value) return
+  const shiftId = shift.value.id
   closing.value = true
   try {
     // اجمع كل الفئات من كل العملات اللي عندها قيمة > 0
@@ -253,8 +272,9 @@ async function confirmClose() {
       notes: closeNotes.value || undefined,
       handover_note: closeHandoverNote.value || undefined,
     }
-    const { data } = await api.post(ENDPOINTS.finance.shiftClose(shift.value.id), payload)
+    const { data } = await api.post(ENDPOINTS.finance.shiftClose(shiftId), payload)
     applyCloseResult(data)
+    await autoPrintShiftReport(shiftId)
   } catch (e: any) {
     // الوردية بتُقفل دايمًا الآن (مفيش رفض بسبب الفرق) — أي خطأ هنا حقيقي
     // (عدّ ناقص، سعر صرف مفقود، صلاحية) بيتعرض كتوست مباشر بالرسالة الكاملة.

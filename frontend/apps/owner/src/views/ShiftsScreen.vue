@@ -6,13 +6,15 @@
  * F-2: تاريخ الورديات المغلقة (آخر 7 أيام)
  * G-1: قائمة الاستثناءات مرتّبة بالخطورة
  */
-import { ref } from 'vue'
-import { useOwnerShifts, useOwnerExceptions, useOwnerShiftHistory } from '../composables/useOwnerData'
+import { computed, ref } from 'vue'
+import { useOwnerShifts, useOwnerExceptions, useOwnerShiftHistory, useDetailSheet } from '../composables/useOwnerData'
+import { fetchShiftInvoices } from '../api/owner'
 import { formatApiDateTime, formatApiTime, formatMoney } from '../composables/useFormat'
 import ErrorState from '../components/ErrorState.vue'
 import SkeletonCards from '../components/SkeletonCards.vue'
 import DataFreshness from '../components/DataFreshness.vue'
-import type { ShiftMonitorItem } from '../api/types'
+import DetailSheet from '../components/DetailSheet.vue'
+import type { ShiftMonitorItem, ShiftInvoiceLine } from '../api/types'
 
 const tabs = ['exceptions', 'open', 'history'] as const
 type Tab = typeof tabs[number]
@@ -74,6 +76,22 @@ function formatTime(iso: string) {
 function formatDateTime(iso: string) {
   return formatApiDateTime(iso)
 }
+
+// ── تفصيل فواتير الوردية (الأصناف الحقيقية المباعة) ─────────────────
+const selectedShiftLabel = ref('')
+const invoiceDetail = useDetailSheet<ShiftInvoiceLine[]>()
+
+function openInvoiceDetail(shift: { shift_id: number; cashier_name: string }) {
+  selectedShiftLabel.value = shift.cashier_name
+  invoiceDetail.open(() => fetchShiftInvoices(shift.shift_id))
+}
+
+const invoiceDetailSubtitle = computed(() => {
+  const invoices = invoiceDetail.data.value
+  if (!invoices) return undefined
+  const total = invoices.reduce((sum, inv) => sum + (inv.is_voided ? 0 : parseFloat(inv.amount)), 0)
+  return `${invoices.length} فاتورة · ${formatMoney(total.toFixed(2))}`
+})
 </script>
 
 <template>
@@ -205,6 +223,23 @@ function formatDateTime(iso: string) {
                   </span>
                 </div>
               </div>
+              <div v-if="shift.category_summary.length > 0" class="pt-2 border-t border-owner-border/30">
+                <div class="text-xs text-owner-muted mb-1">الأصناف المباعة حسب الفئة</div>
+                <div
+                  v-for="cat in shift.category_summary"
+                  :key="cat.name"
+                  class="flex items-center justify-between py-0.5 text-xs"
+                >
+                  <span class="text-owner-text">{{ cat.name_ar || cat.name }} <span class="text-owner-muted">({{ cat.quantity }})</span></span>
+                  <span class="font-mono text-owner-text">{{ formatMoney(cat.revenue) }}</span>
+                </div>
+              </div>
+              <button
+                class="touch-target w-full mt-1 text-xs font-semibold text-owner-green border border-owner-green/30 rounded-xl active:bg-owner-green/10"
+                @click.stop="openInvoiceDetail(shift)"
+              >
+                عرض تفاصيل الفواتير والأصناف
+              </button>
             </div>
           </div>
           <DataFreshness :at="shiftsData.computed_at" :refresh="shiftsReload" />
@@ -257,11 +292,65 @@ function formatDateTime(iso: string) {
                 </span>
               </div>
             </div>
+            <div v-if="shift.category_summary.length > 0" class="mt-2 pt-2 border-t border-owner-border/50">
+              <div class="text-xs text-owner-muted mb-1">الأصناف المباعة حسب الفئة</div>
+              <div
+                v-for="cat in shift.category_summary"
+                :key="cat.name"
+                class="flex items-center justify-between py-0.5 text-xs"
+              >
+                <span class="text-owner-text">{{ cat.name_ar || cat.name }} <span class="text-owner-muted">({{ cat.quantity }})</span></span>
+                <span class="font-mono text-owner-text">{{ formatMoney(cat.revenue) }}</span>
+              </div>
+            </div>
+            <button
+              class="touch-target w-full mt-2 text-xs font-semibold text-owner-green border border-owner-green/30 rounded-xl active:bg-owner-green/10"
+              @click="openInvoiceDetail(shift)"
+            >
+              عرض تفاصيل الفواتير والأصناف
+            </button>
           </div>
           <DataFreshness :at="historyData.computed_at" :refresh="historyReload" />
         </template>
       </template>
 
     </div>
+
+    <DetailSheet
+      :open="invoiceDetail.isOpen.value"
+      :title="`فواتير ${selectedShiftLabel}`"
+      :subtitle="invoiceDetailSubtitle"
+      :loading="invoiceDetail.loading.value"
+      :error="invoiceDetail.error.value"
+      @close="invoiceDetail.close()"
+      @retry="invoiceDetail.retry()"
+    >
+      <div v-if="invoiceDetail.data.value?.length === 0" class="text-xs text-owner-muted text-center py-8">
+        لا توجد فواتير مسجّلة على هذه الوردية
+      </div>
+      <div
+        v-for="inv in invoiceDetail.data.value ?? []"
+        :key="inv.payment_id"
+        class="py-2 border-b border-owner-border/30 last:border-0"
+        :class="{ 'opacity-50': inv.is_voided }"
+      >
+        <div class="flex items-center justify-between mb-1">
+          <div class="text-xs font-bold text-owner-text">{{ inv.guest_name }}</div>
+          <div class="text-xs font-mono font-bold" :class="inv.is_voided ? 'text-owner-red line-through' : 'text-owner-text'">
+            {{ formatMoney(inv.amount) }}
+          </div>
+        </div>
+        <div class="flex items-center justify-between text-[11px] text-owner-muted mb-1">
+          <span>{{ formatTime(inv.posted_at) }} · {{ inv.method }}</span>
+          <span v-if="inv.is_voided">ملغاة</span>
+        </div>
+        <div v-if="inv.items.length > 0" class="pr-2 space-y-0.5">
+          <div v-for="item in inv.items" :key="item.item_id" class="flex items-center justify-between text-[11px]">
+            <span class="text-owner-text">{{ item.name_ar || item.name }} × {{ item.quantity }}</span>
+            <span class="font-mono text-owner-muted">{{ formatMoney(item.revenue) }}</span>
+          </div>
+        </div>
+      </div>
+    </DetailSheet>
   </div>
 </template>

@@ -50,6 +50,7 @@ from app.modules.owner.schemas import (
     SupplierDetailResponse,
 )
 from app.modules.credit.schemas import CreditReceivablesResponse
+from app.modules.finance.schemas import ShiftInvoiceLine
 
 logger = logging.getLogger(__name__)
 
@@ -373,6 +374,25 @@ def owner_shifts(response: Response, db: OwnerReadDb, user=Depends(get_owner_rea
         return services.get_shift_monitor(db, branch_id)
     except Exception as exc:
         raise _owner_error("OWNER_SHIFTS_FAILED", exc) from exc
+
+
+@router.get(
+    "/shifts/{shift_id}/invoices",
+    response_model=list[ShiftInvoiceLine],
+    name="owner_shift_invoices",
+    summary="تفصيل فواتير وردية معيّنة — الأصناف الحقيقية المباعة",
+)
+def owner_shift_invoices(shift_id: int, response: Response, db: OwnerReadDb, user=Depends(get_owner_reader)):
+    """2026-09-05: طلب Mohamed بعد تجربة تطبيق الأونر — مش كفاية فلوس/عدد
+    فواتير، عايز يعرف بالظبط إيه اللي اتباع في كل فاتورة (ساندوتش/بيتزا/
+    مشروبات). المالك يقرأ فقط."""
+    response.headers["Cache-Control"] = _NO_STORE
+    try:
+        return services.get_shift_invoices(db, shift_id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except Exception as exc:
+        raise _owner_error("OWNER_SHIFT_INVOICES_FAILED", exc) from exc
 
 
 @router.get(

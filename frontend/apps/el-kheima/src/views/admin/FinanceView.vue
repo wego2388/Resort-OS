@@ -100,9 +100,14 @@ interface ShiftDetailReport {
   foreign_currency_summary: { currency: string; total_foreign: number; fx_rate: number; egp_equivalent: number }[]
   counted_cash_egp?: number | null
 }
+interface ShiftInvoiceItemLine {
+  item_id: number; name: string; name_ar: string | null
+  category_name: string | null; category_name_ar: string | null
+  quantity: number; revenue: number
+}
 interface ShiftInvoiceLine {
   payment_id: number; folio_id: number | null; guest_name: string; amount: number; method: string
-  posted_at: string; is_voided: boolean
+  posted_at: string; is_voided: boolean; items: ShiftInvoiceItemLine[]
 }
 // Raw API shapes — backend returns Decimal fields as strings
 interface RawCashCountLine {
@@ -110,7 +115,8 @@ interface RawCashCountLine {
   quantity: unknown; subtotal: unknown; fx_rate: unknown; egp_equivalent: unknown
 }
 interface RawFxSummaryLine { currency: unknown; total_foreign: unknown; fx_rate: unknown; egp_equivalent: unknown }
-interface RawInvoiceLine { amount: unknown; [key: string]: unknown }
+interface RawInvoiceItemLine { revenue: unknown; [key: string]: unknown }
+interface RawInvoiceLine { amount: unknown; items?: RawInvoiceItemLine[]; [key: string]: unknown }
 interface ShiftWsMessage { type?: string; shift_id?: number; [key: string]: unknown }
 const detailShift    = ref<ShiftItem | null>(null)
 const detailReport   = ref<ShiftDetailReport | null>(null)
@@ -157,6 +163,10 @@ async function openShiftDetail(s: ShiftItem) {
     detailInvoices.value = (invoicesRes.data ?? []).map((inv: RawInvoiceLine) => ({
       ...inv,
       amount: Number(inv.amount ?? 0),
+      items: (inv.items ?? []).map((it: RawInvoiceItemLine) => ({
+        ...it,
+        revenue: Number(it.revenue ?? 0),
+      })),
     }))
   } catch (e: unknown) {
     toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.finance.loadShiftDetailError'))
@@ -2528,14 +2538,22 @@ async function saveExchangeRate() {
             {{ t('backoffice.finance.invoicesCount', { count: detailInvoices.length }) }}
           </h3>
           <EmptyState v-if="!detailInvoices.length" :title="t('backoffice.finance.noInvoicesInShift')" />
-          <div v-else class="divide-y divide-stone-100 dark:divide-border/50 max-h-64 overflow-y-auto">
+          <div v-else class="divide-y divide-stone-100 dark:divide-border/50 max-h-80 overflow-y-auto">
             <div v-for="inv in detailInvoices" :key="inv.payment_id"
-              class="py-2 flex items-center justify-between gap-2" :class="inv.is_voided && 'opacity-50'">
-              <div>
-                <span class="text-sm font-semibold text-gray-800 dark:text-gray-200" :class="inv.is_voided && 'line-through'">{{ inv.guest_name }}</span>
-                <span class="text-xs text-gray-400 dark:text-gray-400 ms-2">{{ METHOD_LABEL[inv.method] ?? inv.method }}</span>
+              class="py-2" :class="inv.is_voided && 'opacity-50'">
+              <div class="flex items-center justify-between gap-2">
+                <div>
+                  <span class="text-sm font-semibold text-gray-800 dark:text-gray-200" :class="inv.is_voided && 'line-through'">{{ inv.guest_name }}</span>
+                  <span class="text-xs text-gray-400 dark:text-gray-400 ms-2">{{ METHOD_LABEL[inv.method] ?? inv.method }}</span>
+                </div>
+                <span class="text-sm font-bold" :class="inv.is_voided ? 'text-gray-400 dark:text-gray-400 line-through' : 'text-blue-700 dark:text-blue-400'">{{ inv.amount.toFixed(2) }} {{ t('backoffice.finance.egp') }}</span>
               </div>
-              <span class="text-sm font-bold" :class="inv.is_voided ? 'text-gray-400 dark:text-gray-400 line-through' : 'text-blue-700 dark:text-blue-400'">{{ inv.amount.toFixed(2) }} {{ t('backoffice.finance.egp') }}</span>
+              <div v-if="inv.items.length" class="mt-1 ps-2 space-y-0.5">
+                <div v-for="item in inv.items" :key="item.item_id" class="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
+                  <span>{{ item.name_ar || item.name }} × {{ item.quantity }}</span>
+                  <span class="font-mono">{{ item.revenue.toFixed(2) }}</span>
+                </div>
+              </div>
             </div>
           </div>
         </div>

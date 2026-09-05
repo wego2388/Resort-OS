@@ -263,6 +263,38 @@ export interface CashMovementItem {
   created_at: string
 }
 
+// 2026-09-05 — طلب Mohamed: إيه اللي اتباع فعليًا (ساندوتش/بيتزا/مشروبات)
+// مش بس فلوس/عدد فواتير.
+export interface ShiftCategorySummaryLine {
+  name: string
+  name_ar: string
+  quantity: number
+  revenue: string
+}
+
+export interface ShiftInvoiceItemLine {
+  item_id: number
+  name: string
+  name_ar: string | null
+  category_name: string | null
+  category_name_ar: string | null
+  quantity: number
+  revenue: string
+}
+
+export interface ShiftInvoiceLine {
+  payment_id: number
+  folio_id: number | null
+  guest_name: string
+  amount: string
+  method: string
+  reference: string | null
+  posted_at: string
+  is_voided: boolean
+  voided_at: string | null
+  items: ShiftInvoiceItemLine[]
+}
+
 export interface ShiftMonitorItem {
   shift_id: number
   cashier_id: number
@@ -277,6 +309,7 @@ export interface ShiftMonitorItem {
   is_closed: boolean
   cash_movements: CashMovementItem[]
   variance_tier: 'critical' | 'attention' | 'normal'
+  category_summary: ShiftCategorySummaryLine[]
 }
 
 export interface ShiftMonitorResponse {
@@ -344,6 +377,7 @@ export interface ShiftHistoryItem {
   variance: string | null
   cash_movements: CashMovementItem[]
   variance_tier: 'critical' | 'attention' | 'normal'
+  category_summary: ShiftCategorySummaryLine[]
 }
 
 export interface ShiftHistoryResponse {

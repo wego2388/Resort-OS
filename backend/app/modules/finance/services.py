@@ -35,7 +35,7 @@ from app.modules.finance.schemas import (
     FolioCreate,
     IncomeStatementLine, IncomeStatementReport,
     JournalEntryCreate, JournalLineCreate, PaymentChannelCreate, PaymentChannelUpdate, PaymentCreate,
-    ShiftChannelSummary, ShiftEndReport, ShiftInvoiceLine,
+    ShiftCategorySummary, ShiftChannelSummary, ShiftEndReport, ShiftInvoiceItemLine, ShiftInvoiceLine,
     TrialBalanceLine, TrialBalanceReport,
 )
 from app.resort_os.discount_engine import (
@@ -796,6 +796,9 @@ def build_shift_end_report(db: Session, shift_id: int, requesting_user=None) -> 
         group["count"] += 1
     channel_breakdown = [ShiftChannelSummary(**v) for v in channel_groups.values()]
 
+    from app.modules.dining.services import get_shift_category_summary  # noqa: PLC0415
+    category_summary = [ShiftCategorySummary(**row) for row in get_shift_category_summary(db, shift_id)]
+
     return ShiftEndReport(
         shift_id=shift.id,
         branch_id=shift.branch_id,
@@ -834,6 +837,7 @@ def build_shift_end_report(db: Session, shift_id: int, requesting_user=None) -> 
         delta_vs_previous=delta_vs_previous,
         cash_movements_effect=movements_effect,
         cash_movements_warning=cash_movements_warning,
+        category_summary=category_summary,
     )
 
 
@@ -894,6 +898,13 @@ def generate_shift_end_report_pdf(db: Session, shift_id: int, requesting_user=No
             ))
         if r.counted_cash_egp is not None:
             summary.append(("إجمالي الخزينة (EGP)", f"{r.counted_cash_egp:,.2f} EGP"))
+
+    # 2026-09-05 — طلب Mohamed: الفاتورة المطبوعة عند قفل الوردية تفصّل
+    # إيه اللي اتباع فعليًا (ساندوتش/بيتزا/مشروبات)، مش أرقام مالية بس.
+    if r.category_summary:
+        summary.append(("— أصناف المبيعات حسب الفئة —", ""))
+        for cat in r.category_summary:
+            summary.append((f"{cat.name_ar} ({cat.quantity} قطعة)", f"{cat.revenue:,.2f} EGP"))
 
     return builder.table_pdf(
         title="تقرير نهاية الوردية",
@@ -1147,6 +1158,7 @@ def build_active_shifts_response(db: Session, branch_id: int) -> ActiveShiftsRes
 def list_shift_invoices(
     db: Session, shift_id: int, requesting_user,
     approver_user_id: Optional[int] = None, approver_pin: Optional[str] = None,
+    *, bypass_ownership_check: bool = False,
 ) -> list[ShiftInvoiceLine]:
     """سجل فواتير الوردية (InvoiceLogModal، wagdy.md بند S-02) — كل دفعة
     حقيقية مربوطة بالوردية عبر Payment.shift_id، مع اسم ضيف كل فاتورة.
@@ -1156,26 +1168,38 @@ def list_shift_invoices(
     2. حتى وردية نفسه، لازم موافقة PIN من مدير+ (أو يكون هو نفسه مدير+) —
        بيانات مالية تفصيلية حسّاسة (راجع core.services.resolve_pin_approval
        وwagdy.md بند S-03: PinGuardModal هي البوابة على الفرونت إند لده).
-    """
+
+    bypass_ownership_check (2026-09-05): للمالك (owner role، level=10 عمدًا —
+    راجع deps.ROLE_LEVELS) القيدين فوق مالهمش معنى أصلًا: مش كاشير أصلًا
+    يطلب موافقة مدير، وget_owner_reader نفسه (owner أو super_admin بس) هو
+    البوابة الوحيدة الكافية. افتراضي False — صفر تغيير سلوك لأي استدعاء حالي."""
     shift = crud.get_shift(db, shift_id)
     if not shift:
         raise ValueError(f"الوردية {shift_id} غير موجودة")
 
-    from app.core.deps import user_level  # noqa: PLC0415
-    from app.modules.core import policy_engine  # noqa: PLC0415
+    if not bypass_ownership_check:
+        from app.core.deps import user_level  # noqa: PLC0415
+        from app.modules.core import policy_engine  # noqa: PLC0415
 
-    acting_level = user_level(requesting_user)
-    if acting_level < 60 and shift.cashier_id != requesting_user.id:
-        raise PermissionError("لا يمكنك عرض فواتير وردية غيرك")
+        acting_level = user_level(requesting_user)
+        if acting_level < 60 and shift.cashier_id != requesting_user.id:
+            raise PermissionError("لا يمكنك عرض فواتير وردية غيرك")
 
-    policy_engine.require_approval(
-        db, "view_other_cashier_shift_invoices",
-        acting_user_level=acting_level,
-        approver_user_id=approver_user_id, approver_pin=approver_pin,
-        target_branch_id=shift.branch_id,
-    )
+        policy_engine.require_approval(
+            db, "view_other_cashier_shift_invoices",
+            acting_user_level=acting_level,
+            approver_user_id=approver_user_id, approver_pin=approver_pin,
+            target_branch_id=shift.branch_id,
+        )
 
     payments = crud.list_shift_payments_with_folio(db, shift_id)
+
+    # 2026-09-05 — طلب Mohamed: كل فاتورة تعرض الأصناف الحقيقية اللي فيها،
+    # مش رقم/اسم بس. مبني على ref_order_id — موجود لتسويات دايننج المباشرة
+    # بس (مش شاطئ/فوليو مستقل)، فأي فاتورة تانية items فاضية بأمان.
+    from app.modules.dining.services import get_shift_sold_items  # noqa: PLC0415
+    items_by_order = {o.order_id: o.items for o in get_shift_sold_items(db, shift_id)}
+
     return [
         ShiftInvoiceLine(
             payment_id=p.id,
@@ -1187,6 +1211,14 @@ def list_shift_invoices(
             posted_at=p.posted_at,
             is_voided=p.voided_at is not None,
             voided_at=p.voided_at,
+            items=[
+                ShiftInvoiceItemLine(
+                    item_id=i.item_id, name=i.name, name_ar=i.name_ar,
+                    category_name=i.category_name, category_name_ar=i.category_name_ar,
+                    quantity=i.quantity, revenue=i.revenue,
+                )
+                for i in items_by_order.get(p.ref_order_id, [])
+            ] if p.ref_order_id else [],
         )
         for p in payments
     ]
