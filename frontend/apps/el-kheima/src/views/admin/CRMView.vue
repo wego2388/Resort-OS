@@ -1325,7 +1325,7 @@ onMounted(loadLeads)
             <input v-model="groupForm.is_complimentary" type="checkbox"
               class="rounded border-stone-300 dark:border-border" />
             {{ t('backoffice.crm.groupComplimentary') }}
-            <span class="text-xs text-gray-400 dark:text-gray-500">({{ t('backoffice.crm.groupComplimentaryHint') }})</span>
+            <span class="text-xs text-gray-400 dark:text-gray-400">({{ t('backoffice.crm.groupComplimentaryHint') }})</span>
           </label>
           <div class="flex gap-2 mt-2">
             <AppButton size="sm" :loading="savingGroup" @click="saveGroup">
