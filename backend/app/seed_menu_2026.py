@@ -511,6 +511,7 @@ def _update_cafe_menu(db: Session) -> None:
         # تسالي الخيمة — كشك شاطئ (فشار/شبسي/تسالي معبأة/مشروبات جاهزة)،
         # مفيش تحضير حقيقي محتاج تتبّع KDS (قرار Mohamed 2026-08-03) —
         # station="bar" زي باقي أصناف الكافيه بالظبط، صفر كود إضافي محتاج.
+        ("Shisha",                    "شيشة",                    9),
     ]
     cat_map: dict[str, int] = {}
     for name_en, name_ar, sort in CATEGORIES:
@@ -608,6 +609,10 @@ def _update_cafe_menu(db: Session) -> None:
         (83, "Snacks", "Potato Chips",         "بطاطا",         D("100")),
         (84, "Snacks", "Marshmallow",          "مرشملو",        D("70")),
         (85, "Snacks", "Lupini Beans (Termis)","ترمس",          D("50")),
+        # شيشة (طلب Mohamed 2026-08-03) — عادي/فواكه/كوكتيل بأسعار متدرجة
+        (86, "Shisha", "Shisha Regular",      "شيشة عادي",     D("150")),
+        (87, "Shisha", "Shisha Fruit",        "شيشة فواكه",    D("250")),
+        (88, "Shisha", "Shisha Cocktail",     "شيشة كوكتيل",   D("300")),
     ]
 
     active_names: set[str] = set()
