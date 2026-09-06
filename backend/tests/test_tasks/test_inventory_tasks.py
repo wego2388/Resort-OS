@@ -6,7 +6,6 @@ tests/test_tasks/test_inventory_tasks.py
 from __future__ import annotations
 
 import uuid
-from datetime import date
 from decimal import Decimal
 from unittest.mock import patch, MagicMock
 
@@ -124,35 +123,6 @@ class TestLowStockLogic:
         low = get_low_stock_products(db, branch.id)
         assert product.id not in [p.id for p in low]
 
-    def test_notify_admin_called_for_low_stock(self, db):
-        """notify_admin يُستدعى لو في منتجات low stock"""
-        import app.core.kernel.whatsapp as wa_module
-        msgs = []
-        original = getattr(wa_module, "notify_admin", lambda *a: None)
-        wa_module.notify_admin = lambda msg: msgs.append(msg)
-        try:
-            branch = _make_branch(db)
-            cat = _make_category(db, branch)
-            product = _make_product(
-                db, branch, cat,
-                current_stock=Decimal("1"),
-                reorder_point=Decimal("20"),
-            )
-
-            from app.modules.inventory.services import get_low_stock_products
-            low = get_low_stock_products(db, branch.id)
-            if low:
-                names = "، ".join(p.name for p in low[:5])
-                more = f" و{len(low) - 5} صنف آخر" if len(low) > 5 else ""
-                wa_module.notify_admin(
-                    f"تنبيه مخزون: {len(low)} صنف وصل لحد إعادة الطلب — {names}{more}."
-                )
-
-            assert len(msgs) >= 1
-            assert product.name in msgs[-1]
-        finally:
-            wa_module.notify_admin = original
-
     def test_multiple_low_stock_products(self, db):
         """عدة منتجات low stock تُكتشف معاً"""
         branch = _make_branch(db)
@@ -177,12 +147,6 @@ class TestLowStockLogic:
 
     def test_task_runs_without_error(self, db):
         """task check_low_stock يشتغل بدون exception"""
-        import app.core.kernel.whatsapp as wa_module
-        original = getattr(wa_module, "notify_admin", lambda *a: None)
-        wa_module.notify_admin = lambda *a, **kw: None
-        try:
-            with patch("app.core.database.SessionLocal", return_value=_db_ctx(db)):
-                from app.tasks.inventory_tasks import check_low_stock
-                check_low_stock()
-        finally:
-            wa_module.notify_admin = original
+        with patch("app.core.database.SessionLocal", return_value=_db_ctx(db)):
+            from app.tasks.inventory_tasks import check_low_stock
+            check_low_stock()

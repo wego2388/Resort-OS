@@ -167,7 +167,6 @@ def scan_for_fraud_signals(self):
     الإدارة برسايل مكررة عن نفس المشكلة المستمرة."""
     try:
         from app.core.database import SessionLocal  # noqa: PLC0415
-        from app.core.kernel.whatsapp import notify_admin  # noqa: PLC0415
 
         with SessionLocal() as db:
             now = datetime.utcnow()
@@ -189,7 +188,6 @@ def scan_for_fraud_signals(self):
                     "Fraud signal: user=%s rule=%s count=%s threshold=%s",
                     signal.user_id, signal.rule, signal.count, signal.threshold,
                 )
-                notify_admin(signal.message)
                 _mark_alerted(signal)
 
     except Exception as exc:

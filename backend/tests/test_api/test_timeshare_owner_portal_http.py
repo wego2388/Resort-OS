@@ -198,16 +198,13 @@ def branch_scoped_admin_headers(branch) -> dict[str, str]:
 
 
 class TestVisitRequestNotifications:
-    """2026-08-04: طلب زيارة من بوابة العميل مالهوش أي تنبيه لحد — لا للموظف
-    وقت التقديم، ولا للعميل وقت الموافقة/الرفض. العميل مالوش جلسة دائمة
-    (بوابة OTP بس)، فبدون واتساب الطريقة الوحيدة إنه يعرف نتيجة طلبه هي
-    إنه يرجع بنفسه يعمل OTP تاني ويشيك — نفس فجوة تذاكر الدعم تحت."""
+    """2026-08-04: طلب زيارة من بوابة العميل مالهوش أي تنبيه للموظف وقت
+    التقديم (كان بيتأكد منه عبر notify_admin — اتشال 2026-09-06 مع باقي
+    التنبيهات الإدارية العامة عبر واتساب). تنبيه العميل وقت الموافقة/الرفض
+    فضل زي ما هو (send_whatsapp_message، guest-facing — العميل مالوش جلسة
+    دائمة، بوابة OTP بس، فده الطريقة الوحيدة إنه يعرف نتيجة طلبه)."""
 
-    def test_create_visit_request_notifies_admin(self, client: TestClient, db, fake_redis, monkeypatch):
-        import app.core.kernel.whatsapp as wa_module
-        captured: dict = {}
-        monkeypatch.setattr(wa_module, "notify_admin", lambda msg: captured.update(msg=msg) or True)
-
+    def test_create_visit_request_succeeds(self, client: TestClient, db, fake_redis):
         branch = make_branch_committed(db)
         contract = make_owner_contract(db, branch)
         resp = client.post(
@@ -216,15 +213,12 @@ class TestVisitRequestNotifications:
             headers={"X-Timeshare-Owner-Token": owner_token(contract.id)},
         )
         assert resp.status_code == 201, resp.text
-        assert contract.customer_name in captured.get("msg", "")
-        assert contract.contract_number in captured["msg"]
 
     def test_approve_visit_request_notifies_customer(
         self, client: TestClient, db, fake_redis, monkeypatch,
     ):
         import app.core.kernel.whatsapp as wa_module
         captured: dict = {}
-        monkeypatch.setattr(wa_module, "notify_admin", lambda msg: True)
         monkeypatch.setattr(
             wa_module, "send_whatsapp_message",
             lambda phone, msg: captured.update(phone=phone, msg=msg) or True,
@@ -254,7 +248,6 @@ class TestVisitRequestNotifications:
     ):
         import app.core.kernel.whatsapp as wa_module
         captured: dict = {}
-        monkeypatch.setattr(wa_module, "notify_admin", lambda msg: True)
         monkeypatch.setattr(
             wa_module, "send_whatsapp_message",
             lambda phone, msg: captured.update(phone=phone, msg=msg) or True,
@@ -280,14 +273,12 @@ class TestVisitRequestNotifications:
 
 
 class TestSupportTicketNotifications:
-    """2026-08-04: نفس الفجوة — تذكرة دعم جديدة مالهاش تنبيه للموظف، ورد
-    الموظف مالوش تنبيه للعميل."""
+    """2026-08-04: تذكرة دعم جديدة مالهاش تنبيه للموظف (كان بيتأكد منه عبر
+    notify_admin — اتشال 2026-09-06 مع باقي التنبيهات الإدارية العامة عبر
+    واتساب). رد الموظف على العميل فضل زي ما هو (send_whatsapp_message،
+    guest-facing)."""
 
-    def test_create_ticket_notifies_admin(self, client: TestClient, db, fake_redis, monkeypatch):
-        import app.core.kernel.whatsapp as wa_module
-        captured: dict = {}
-        monkeypatch.setattr(wa_module, "notify_admin", lambda msg: captured.update(msg=msg) or True)
-
+    def test_create_ticket_succeeds(self, client: TestClient, db, fake_redis):
         branch = make_branch_committed(db)
         contract = make_owner_contract(db, branch)
         resp = client.post(
@@ -296,14 +287,11 @@ class TestSupportTicketNotifications:
             headers={"X-Timeshare-Owner-Token": owner_token(contract.id)},
         )
         assert resp.status_code == 201, resp.text
-        assert "استفسار عن موعد الزيارة" in captured.get("msg", "")
-        assert contract.contract_number in captured["msg"]
 
     def test_staff_reply_notifies_customer(
         self, client: TestClient, db, fake_redis, monkeypatch,
     ):
         import app.core.kernel.whatsapp as wa_module
-        monkeypatch.setattr(wa_module, "notify_admin", lambda msg: True)
         captured: dict = {}
         monkeypatch.setattr(
             wa_module, "send_whatsapp_message",
@@ -330,12 +318,12 @@ class TestSupportTicketNotifications:
         # رد الموظف على تذكرة مفتوحة يحوّلها "قيد المعالجة" تلقائيًا
         assert reply.json()["status"] == "in_progress"
 
-    def test_owner_followup_reply_notifies_admin(
+    def test_owner_followup_reply_succeeds(
         self, client: TestClient, db, fake_redis, monkeypatch, timeshare_admin_headers,
     ):
+        """كان بيتأكد إن متابعة العميل على تذكرته بتبلّغ الموظف واتساب —
+        اتشال 2026-09-06. المتابعة نفسها لازم تفضل تنجح (200) وتتسجّل."""
         import app.core.kernel.whatsapp as wa_module
-        captured: list = []
-        monkeypatch.setattr(wa_module, "notify_admin", lambda msg: captured.append(msg) or True)
         monkeypatch.setattr(wa_module, "send_whatsapp_message", lambda *a, **kw: True)
 
         branch = make_branch_committed(db)
@@ -346,7 +334,6 @@ class TestSupportTicketNotifications:
             headers={"X-Timeshare-Owner-Token": owner_token(contract.id)},
         )
         ticket_id = create_resp.json()["id"]
-        assert len(captured) == 1  # التذكرة الجديدة نفسها
 
         followup = client.post(
             f"/api/v1/timeshare/public/support-tickets/{ticket_id}/reply",
@@ -354,9 +341,6 @@ class TestSupportTicketNotifications:
             headers={"X-Timeshare-Owner-Token": owner_token(contract.id)},
         )
         assert followup.status_code == 200, followup.text
-        assert len(captured) == 2  # المتابعة كمان بلّغت الموظف
-        assert "لسه مستني رد" not in captured[1]  # نص الرسالة نفسه مش بيتسرب للتنبيه، الموضوع بس
-        assert "استفسار عن موعد الزيارة" in captured[1]
 
 
 class TestCsSummaryPendingCounts:
@@ -364,11 +348,8 @@ class TestCsSummaryPendingCounts:
     المعلّقة — الموظف كان لازم يفتح التابين يدويًا كل مرة."""
 
     def test_includes_pending_visit_requests_and_open_tickets(
-        self, client: TestClient, db, fake_redis, monkeypatch,
+        self, client: TestClient, db, fake_redis,
     ):
-        import app.core.kernel.whatsapp as wa_module
-        monkeypatch.setattr(wa_module, "notify_admin", lambda msg: True)
-
         branch = make_branch_committed(db)
         contract = make_owner_contract(db, branch)
         client.post(

@@ -162,12 +162,6 @@ def process_pending_bookings_reminder(self):
                         booking.source,
                     )
 
-                if pending:
-                    from app.core.kernel.whatsapp import notify_admin  # noqa: PLC0415
-                    names = "، ".join(b.guest_name for b in pending[:5])
-                    more = f" و{len(pending) - 5} حجز آخر" if len(pending) > 5 else ""
-                    notify_admin(f"تنبيه ريسبشن: {len(pending)} حجز أونلاين لسه مش متابَع من أكتر من 24 ساعة — {names}{more}.")
-
                 logger.info("Pending online bookings found: %s", len(pending))
 
             except ImportError:

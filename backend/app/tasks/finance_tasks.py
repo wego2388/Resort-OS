@@ -53,10 +53,15 @@ def _check_timeshare_dues(db, branch_id: int, remind_date: date) -> None:
     في *كل الفروع* (مش بس فروعه)، فالعميل كان هياخد رسالة واتساب مكررة مرة
     لكل فرع نشط بدل مرة واحدة. اتصلح بـjoin على العقد وفلترة بـbranch_id،
     وده كمان شال N+1 query (كان بيجيب العقد لكل قسط في loop منفصل).
+
+    قرار Mohamed 2026-09-06: قناة الواتساب اتشالت من كل التنبيهات الإدارية
+    في المشروع، *إلا* الملكية الجزئية تحديدًا (بوابة الملاك بتعتمد عليها
+    كطريقة الدخول الوحيدة عبر OTP، فمفيش قناة بديلة موجودة). التذكير ده
+    عميل حقيقي (مالك ملكية جزئية)، مش تنبيه إداري — فضل يبعت واتساب.
     """
     try:
-        from app.modules.timeshare.models import TimeshareContract, TimeshareInstallment  # noqa: PLC0415
         from app.core.kernel.whatsapp import send_whatsapp_message  # noqa: PLC0415
+        from app.modules.timeshare.models import TimeshareContract, TimeshareInstallment  # noqa: PLC0415
         dues = (
             db.query(TimeshareInstallment, TimeshareContract)
             .join(TimeshareContract, TimeshareInstallment.contract_id == TimeshareContract.id)
@@ -72,7 +77,7 @@ def _check_timeshare_dues(db, branch_id: int, remind_date: date) -> None:
             if contract.customer_phone:
                 send_whatsapp_message(
                     contract.customer_phone,
-                    f"تذكير أخير: قسط بقيمة {inst.amount:,.2f} ج.م مستحق بعد 3 أيام ({inst.due_date:%Y-%m-%d}).",
+                    f"تذكير: قسط ملكية جزئية {inst.amount:,.2f} ج.م مستحق {inst.due_date:%Y-%m-%d}.",
                 )
     except ImportError:
         pass
@@ -86,7 +91,6 @@ def _check_leasing_dues(db, branch_id: int, remind_date: date) -> None:
     """
     try:
         from app.modules.leasing.models import LeaseContract, LeasePayment  # noqa: PLC0415
-        from app.core.kernel.whatsapp import send_whatsapp_message  # noqa: PLC0415
         dues = (
             db.query(LeasePayment, LeaseContract)
             .join(LeaseContract, LeasePayment.contract_id == LeaseContract.id)
@@ -97,12 +101,7 @@ def _check_leasing_dues(db, branch_id: int, remind_date: date) -> None:
             )
             .all()
         )
-        for p, contract in dues:
+        for p, _contract in dues:
             logger.info("Lease payment due reminder: id=%s due=%s", p.id, p.due_date)
-            if contract.tenant_phone:
-                send_whatsapp_message(
-                    contract.tenant_phone,
-                    f"تذكير: دفعة إيجار بقيمة {p.amount:,.2f} ج.م مستحقة يوم {p.due_date:%Y-%m-%d}.",
-                )
     except ImportError:
         pass

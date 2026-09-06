@@ -151,60 +151,24 @@ class TestMarkAttendanceAbsentLogic:
 
 class TestPayrollReminder:
 
-    def test_notify_admin_called_per_branch(self, db):
-        """notify_admin يُستدعى لكل فرع نشط"""
-        import app.core.kernel.whatsapp as wa_module
-        msgs = []
-        original = getattr(wa_module, "notify_admin", lambda *a: None)
-        wa_module.notify_admin = lambda msg: msgs.append(msg)
-        try:
-            branch = _make_branch(db)
-            from app.core.config import settings
-            from app.resort_os.timezone_utils import local_today
-            from app.modules.core.models import Branch
-
-            today = local_today(settings.TIMEZONE)
-            branches = db.query(Branch).filter(Branch.is_active.is_(True)).all()
-            for br in branches:
-                wa_module.notify_admin(
-                    f"تذكير: موعد إعداد كشف رواتب شهر {today.month}/{today.year} — فرع #{br.id}."
-                )
-            assert len(msgs) >= 1
-            assert str(branch.id) in msgs[-1]
-        finally:
-            wa_module.notify_admin = original
-
     def test_task_runs_without_error(self, db):
         """task payroll_reminder يشتغل بدون exception"""
-        import app.core.kernel.whatsapp as wa_module
-        original = getattr(wa_module, "notify_admin", lambda *a: None)
-        wa_module.notify_admin = lambda *a, **kw: None
+        _make_branch(db)
+        with patch("app.core.database.SessionLocal", return_value=_db_ctx(db)):
+            from app.tasks.hr_tasks import payroll_reminder
+            payroll_reminder()
+
+    def test_no_active_branches_runs_without_error(self, db):
+        """بدون فروع نشطة، الـtask يشتغل برضو من غير exception"""
+        from app.modules.core.models import Branch
         try:
+            db.query(Branch).update({"is_active": False})
+            db.commit()
+
             with patch("app.core.database.SessionLocal", return_value=_db_ctx(db)):
                 from app.tasks.hr_tasks import payroll_reminder
                 payroll_reminder()
         finally:
-            wa_module.notify_admin = original
-
-    def test_no_branches_no_notification(self, db):
-        """بدون فروع نشطة لا يُرسل تنبيه"""
-        import app.core.kernel.whatsapp as wa_module
-        msgs = []
-        original = getattr(wa_module, "notify_admin", lambda *a: None)
-        wa_module.notify_admin = lambda msg: msgs.append(msg)
-        try:
-            from app.modules.core.models import Branch
-            # تعطيل كل الفروع
-            db.query(Branch).update({"is_active": False})
-            db.commit()
-
-            branches = db.query(Branch).filter(Branch.is_active.is_(True)).all()
-            assert len(branches) == 0
-            # لا تنبيهات لأن مفيش فروع
-            assert msgs == []
-        finally:
-            wa_module.notify_admin = original
-            # أعد تفعيل الفروع
             db.query(Branch).update({"is_active": True})
             db.commit()
 

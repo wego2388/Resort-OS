@@ -211,47 +211,14 @@ class TestPendingBookingsReminder:
         )
         assert len(pending) == 0
 
-    def test_notify_admin_when_pending_exist(self, db):
-        """notify_admin يُستدعى لو في حجوزات pending قديمة"""
-        import app.core.kernel.whatsapp as wa_module
-        msgs = []
-        original = getattr(wa_module, "notify_admin", lambda *a: None)
-        wa_module.notify_admin = lambda msg: msgs.append(msg)
-        try:
-            branch = _make_branch(db)
-            old_time = datetime.utcnow() - timedelta(hours=26)
-            b1 = _make_online_booking(db, branch, status="pending", created_at=old_time)
-
-            from app.modules.hub.models import HubOnlineBooking
-            cutoff = datetime.utcnow() - timedelta(hours=24)
-            pending = db.query(HubOnlineBooking).filter(
-                HubOnlineBooking.id == b1.id,
-                HubOnlineBooking.status == "pending",
-                HubOnlineBooking.created_at <= cutoff,
-            ).all()
-
-            if pending:
-                names = "، ".join(b.guest_name for b in pending[:5])
-                wa_module.notify_admin(
-                    f"تنبيه ريسبشن: {len(pending)} حجز أونلاين لسه مش متابَع — {names}."
-                )
-
-            assert len(msgs) >= 1
-            assert "حجز أونلاين" in msgs[-1]
-        finally:
-            wa_module.notify_admin = original
-
     def test_task_runs_without_error(self, db):
         """task يشتغل بدون exception"""
-        import app.core.kernel.whatsapp as wa_module
-        original = getattr(wa_module, "notify_admin", lambda *a: None)
-        wa_module.notify_admin = lambda *a, **kw: None
-        try:
-            with patch("app.core.database.SessionLocal", return_value=_db_ctx(db)):
-                from app.tasks.hub_tasks import process_pending_bookings_reminder
-                process_pending_bookings_reminder()
-        finally:
-            wa_module.notify_admin = original
+        branch = _make_branch(db)
+        old_time = datetime.utcnow() - timedelta(hours=26)
+        _make_online_booking(db, branch, status="pending", created_at=old_time)
+        with patch("app.core.database.SessionLocal", return_value=_db_ctx(db)):
+            from app.tasks.hub_tasks import process_pending_bookings_reminder
+            process_pending_bookings_reminder()
 
 
 # ─── refresh_sitemap ──────────────────────────────────────────────────────────

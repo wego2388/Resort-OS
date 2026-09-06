@@ -747,24 +747,16 @@ def build_auth_router(
         payload: _PasswordResetRequest,
         auth: AuthService = Depends(get_auth_service),
     ):
-        """Generate a reset token and (optionally) send it via email."""
+        """Generate a reset token.
+
+        قرار Mohamed 2026-09-06: قناة الإيميل اتشالت من المشروع بالكامل
+        (كانت أصلاً معطّلة فعليًا — مفيش SendGrid API key مُعدّة أبدًا).
+        البديل الحقيقي المستخدم فعليًا هو إعادة تعيين بيانات الدخول عبر
+        SuperAdmin. الـendpoint فضل موجود (rate-limited، enumeration-safe)
+        عشان توكن الاسترجاع يتولّد لو حد محتاجه من مسار تاني مستقبلي، لكن
+        مفيش أي محاولة إرسال إيميل حقيقية دلوقتي."""
         email = payload.email.strip()
-        token = auth.create_password_reset_token(email)
-        if token:
-            try:
-                from app.core.kernel.email_service import send_password_reset_email
-                sent = await send_password_reset_email(email, token, app_name=getattr(settings, "APP_NAME", "Resort OS"))
-                # SEC-13 (2026-08-31): send_password_reset_email بترجع False
-                # (مش استثناء) لو SendGrid غير مُعدّة — الـexcept تحت مايمسكهاش
-                # خالص، يعني كل طلب استرجاع باسورد كان بيفشل بصمت تمامًا من
-                # غير أي أثر في اللوج. الفحص هنا يسدّ الفجوة دي.
-                if not sent:
-                    logger.warning("Password-reset email was not sent (SendGrid not configured or send failed)")
-            except Exception:
-                # Keep the public response enumeration-safe, but never hide
-                # an operational delivery failure from internal logs. Do not
-                # include the address or bearer reset token in the message.
-                logger.exception("Password-reset email delivery failed")
+        auth.create_password_reset_token(email)
         return {"message": "If that email exists, a reset link has been sent."}
 
     @router.post("/password-reset/confirm")

@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, timedelta
-from decimal import Decimal
 
 import pytest
 
@@ -39,24 +38,6 @@ def _make_asset(db, branch):
     db.add(a)
     db.commit()
     return a
-
-
-def _make_employee(db, branch, phone=None):
-    from app.modules.hr import crud as hr_crud
-    from app.modules.hr.schemas import EmployeeCreate
-    data = EmployeeCreate(
-        branch_id=branch.id,
-        employee_code=f"E{uuid.uuid4().hex[:6].upper()}",
-        full_name="Maint Employee",
-        position="technician",
-        department="maintenance",
-        basic_salary=Decimal("4000"),
-        hire_date=date(2024, 1, 1),
-        phone=phone,
-    )
-    emp = hr_crud.create_employee(db, data)
-    db.commit()
-    return emp
 
 
 def _make_work_order(db, branch, asset=None, scheduled_date=None, status="open", assigned_to=None):
@@ -215,161 +196,12 @@ class TestNotifyOverdueWorkOrders:
         )
         assert wo.id not in [w.id for w in overdue]
 
-    def test_whatsapp_sent_to_assigned_employee(self, db):
-        """واتساب يُرسل للموظف المسؤول"""
-        import app.core.kernel.whatsapp as wa_module
-        sent = []
-        original_send = wa_module.send_whatsapp_message
-        original_notify = getattr(wa_module, "notify_admin", lambda *a: None)
-        wa_module.send_whatsapp_message = lambda phone, msg: sent.append(phone)
-        wa_module.notify_admin = lambda msg: None
-        try:
-            branch = _make_branch(db)
-            emp = _make_employee(db, branch, phone="01011110000")
-            yesterday = date.today() - timedelta(days=1)
-            wo = _make_work_order(db, branch, scheduled_date=yesterday, status="open", assigned_to=emp.id)
-
-            from app.modules.maintenance.models import WorkOrder
-            from app.modules.hr.models import Employee
-            from app.core.config import settings
-            from app.resort_os.timezone_utils import local_today
-            today = local_today(settings.TIMEZONE)
-
-            overdue = (
-                db.query(WorkOrder)
-                .filter(
-                    WorkOrder.scheduled_date < today,
-                    WorkOrder.status.in_(["open", "in_progress"]),
-                )
-                .all()
-            )
-            for w in overdue:
-                if w.assigned_to:
-                    emp_rec = db.query(Employee).filter(Employee.id == w.assigned_to).first()
-                    if emp_rec and emp_rec.phone:
-                        wa_module.send_whatsapp_message(emp_rec.phone, f"أمر صيانة متأخر: {w.title}")
-
-            assert "01011110000" in sent
-        finally:
-            wa_module.send_whatsapp_message = original_send
-            wa_module.notify_admin = original_notify
-
-    def test_notify_admin_when_no_employee(self, db):
-        """notify_admin يُستدعى لو الأمر بدون موظف مسؤول"""
-        import app.core.kernel.whatsapp as wa_module
-        admin_notified = []
-        original_send = wa_module.send_whatsapp_message
-        original_notify = getattr(wa_module, "notify_admin", lambda *a: None)
-        wa_module.send_whatsapp_message = lambda *a, **kw: None
-        wa_module.notify_admin = lambda msg: admin_notified.append(msg)
-        try:
-            branch = _make_branch(db)
-            yesterday = date.today() - timedelta(days=1)
-            wo = _make_work_order(db, branch, scheduled_date=yesterday, status="open", assigned_to=None)
-
-            from app.modules.maintenance.models import WorkOrder
-            from app.modules.hr.models import Employee
-            from app.core.config import settings
-            from app.resort_os.timezone_utils import local_today
-            today = local_today(settings.TIMEZONE)
-
-            overdue = (
-                db.query(WorkOrder)
-                .filter(
-                    WorkOrder.scheduled_date < today,
-                    WorkOrder.status.in_(["open", "in_progress"]),
-                )
-                .all()
-            )
-            for w in overdue:
-                sent_flag = False
-                if w.assigned_to:
-                    emp_rec = db.query(Employee).filter(Employee.id == w.assigned_to).first()
-                    if emp_rec and emp_rec.phone:
-                        wa_module.send_whatsapp_message(emp_rec.phone, "test")
-                        sent_flag = True
-                if not sent_flag:
-                    wa_module.notify_admin(f"أمر صيانة متأخر بلا موظف مسؤول: {w.title} (WO #{w.id}).")
-
-            assert len(admin_notified) >= 1
-            assert any(str(wo.id) in msg for msg in admin_notified)
-        finally:
-            wa_module.send_whatsapp_message = original_send
-            wa_module.notify_admin = original_notify
-
     def test_task_runs_without_error(self, db):
         """task notify_overdue_work_orders يشتغل بدون exception"""
-        import app.core.kernel.whatsapp as wa_module
-        original_send = wa_module.send_whatsapp_message
-        original_notify = getattr(wa_module, "notify_admin", lambda *a: None)
-        wa_module.send_whatsapp_message = lambda *a, **kw: None
-        wa_module.notify_admin = lambda *a, **kw: None
-        try:
-            from unittest.mock import patch, MagicMock
-            ctx = MagicMock()
-            ctx.__enter__ = MagicMock(return_value=db)
-            ctx.__exit__ = MagicMock(return_value=False)
-            with patch("app.core.database.SessionLocal", return_value=ctx):
-                from app.tasks.maintenance_tasks import notify_overdue_work_orders
-                notify_overdue_work_orders()
-        finally:
-            wa_module.send_whatsapp_message = original_send
-            wa_module.notify_admin = original_notify
-
-
-# ─── notify_critical_work_order (wagdy.md #7) ────────────────────────────────
-
-class TestNotifyCriticalWorkOrder:
-    """اختبار notify_critical_work_order — trigger فوري (مش مجدول) وقت
-    إنشاء أمر صيانة priority=critical. راجع test_maintenance_http.py لاختبار
-    إن الـ router فعلاً بيستدعي .delay() — هنا بنختبر منطق الـ task نفسه
-    (البحث عن الأمر + اختيار الموظف/notify_admin) بنفس نمط SessionLocal
-    patch اللي notify_overdue_work_orders فوق بيستخدمه."""
-
-    def test_sends_to_assigned_employee(self, db):
-        from unittest.mock import patch, MagicMock
-        branch = _make_branch(db)
-        emp = _make_employee(db, branch, phone="01098765432")
-        wo = _make_work_order(db, branch, status="open", assigned_to=emp.id)
-
-        ctx = MagicMock()
-        ctx.__enter__ = MagicMock(return_value=db)
-        ctx.__exit__ = MagicMock(return_value=False)
-        with patch("app.core.database.SessionLocal", return_value=ctx), \
-             patch("app.core.kernel.whatsapp.send_whatsapp_message", return_value=True) as mock_send, \
-             patch("app.core.kernel.whatsapp.notify_admin") as mock_admin:
-            from app.tasks.maintenance_tasks import notify_critical_work_order
-            notify_critical_work_order(wo.id)
-
-        mock_send.assert_called_once()
-        phone_arg, message_arg = mock_send.call_args[0]
-        assert phone_arg == "01098765432"
-        assert wo.title in message_arg
-        mock_admin.assert_not_called()
-
-    def test_falls_back_to_admin_when_unassigned(self, db):
-        from unittest.mock import patch, MagicMock
-        branch = _make_branch(db)
-        wo = _make_work_order(db, branch, status="open", assigned_to=None)
-
-        ctx = MagicMock()
-        ctx.__enter__ = MagicMock(return_value=db)
-        ctx.__exit__ = MagicMock(return_value=False)
-        with patch("app.core.database.SessionLocal", return_value=ctx), \
-             patch("app.core.kernel.whatsapp.send_whatsapp_message") as mock_send, \
-             patch("app.core.kernel.whatsapp.notify_admin") as mock_admin:
-            from app.tasks.maintenance_tasks import notify_critical_work_order
-            notify_critical_work_order(wo.id)
-
-        mock_send.assert_not_called()
-        mock_admin.assert_called_once()
-        assert str(wo.id) in mock_admin.call_args[0][0]
-
-    def test_missing_work_order_does_not_raise(self, db):
         from unittest.mock import patch, MagicMock
         ctx = MagicMock()
         ctx.__enter__ = MagicMock(return_value=db)
         ctx.__exit__ = MagicMock(return_value=False)
         with patch("app.core.database.SessionLocal", return_value=ctx):
-            from app.tasks.maintenance_tasks import notify_critical_work_order
-            notify_critical_work_order(999999999)  # should not raise
+            from app.tasks.maintenance_tasks import notify_overdue_work_orders
+            notify_overdue_work_orders()

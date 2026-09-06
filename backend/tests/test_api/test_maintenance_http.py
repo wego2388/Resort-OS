@@ -150,46 +150,19 @@ class TestWorkOrdersEndpoints:
         resp = client.get("/api/v1/maintenance/work-orders/999999999", headers=waiter_headers)
         assert resp.status_code == 404
 
-    def test_critical_work_order_creation_queues_notification_task(
-        self, client: TestClient, db, waiter_headers,
-    ):
-        """wagdy.md #7: priority=critical لازم يطلق notify_critical_work_order
-        عبر .delay() من غير ما يعطّل رد الـ API. الـ task نفسه (بحثه عن الـ WO
-        عبر SessionLocal منفصلة + استدعاء send_whatsapp_message الفعلي) مُختبَر
-        بشكل مباشر ومعزول في test_tasks/test_maintenance_tasks.py — هنا بس
-        بنتأكد إن إنشاء أمر عاجل بينجح ومبيتأخرش (الإرسال async مش sync)."""
-        from unittest.mock import patch
+    def test_critical_work_order_creation_succeeds(self, client: TestClient, db, waiter_headers):
         branch = make_branch_committed(db)
         emp = make_employee_committed(db, branch, phone="01098765432")
 
-        with patch("app.tasks.maintenance_tasks.notify_critical_work_order.delay") as mock_delay:
-            resp = client.post(
-                "/api/v1/maintenance/work-orders",
-                json={
-                    "branch_id": branch.id, "title": "تسريب غاز مطبخ",
-                    "priority": "critical", "assigned_to": emp.id,
-                },
-                headers=waiter_headers,
-            )
+        resp = client.post(
+            "/api/v1/maintenance/work-orders",
+            json={
+                "branch_id": branch.id, "title": "تسريب غاز مطبخ",
+                "priority": "critical", "assigned_to": emp.id,
+            },
+            headers=waiter_headers,
+        )
         assert resp.status_code == 201, resp.text
-        mock_delay.assert_called_once_with(resp.json()["id"])
-
-    def test_non_critical_work_order_does_not_queue_notification(self, client: TestClient, db, waiter_headers):
-        from unittest.mock import patch
-        branch = make_branch_committed(db)
-        emp = make_employee_committed(db, branch, phone="01098765432")
-
-        with patch("app.tasks.maintenance_tasks.notify_critical_work_order.delay") as mock_delay:
-            resp = client.post(
-                "/api/v1/maintenance/work-orders",
-                json={
-                    "branch_id": branch.id, "title": "لمبة محروقة",
-                    "priority": "low", "assigned_to": emp.id,
-                },
-                headers=waiter_headers,
-            )
-        assert resp.status_code == 201, resp.text
-        mock_delay.assert_not_called()
 
     def test_update_and_add_part_reject_customer_role(self, client: TestClient, db, waiter_headers):
         """Regression: PATCH .../work-orders/{id} and POST .../parts used to

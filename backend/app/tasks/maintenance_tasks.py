@@ -68,8 +68,6 @@ def notify_overdue_work_orders(self):
         with SessionLocal() as db:
             try:
                 from app.modules.maintenance.models import WorkOrder  # noqa: PLC0415
-                from app.modules.hr.models import Employee  # noqa: PLC0415
-                from app.core.kernel.whatsapp import notify_admin, send_whatsapp_message  # noqa: PLC0415
 
                 overdue = (
                     db.query(WorkOrder)
@@ -85,17 +83,6 @@ def notify_overdue_work_orders(self):
                         "Overdue WO: id=%s title=%s branch=%s priority=%s scheduled=%s",
                         wo.id, wo.title, wo.branch_id, wo.priority, wo.scheduled_date,
                     )
-                    sent = False
-                    if wo.assigned_to:
-                        emp = db.query(Employee).filter(Employee.id == wo.assigned_to).first()
-                        if emp and emp.phone:
-                            send_whatsapp_message(
-                                emp.phone,
-                                f"أمر صيانة متأخر: {wo.title} — كان مجدول {wo.scheduled_date:%Y-%m-%d}.",
-                            )
-                            sent = True
-                    if not sent:
-                        notify_admin(f"أمر صيانة متأخر بلا موظف مسؤول: {wo.title} (WO #{wo.id}).")
 
                 logger.info("Overdue work orders found: %s", len(overdue))
 
@@ -107,41 +94,3 @@ def notify_overdue_work_orders(self):
         notify_task_failure("app.tasks.maintenance_tasks.notify_overdue_work_orders", exc)
 
 
-@celery_app.task(
-    name="app.tasks.maintenance_tasks.notify_critical_work_order",
-    bind=True,
-    max_retries=3,
-)
-def notify_critical_work_order(self, work_order_id: int):
-    """wagdy.md #7: أمر صيانة priority=critical كان بينسجّل من غير أي إشعار
-    واتساب فوري — البنية التحتية (send_whatsapp_message/notify_admin) كانت
-    موجودة ومستخدمة في notify_overdue_work_orders فوق (تنبيه يومي مجدول)،
-    بس مفيش أي trigger فوري وقت إنشاء الأمر نفسه. مُستدعاة عبر .delay() من
-    maintenance.services.create_work_order — مش sync في مسار الـ HTTP request
-    نفسه، عشان إرسال واتساب البطيء ميأخّرش رد الـ API للموظف اللي بيسجّل
-    الأمر."""
-    try:
-        from app.core.database import SessionLocal          # noqa: PLC0415
-        from app.modules.maintenance.models import WorkOrder  # noqa: PLC0415
-        from app.modules.hr.models import Employee            # noqa: PLC0415
-        from app.core.kernel.whatsapp import notify_admin, send_whatsapp_message  # noqa: PLC0415
-
-        with SessionLocal() as db:
-            wo = db.query(WorkOrder).filter(WorkOrder.id == work_order_id).first()
-            if not wo:
-                logger.warning("notify_critical_work_order: WO #%s not found", work_order_id)
-                return
-
-            message = f"🚨 أمر صيانة عاجل: {wo.title} (WO #{wo.id})"
-            sent = False
-            if wo.assigned_to:
-                emp = db.query(Employee).filter(Employee.id == wo.assigned_to).first()
-                if emp and emp.phone:
-                    send_whatsapp_message(emp.phone, message)
-                    sent = True
-            if not sent:
-                notify_admin(f"{message} — بلا موظف مسؤول معيّن.")
-
-    except Exception as exc:
-        logger.error("notify_critical_work_order failed for WO #%s: %s", work_order_id, exc)
-        raise self.retry(exc=exc, countdown=60)

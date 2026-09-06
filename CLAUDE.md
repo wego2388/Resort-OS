@@ -496,9 +496,16 @@ amount: float = ...  # ❌
 
 **قرار معماري متعمد (2026-07-03)**: resort-os **مستقل 100%** — مفيش أي اعتماد على `wego_core` أو أي
 باكدج خارجي مشترك. كل البنية التحتية (auth, security, database session, cache, error handling,
-health checks, logging, Sentry, Celery factory, WhatsApp/email notifications, PDF/Excel reports)
+health checks, logging, Sentry, Celery factory, WhatsApp notifications, PDF/Excel reports)
 منقولة بالكامل وبقت كود مملوك في `backend/app/core/kernel/` — مش نسخة "vendored" بتتزامن مع مصدر
 خارجي، كود resort-os نفسه، تقدر تعدّله زي أي جزء تاني من المشروع من غير استئذان.
+
+**قرار Mohamed 2026-09-06**: قناة الإيميل اتشالت من المشروع بالكامل (كانت أصلاً معطّلة فعليًا —
+مفيش SendGrid API key مُعدّة أبدًا؛ البديل الحقيقي هو إعادة تعيين بيانات الدخول عبر SuperAdmin) —
+`email_service.py` اتحذف. قناة الواتساب (`whatsapp.py`) بقى نطاقها مقصور على الملكية الجزئية بس
+(بوابة الملاك: OTP دخول، موافقة/رفض الزيارة، رد على تذكرة دعم — مفيش قناة بديلة موجودة لها)؛ كل
+استخدامات الواتساب الإدارية العامة (فحص احتيال، تنبيهات مخزون/رواتب/حجوزات/أنشطة CRM، فشل مهام
+Celery، تأخر سداد B2B/إيجار) اتشالت، الـlogging العادي (logger.warning/info) هو الأثر الباقي.
 
 ```
 app/core/kernel/
@@ -512,8 +519,7 @@ app/core/kernel/
 ├── logging_setup.py    ← setup_logging(settings), get_logger()
 ├── middleware.py        ← SecurityHeadersMiddleware, RequestTimingMiddleware
 ├── sentry.py            ← setup_sentry(), capture_exception(), set_user_context()
-├── whatsapp.py          ← send_whatsapp_message(), send_whatsapp(), notify_admin()
-├── email_service.py     ← send_email(), send_password_reset_email() (SendGrid, اختياري)
+├── whatsapp.py          ← send_whatsapp_message() — نطاق الملكية الجزئية بس (راجع فوق)
 ├── reports.py           ← ReportBuilder — PDF (جدول/إيصال/إيصال حراري) + Excel
 ├── worker.py            ← make_celery() + CoreTask (auto-retry, structured logging)
 ├── models/

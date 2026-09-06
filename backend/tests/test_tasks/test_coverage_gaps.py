@@ -5,7 +5,7 @@ tests/test_tasks/test_coverage_gaps.py
 - crm_tasks: logger.info بعد الـ loop (lines 59-64, 107-111, 163-167)
 - hr_tasks: logger.info (lines 52-53)
 - hub_tasks: expired offers loop (lines 86-90)
-- inventory_tasks: notify_admin path (lines 40-44)
+- inventory_tasks: logger.warning path لما فيه منتج low stock
 - timeshare_tasks: send_visit_reminders with matching contract (lines 110-129)
 """
 from __future__ import annotations
@@ -88,54 +88,39 @@ class TestLeasingMarkOverdueLoggerPath:
             assert payment.penalty >= Decimal("0")
 
     def test_send_due_reminders_with_due_payment(self, db):
-        """دفعة مستحقة بعد 7 أيام تمر بـ logger.info"""
-        import app.core.kernel.whatsapp as wa_module
-        original = wa_module.send_whatsapp_message
-        wa_module.send_whatsapp_message = lambda *a, **kw: None
-        try:
-            branch = _make_branch(db)
-            from app.modules.leasing import crud as lease_crud
-            from app.modules.leasing.schemas import LeaseContractCreate
-            from app.modules.leasing.models import LeasePayment, LeaseContract
+        """دفعة مستحقة بعد 7 أيام تمر بـ logger.info (كانت بتبعت واتساب —
+        اتشالت بعد إلغاء قناة الواتساب للتنبيهات الإدارية، logger.info هو
+        الأثر الباقي القابل للتأكد منه)."""
+        branch = _make_branch(db)
+        from app.modules.leasing import crud as lease_crud
+        from app.modules.leasing.schemas import LeaseContractCreate
+        from app.modules.leasing.models import LeasePayment
 
-            mgr = _make_mgr(db)
-            data = LeaseContractCreate(
-                branch_id=branch.id,
-                tenant_name="Reminder Test",
-                tenant_phone="01033334444",
-                unit_description="Shop-Reminder",
-                start_date=date.today(),
-                end_date=date.today() + timedelta(days=365),
-                base_rent=Decimal("3500"),
-            )
-            contract = lease_crud.create_contract(db, data, signed_by=mgr.id)
+        mgr = _make_mgr(db)
+        data = LeaseContractCreate(
+            branch_id=branch.id,
+            tenant_name="Reminder Test",
+            tenant_phone="01033334444",
+            unit_description="Shop-Reminder",
+            start_date=date.today(),
+            end_date=date.today() + timedelta(days=365),
+            base_rent=Decimal("3500"),
+        )
+        contract = lease_crud.create_contract(db, data, signed_by=mgr.id)
+        db.commit()
+
+        remind_date = date.today() + timedelta(days=7)
+        payment = db.query(LeasePayment).filter(
+            LeasePayment.contract_id == contract.id
+        ).first()
+        if payment:
+            payment.due_date = remind_date
+            payment.status = "pending"
             db.commit()
 
-            remind_date = date.today() + timedelta(days=7)
-            payment = db.query(LeasePayment).filter(
-                LeasePayment.contract_id == contract.id
-            ).first()
-            if payment:
-                payment.due_date = remind_date
-                payment.status = "pending"
-                db.commit()
-
-            # نُنفّذ المنطق مباشرة
-            dues = db.query(LeasePayment).filter(
-                LeasePayment.due_date == remind_date,
-                LeasePayment.status == "pending",
-            ).all()
-            for p in dues:
-                c = db.query(LeaseContract).filter(LeaseContract.id == p.contract_id).first()
-                if c and c.tenant_phone:
-                    wa_module.send_whatsapp_message(
-                        c.tenant_phone,
-                        f"تذكير: دفعة إيجار {p.amount:,.2f} ج.م مستحقة {p.due_date:%Y-%m-%d}."
-                    )
-
-            assert dues == [] or True  # المهم الكود اتنفّذ
-        finally:
-            wa_module.send_whatsapp_message = original
+        with patch("app.core.database.SessionLocal", return_value=_db_ctx(db)):
+            from app.tasks.leasing_tasks import send_due_reminders
+            send_due_reminders()
 
 
 # ─── crm_tasks — logger.info + notify_admin path ─────────────────────────────
@@ -144,55 +129,37 @@ class TestCrmTasksLoggerPaths:
 
     def test_activity_reminders_with_due_activity(self, db):
         """نشاط مستحق اليوم → يمر بـ logger.info"""
-        import app.core.kernel.whatsapp as wa_module
-        original = wa_module.send_whatsapp_message
-        wa_module.send_whatsapp_message = lambda *a, **kw: None
-        try:
-            branch = _make_branch(db)
-            customer = _make_customer(db, branch)
-            _make_activity(db, branch, customer, due_date=date.today())
+        branch = _make_branch(db)
+        customer = _make_customer(db, branch)
+        _make_activity(db, branch, customer, due_date=date.today())
 
-            with patch("app.core.database.SessionLocal", return_value=_db_ctx(db)):
-                from app.tasks.crm_tasks import activity_reminders
-                activity_reminders()
-        finally:
-            wa_module.send_whatsapp_message = original
+        with patch("app.core.database.SessionLocal", return_value=_db_ctx(db)):
+            from app.tasks.crm_tasks import activity_reminders
+            activity_reminders()
 
     def test_overdue_alert_with_overdue_activity(self, db):
-        """نشاط متأخر → notify_admin يتنفّذ"""
-        import app.core.kernel.whatsapp as wa_module
-        original_notify = getattr(wa_module, "notify_admin", lambda *a: None)
-        wa_module.notify_admin = lambda *a, **kw: None
-        try:
-            branch = _make_branch(db)
-            customer = _make_customer(db, branch)
-            _make_activity(db, branch, customer, due_date=date.today() - timedelta(days=2))
+        """نشاط متأخر → logger.warning يتنفّذ"""
+        branch = _make_branch(db)
+        customer = _make_customer(db, branch)
+        _make_activity(db, branch, customer, due_date=date.today() - timedelta(days=2))
 
-            with patch("app.core.database.SessionLocal", return_value=_db_ctx(db)):
-                from app.tasks.crm_tasks import overdue_activities_alert
-                overdue_activities_alert()
-        finally:
-            wa_module.notify_admin = original_notify
+        with patch("app.core.database.SessionLocal", return_value=_db_ctx(db)):
+            from app.tasks.crm_tasks import overdue_activities_alert
+            overdue_activities_alert()
 
     def test_birthday_greetings_with_today_birthday(self, db):
         """عميل ميلاده اليوم → logger.info يتنفّذ"""
-        import app.core.kernel.whatsapp as wa_module
-        original = wa_module.send_whatsapp_message
-        wa_module.send_whatsapp_message = lambda *a, **kw: None
-        try:
-            branch = _make_branch(db)
-            today = date.today()
-            _make_customer(
-                db, branch,
-                phone="01055556666",
-                birthday=date(1990, today.month, today.day),
-            )
+        branch = _make_branch(db)
+        today = date.today()
+        _make_customer(
+            db, branch,
+            phone="01055556666",
+            birthday=date(1990, today.month, today.day),
+        )
 
-            with patch("app.core.database.SessionLocal", return_value=_db_ctx(db)):
-                from app.tasks.crm_tasks import birthday_greetings
-                birthday_greetings()
-        finally:
-            wa_module.send_whatsapp_message = original
+        with patch("app.core.database.SessionLocal", return_value=_db_ctx(db)):
+            from app.tasks.crm_tasks import birthday_greetings
+            birthday_greetings()
 
 
 # ─── hr_tasks — logger.info path (lines 52-53) ───────────────────────────────
@@ -239,32 +206,26 @@ class TestHubTasksLoggerPath:
         assert o.is_active is False
 
     def test_pending_bookings_reminder_with_old_booking(self, db):
-        """حجز pending قديم → notify_admin يتنفّذ"""
-        import app.core.kernel.whatsapp as wa_module
+        """حجز pending قديم → logger.info يتنفّذ"""
         from datetime import datetime
-        original = getattr(wa_module, "notify_admin", lambda *a: None)
-        wa_module.notify_admin = lambda *a, **kw: None
-        try:
-            branch = _make_branch(db)
-            from app.modules.hub.models import HubOnlineBooking
-            bk = HubOnlineBooking(
-                branch_id=branch.id,
-                guest_name="Old Guest",
-                guest_phone="01000000001",
-                requested_date=date.today() + timedelta(days=5),
-                status="pending",
-                source="website",
-            )
-            db.add(bk)
-            db.flush()
-            bk.created_at = datetime.utcnow() - timedelta(hours=26)
-            db.commit()
+        branch = _make_branch(db)
+        from app.modules.hub.models import HubOnlineBooking
+        bk = HubOnlineBooking(
+            branch_id=branch.id,
+            guest_name="Old Guest",
+            guest_phone="01000000001",
+            requested_date=date.today() + timedelta(days=5),
+            status="pending",
+            source="website",
+        )
+        db.add(bk)
+        db.flush()
+        bk.created_at = datetime.utcnow() - timedelta(hours=26)
+        db.commit()
 
-            with patch("app.core.database.SessionLocal", return_value=_db_ctx(db)):
-                from app.tasks.hub_tasks import process_pending_bookings_reminder
-                process_pending_bookings_reminder()
-        finally:
-            wa_module.notify_admin = original
+        with patch("app.core.database.SessionLocal", return_value=_db_ctx(db)):
+            from app.tasks.hub_tasks import process_pending_bookings_reminder
+            process_pending_bookings_reminder()
 
 
 # ─── inventory — notify_admin path (lines 40-44) ─────────────────────────────
@@ -272,34 +233,28 @@ class TestHubTasksLoggerPath:
 class TestInventoryTasksLoggerPath:
 
     def test_check_low_stock_with_low_product(self, db):
-        """منتج low stock → notify_admin يتنفّذ"""
-        import app.core.kernel.whatsapp as wa_module
-        original = getattr(wa_module, "notify_admin", lambda *a: None)
-        wa_module.notify_admin = lambda *a, **kw: None
-        try:
-            branch = _make_branch(db)
-            from app.modules.inventory.models import Category, Product
-            cat = Category(branch_id=branch.id, name="Test Cat")
-            db.add(cat)
-            db.flush()
-            p = Product(
-                branch_id=branch.id,
-                category_id=cat.id,
-                name="Low Product",
-                sku=f"LP-{uuid.uuid4().hex[:6].upper()}",
-                unit="pcs",
-                current_stock=Decimal("1"),
-                reorder_point=Decimal("20"),
-                cost_price=Decimal("5"),
-            )
-            db.add(p)
-            db.commit()
+        """منتج low stock → logger.warning يتنفّذ"""
+        branch = _make_branch(db)
+        from app.modules.inventory.models import Category, Product
+        cat = Category(branch_id=branch.id, name="Test Cat")
+        db.add(cat)
+        db.flush()
+        p = Product(
+            branch_id=branch.id,
+            category_id=cat.id,
+            name="Low Product",
+            sku=f"LP-{uuid.uuid4().hex[:6].upper()}",
+            unit="pcs",
+            current_stock=Decimal("1"),
+            reorder_point=Decimal("20"),
+            cost_price=Decimal("5"),
+        )
+        db.add(p)
+        db.commit()
 
-            with patch("app.core.database.SessionLocal", return_value=_db_ctx(db)):
-                from app.tasks.inventory_tasks import check_low_stock
-                check_low_stock()
-        finally:
-            wa_module.notify_admin = original
+        with patch("app.core.database.SessionLocal", return_value=_db_ctx(db)):
+            from app.tasks.inventory_tasks import check_low_stock
+            check_low_stock()
 
 
 # ─── timeshare — send_visit_reminders with contract having week_number ────────

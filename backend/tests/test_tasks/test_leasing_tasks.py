@@ -333,77 +333,29 @@ class TestLeasingSendDueReminders:
         )
         assert payment.id not in [p.id for p in due_soon]
 
-    def test_whatsapp_sent_to_tenant_with_phone(self, db):
-        """يُرسل واتساب للمستأجر اللي عنده رقم"""
-        import app.core.kernel.whatsapp as wa_module
-        sent = []
-        wa_module.send_whatsapp_message = lambda phone, msg: sent.append(phone)
-
+    def test_due_soon_payment_found_for_tenant_with_phone(self, db):
+        """دفعة مستحقة بعد 7 أيام لمستأجر عنده رقم — الاستعلام بيلاقيها
+        (كان بيتأكد من إرسال واتساب — اتشال بعد إلغاء قناة الواتساب
+        للتنبيهات الإدارية، الإيجار مش جزء من نطاق "الملكية الجزئية")."""
         branch = _make_branch(db)
         contract = _make_contract(db, branch, tenant_phone="01012340000")
         remind_date = date.today() + timedelta(days=7)
         payment = _make_payment(db, contract, due_date=remind_date, status="pending")
 
-        from app.modules.leasing.models import LeaseContract, LeasePayment
+        from app.modules.leasing.models import LeasePayment
         due_soon = (
             db.query(LeasePayment)
             .filter(LeasePayment.due_date == remind_date, LeasePayment.status == "pending")
             .all()
         )
-        for p in due_soon:
-            c = db.query(LeaseContract).filter(LeaseContract.id == p.contract_id).first()
-            if c and c.tenant_phone:
-                wa_module.send_whatsapp_message(
-                    c.tenant_phone,
-                    f"تذكير: دفعة مستحقة {p.due_date:%Y-%m-%d}",
-                )
-
-        assert "01012340000" in sent
-
-    def test_no_whatsapp_without_phone(self, db):
-        """لا يُرسل واتساب لو المستأجر بدون رقم"""
-        import app.core.kernel.whatsapp as wa_module
-        sent = []
-        original = wa_module.send_whatsapp_message
-        wa_module.send_whatsapp_message = lambda phone, msg: sent.append(phone)
-        try:
-            branch = _make_branch(db)
-            contract = _make_contract(db, branch, tenant_phone=None)
-            remind_date = date.today() + timedelta(days=7)
-            payment = _make_payment(db, contract, due_date=remind_date, status="pending")
-
-            from app.modules.leasing.models import LeaseContract, LeasePayment
-            # فلترة على contract_id المحدد فقط لعزل الـ test
-            due_soon = (
-                db.query(LeasePayment)
-                .filter(
-                    LeasePayment.contract_id == contract.id,
-                    LeasePayment.due_date == remind_date,
-                    LeasePayment.status == "pending",
-                )
-                .all()
-            )
-            for p in due_soon:
-                c = db.query(LeaseContract).filter(LeaseContract.id == p.contract_id).first()
-                if c and c.tenant_phone:
-                    wa_module.send_whatsapp_message(c.tenant_phone, "test")
-
-            assert sent == []
-        finally:
-            wa_module.send_whatsapp_message = original
+        assert payment.id in [p.id for p in due_soon]
 
     def test_task_runs_without_error(self, db):
         """task يشتغل بدون exception"""
-        import app.core.kernel.whatsapp as wa_module
-        original = wa_module.send_whatsapp_message
-        wa_module.send_whatsapp_message = lambda *a, **kw: None
-        try:
-            from unittest.mock import patch, MagicMock
-            ctx = MagicMock()
-            ctx.__enter__ = MagicMock(return_value=db)
-            ctx.__exit__ = MagicMock(return_value=False)
-            with patch("app.core.database.SessionLocal", return_value=ctx):
-                from app.tasks.leasing_tasks import send_due_reminders
-                send_due_reminders()
-        finally:
-            wa_module.send_whatsapp_message = original
+        from unittest.mock import patch, MagicMock
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=db)
+        ctx.__exit__ = MagicMock(return_value=False)
+        with patch("app.core.database.SessionLocal", return_value=ctx):
+            from app.tasks.leasing_tasks import send_due_reminders
+            send_due_reminders()

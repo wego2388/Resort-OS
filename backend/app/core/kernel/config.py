@@ -28,7 +28,6 @@ class CoreSettings(BaseSettings):
     # ── App Identity ──────────────────────────────────────────────────────
     APP_NAME: str = "Resort OS"
     APP_URL: str = ""
-    ADMIN_PHONE: str = ""
 
     # ── Security Headers ──────────────────────────────────────────────────
     SECURITY_FRAME_OPTIONS: str = "DENY"
@@ -48,16 +47,10 @@ class CoreSettings(BaseSettings):
     SECURITY_HSTS_MAX_AGE: int = 31536000
     SECURITY_HSTS_PRELOAD: bool = False
 
-    # ── WhatsApp (Twilio) ───────────────────────────────────────────────────
+    # ── WhatsApp (Twilio) — قناة الملكية الجزئية بس، راجع kernel/whatsapp.py ──
     TWILIO_ACCOUNT_SID: Optional[str] = None
     TWILIO_AUTH_TOKEN: Optional[str] = None
     TWILIO_WHATSAPP_NUMBER: str = "whatsapp:+14155238886"
-    WHATSAPP_PHONE_ID: str = ""
-    WHATSAPP_ACCESS_TOKEN: str = ""
-
-    # ── Email (optional, SendGrid) ──────────────────────────────────────────
-    SENDGRID_API_KEY: Optional[str] = None
-    SENDGRID_FROM_EMAIL: str = "noreply@resortos.local"
 
     # ── Sentry ───────────────────────────────────────────────────────────────
     SENTRY_DSN: Optional[str] = None

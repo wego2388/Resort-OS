@@ -754,15 +754,6 @@ def b2b_checkin(
     if updated_state.quota_warning and contract_row.notified_quota_warning_period != month_start:
         contract_row.notified_quota_warning_period = month_start
         db.flush()
-        if contract_row.contact_phone:
-            try:
-                from app.core.kernel.whatsapp import send_whatsapp_message  # noqa: PLC0415
-                send_whatsapp_message(
-                    contract_row.contact_phone,
-                    f"تنبيه: الحد الشهري لـ {contract_row.hotel_name} في الخيمة بيتش أوشك على الانتهاء (≤5 متبقي هذا الشهر).",
-                )
-            except Exception:
-                pass  # ميمنعش إتمام تسجيل الدخول لو فشل إرسال التنبيه
 
     tx = crud.create_transaction(db, {
         "branch_id":       branch_id,
@@ -1282,9 +1273,10 @@ def mark_b2b_contracts_overdue(db: Session, today: Optional[date] = None) -> int
     (payment_terms_days) لكل عقد — الجزء القابل للاختبار من مهمة Celery
     الدورية (نفس نمط timeshare_tasks._mark_overdue: دالة service خالصة بتاخد
     db + today وتُرجع عدد العقود المتأثرة، والـ task نفسه بس wrapper حول
-    SessionLocal + استدعاء الدالة دي). بيرسل تنبيه واتساب مرة واحدة بس لكل
-    دخول في حالة التأخر (notified_overdue) — نفس نمط quota_warning في
-    b2b_checkin، عشان مبعتش رسالة كل يوم للفندق طول ما لسه متأخر."""
+    SessionLocal + استدعاء الدالة دي). notified_overdue بيتسجّل مرة واحدة بس
+    لكل دخول في حالة التأخر (نفس نمط quota_warning في b2b_checkin) — كان
+    بيتحكم في تكرار تنبيه واتساب، دلوقتي مجرد علم حالة (state flag) بعد
+    إلغاء قناة الواتساب للتنبيهات الإدارية."""
     today = today or _business_today()
     contracts = crud.list_active_b2b_contracts(db)
     changed = 0
@@ -1299,18 +1291,6 @@ def mark_b2b_contracts_overdue(db: Session, today: Optional[date] = None) -> int
             continue
         if not contract.notified_overdue:
             contract.notified_overdue = True
-            if contract.contact_phone:
-                try:
-                    from app.core.kernel.whatsapp import send_whatsapp_message  # noqa: PLC0415
-                    outstanding = crud.get_b2b_outstanding_balance(db, contract.id, contract.last_settled_at)
-                    send_whatsapp_message(
-                        contract.contact_phone,
-                        f"تنبيه: رصيد {contract.hotel_name} المستحق للخيمة بيتش "
-                        f"({outstanding:,.2f} ج.م) تخطّى مهلة السداد "
-                        f"({contract.payment_terms_days} يوم) — برجاء التسوية.",
-                    )
-                except Exception:
-                    pass  # ميمنعش تحديث حالة التأخر لو فشل إرسال التنبيه
     return changed
 
 

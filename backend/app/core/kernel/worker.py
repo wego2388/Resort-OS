@@ -83,11 +83,9 @@ class CoreTask(_CeleryTask):
     def on_failure(self, exc, task_id, args, kwargs, einfo):
         # wagdy.md T-03 — بيتفعّل لما استثناء يوصل فعليًا لـ Celery (يعني مش
         # مبتلَع جوه try/except الـ task نفسها) — بما فيه بعد استنفاد كل
-        # محاولات self.retry(). Sentry + واتساب هنا سوا في مكان واحد مشترك
-        # (مش مكرر لكل task) عشان أي فشل نهائي فعلي يوصل للإدارة، مش بس اللوج.
+        # محاولات self.retry().
         logger.error(f"[Task:{self.name}] FAILED id={task_id} exc={exc!r}")
         _try_sentry_capture(exc, task_name=self.name)
-        _try_whatsapp_notify(self.name, exc)
         super().on_failure(exc, task_id, args, kwargs, einfo)
 
     def on_retry(self, exc, task_id, args, kwargs, einfo):
@@ -119,28 +117,12 @@ def _try_sentry_capture(exc: Exception, *, task_name: Optional[str] = None, extr
         logger.warning(f"[Task:{task_name}] Sentry capture نفسها فشلت: {e}")
 
 
-def _try_whatsapp_notify(task_name: str, exc: Exception) -> None:
-    try:
-        from app.core.kernel.whatsapp import notify_admin
-        sent = notify_admin(f"⚠️ فشلت مهمة مجدولة: {task_name}\nالخطأ: {exc}")
-        # SEC-13 (2026-08-31): كانت بتتجاهل نتيجة notify_admin تمامًا — لو
-        # القناة مش مُعدّة أو الإرسال فشل فعليًا (False)، ده كان بيختفي بصمت
-        # فوق فشل المهمة الأصلي نفسه. لوج واضح بدل الصمت المزدوج.
-        if not sent:
-            logger.warning(f"[Task:{task_name}] تنبيه واتساب فشل يوصل للإدارة")
-    except Exception as e:
-        logger.warning(f"[Task:{task_name}] محاولة تنبيه واتساب نفسها طلعت استثناء: {e}")
-
-
 def notify_task_failure(task_name: str, exc: Exception, *, extra: Optional[dict] = None) -> None:
     """wagdy.md T-03 — معظم tasks في app/tasks/ بتلف الجسم كله بـ
     `try/except Exception` وبتبلع الخطأ بـ logger.error() بس، من غير ما
     ترجّعه تاني — يعني CoreTask.on_failure فوق عمره ما بيتفعّل ليها، لأن
     Celery من منظورها الـ task خلصت "بنجاح" (مفيش استثناء طلع منها خالص).
     استدعِ الدالة دي من جوه أي except block بيبتلع خطأ نهائي بدل ما تكتفي
-    بـ logger.error() لوحدها — بتعمل نفس اللي on_failure بيعمله (Sentry +
-    واتساب حقيقي للإدارة عبر ADMIN_PHONE)، فمفيش فرق في المستوى ده بين task
-    بترجّع استثناء لـ Celery أو task بتبتلعه داخليًا."""
+    بـ logger.error() لوحدها — بتعمل نفس اللي on_failure بيعمله (Sentry)."""
     logger.error(f"[Task:{task_name}] FAILED (swallowed) exc={exc!r}")
     _try_sentry_capture(exc, task_name=task_name, extra=extra)
-    _try_whatsapp_notify(task_name, exc)

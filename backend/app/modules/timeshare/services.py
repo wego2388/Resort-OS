@@ -1998,20 +1998,7 @@ def request_visit(db: Session, contract_id: int, data: TimeshareVisitRequestCrea
 
     db.commit()
     db.refresh(req)
-    # 2026-08-04: مفيش أي تنبيه كان بيوصل لحد لما عميل يقدّم طلب زيارة — لازم
-    # موظف يفتح تاب "طلبات الزيارة" بالصدفة يشوفه. باقي الموديول كله (أقساط/
-    # صيانة/انتهاء عقد) بيستخدم واتساب حقيقي، فده كان استثناء غير مقصود.
-    _notify_admin_new_visit_request(contract, req)
     return req
-
-
-def _notify_admin_new_visit_request(contract: "TimeshareContract", req: "TimeshareVisitRequest") -> None:
-    from app.core.kernel.whatsapp import notify_admin  # noqa: PLC0415
-
-    notify_admin(
-        f"📅 طلب زيارة جديد — {contract.customer_name} (عقد {contract.contract_number})\n"
-        f"من {req.preferred_start.isoformat()} إلى {req.preferred_end.isoformat()}"
-    )
 
 
 def approve_visit_request(
@@ -2084,12 +2071,6 @@ def submit_support_ticket(
     ticket = crud.create_support_ticket(db, contract, data)
     db.commit()
     db.refresh(ticket)
-    from app.core.kernel.whatsapp import notify_admin  # noqa: PLC0415
-
-    notify_admin(
-        f"🎫 تذكرة دعم جديدة — {contract.customer_name} (عقد {contract.contract_number})\n"
-        f"الموضوع: {ticket.subject}"
-    )
     return ticket
 
 
@@ -2121,13 +2102,6 @@ def reply_to_ticket(
             ticket.contract.customer_phone,
             f"عندك رد جديد من خدمة العملاء على تذكرتك \"{ticket.subject}\" في El Kheima Beach Resort.\n"
             f"للاطلاع، ادخل على بوابة عقدك.",
-        )
-    elif author_type == "owner":
-        from app.core.kernel.whatsapp import notify_admin  # noqa: PLC0415
-
-        notify_admin(
-            f"🎫 رد جديد من {ticket.contract.customer_name} على تذكرة \"{ticket.subject}\" "
-            f"(عقد {ticket.contract.contract_number})"
         )
     return reply
 

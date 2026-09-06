@@ -828,21 +828,21 @@ class TestB2BQuotaStatus:
         assert status[0]["remaining_monthly_quota"] == 4
         assert status[0]["quota_warning"] is True
 
-    def test_quota_warning_sends_whatsapp_to_contract_contact(self, db):
-        from unittest.mock import patch
+    def test_quota_warning_marks_contract_notified(self, db):
+        """كان بيبعت واتساب لجهة اتصال العقد لما الحصة تقرّب من الحد —
+        بعد إلغاء قناة الواتساب للتنبيهات الإدارية، السلوك الباقي هو تسجيل
+        notified_quota_warning_period مرة واحدة لكل شهر (نفس منطق dedup
+        الموجود في b2b_checkin)."""
         branch = make_branch(db)
         contract = make_contract(db, branch, guest_cap=8)
         contract.contact_phone = "01055555555"
         db.commit()
 
         req = B2BCheckinRequest(contract_id=contract.id, guests_count=4)  # remaining = 4 → warning
-        with patch("app.core.kernel.whatsapp.send_whatsapp_message", return_value=True) as mock_send:
-            services.b2b_checkin(db, branch.id, req)
+        services.b2b_checkin(db, branch.id, req)
+        db.refresh(contract)
 
-        mock_send.assert_called_once()
-        phone_arg, message_arg = mock_send.call_args[0]
-        assert phone_arg == "01055555555"
-        assert contract.hotel_name in message_arg
+        assert contract.notified_quota_warning_period is not None
 
     def test_over_monthly_cap_shows_zero_remaining_without_warning(self, db):
         """2026-08-20، قرار Mohamed صراحةً: تخطي الحد الشهري الاسترشادي
@@ -1057,8 +1057,10 @@ class TestB2BCredit:
         db.refresh(contract)
         assert contract.is_overdue is False
 
-    def test_mark_overdue_sends_whatsapp_once(self, db):
-        from unittest.mock import patch
+    def test_mark_overdue_notified_flag_set_once(self, db):
+        """كان بيبعت واتساب مرة واحدة بس لجهة اتصال العقد — بعد إلغاء قناة
+        الواتساب، notified_overdue نفسها هي علم الـdedup الباقي: بتتحط
+        True أول مرة ولا بتتغيّر تاني طول ما العقد لسه متأخر."""
         branch = make_branch(db)
         contract = make_contract(db, branch, payment_terms_days=30)
         contract.contact_phone = "01099999999"
@@ -1066,14 +1068,16 @@ class TestB2BCredit:
         old_day = date.today() - timedelta(days=45)
         bill_month(db, old_day)
 
-        with patch("app.core.kernel.whatsapp.send_whatsapp_message", return_value=True) as mock_send:
-            services.mark_b2b_contracts_overdue(db, date.today())
-            db.commit()
-            # تشغيل تاني لنفس اليوم — العقد لسه متأخر، بس محدش يتبعتله رسالة تانية.
-            services.mark_b2b_contracts_overdue(db, date.today())
-            db.commit()
+        services.mark_b2b_contracts_overdue(db, date.today())
+        db.commit()
+        db.refresh(contract)
+        assert contract.notified_overdue is True
 
-        mock_send.assert_called_once()
+        # تشغيل تاني لنفس اليوم — العقد لسه متأخر، الحالة تفضل زي ما هي.
+        services.mark_b2b_contracts_overdue(db, date.today())
+        db.commit()
+        db.refresh(contract)
+        assert contract.notified_overdue is True
 
     def test_quota_status_includes_credit_and_overdue_fields(self, db):
         branch = make_branch(db)

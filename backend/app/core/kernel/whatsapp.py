@@ -1,13 +1,15 @@
 """
 app/core/kernel/whatsapp.py
-WhatsApp notifications — Twilio sandbox + Meta Cloud API production.
-Uses env vars read at call time (not import time) for reliable .env support.
+WhatsApp notifications عبر Twilio — قناة الملكية الجزئية الوحيدة
+(نطاق أضيق عمدًا 2026-09-06: كانت بتُستخدم كمان لتنبيهات إدارية عامة —
+كل تلك الاستدعاءات اتشالت بقرار Mohamed، القناة دي فضلت بس للملكية الجزئية
+(OTP دخول بوابة الملاك، موافقة/رفض الزيارة، رد الموظف على تذكرة دعم) لأن
+مفيش قناة بديلة موجودة لها. Uses env vars read at call time (not import
+time) for reliable .env support.
 """
 
 import os
 from loguru import logger
-
-WHATSAPP_API_URL = "https://graph.facebook.com/v18.0"
 
 # ── Lazy Twilio client ────────────────────────────────────────────────────────
 _twilio_client = None
@@ -59,39 +61,3 @@ def send_whatsapp_message(phone: str, message: str) -> bool:
     except Exception as e:
         logger.error(f"[WhatsApp] Twilio error: {e}")
         return False
-
-
-async def send_whatsapp(phone: str, message: str) -> bool:
-    """Send via Meta Cloud API (async — preferred in production)."""
-    phone_id = os.getenv("WHATSAPP_PHONE_ID", "")
-    access_token = os.getenv("WHATSAPP_ACCESS_TOKEN", "")
-    if phone_id and access_token:
-        phone_clean = phone.replace("+", "").replace(" ", "").replace("-", "")
-        url = f"{WHATSAPP_API_URL}/{phone_id}/messages"
-        headers = {
-            "Authorization": f"Bearer {access_token}",
-            "Content-Type": "application/json",
-        }
-        payload = {
-            "messaging_product": "whatsapp",
-            "to": phone_clean,
-            "type": "text",
-            "text": {"body": message},
-        }
-        try:
-            import httpx
-            async with httpx.AsyncClient() as client:
-                resp = await client.post(url, json=payload, headers=headers, timeout=10)
-                return resp.status_code == 200
-        except Exception as e:
-            logger.error(f"[WhatsApp] Meta API error: {e}")
-    return send_whatsapp_message(phone, message)
-
-
-def notify_admin(message: str) -> bool:
-    """Send a notification message to the admin phone (ADMIN_PHONE env var)."""
-    admin_phone = os.getenv("ADMIN_PHONE", "")
-    if not admin_phone:
-        logger.warning("[WhatsApp] ADMIN_PHONE not set")
-        return False
-    return send_whatsapp_message(admin_phone, message)

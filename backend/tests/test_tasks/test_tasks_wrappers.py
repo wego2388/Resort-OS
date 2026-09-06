@@ -164,16 +164,10 @@ class TestFinanceTasksWrappers:
 
     def test_check_leasing_dues_direct(self, db):
         """_check_leasing_dues يشتغل مباشرة بدون exception"""
-        import app.core.kernel.whatsapp as wa_module
-        original = wa_module.send_whatsapp_message
-        wa_module.send_whatsapp_message = lambda *a, **kw: None
-        try:
-            from app.tasks.finance_tasks import _check_leasing_dues
-            branch = _make_branch(db)
-            remind_date = date.today() + timedelta(days=3)
-            _check_leasing_dues(db, branch.id, remind_date)
-        finally:
-            wa_module.send_whatsapp_message = original
+        from app.tasks.finance_tasks import _check_leasing_dues
+        branch = _make_branch(db)
+        remind_date = date.today() + timedelta(days=3)
+        _check_leasing_dues(db, branch.id, remind_date)
 
 
 # ─── crm_tasks wrappers ──────────────────────────────────────────────────────
@@ -182,39 +176,21 @@ class TestCrmTasksWrappers:
 
     def test_activity_reminders_wrapper_runs(self, db):
         """activity_reminders task wrapper يشتغل بدون exception"""
-        import app.core.kernel.whatsapp as wa_module
-        original = wa_module.send_whatsapp_message
-        wa_module.send_whatsapp_message = lambda *a, **kw: None
-        try:
-            with patch("app.core.database.SessionLocal", return_value=_db_ctx(db)):
-                from app.tasks.crm_tasks import activity_reminders
-                activity_reminders()
-        finally:
-            wa_module.send_whatsapp_message = original
+        with patch("app.core.database.SessionLocal", return_value=_db_ctx(db)):
+            from app.tasks.crm_tasks import activity_reminders
+            activity_reminders()
 
     def test_overdue_alert_wrapper_runs(self, db):
         """overdue_activities_alert task wrapper يشتغل بدون exception"""
-        import app.core.kernel.whatsapp as wa_module
-        original_notify = getattr(wa_module, "notify_admin", lambda *a: None)
-        wa_module.notify_admin = lambda *a, **kw: None
-        try:
-            with patch("app.core.database.SessionLocal", return_value=_db_ctx(db)):
-                from app.tasks.crm_tasks import overdue_activities_alert
-                overdue_activities_alert()
-        finally:
-            wa_module.notify_admin = original_notify
+        with patch("app.core.database.SessionLocal", return_value=_db_ctx(db)):
+            from app.tasks.crm_tasks import overdue_activities_alert
+            overdue_activities_alert()
 
     def test_birthday_greetings_wrapper_runs(self, db):
         """birthday_greetings task wrapper يشتغل بدون exception"""
-        import app.core.kernel.whatsapp as wa_module
-        original = wa_module.send_whatsapp_message
-        wa_module.send_whatsapp_message = lambda *a, **kw: None
-        try:
-            with patch("app.core.database.SessionLocal", return_value=_db_ctx(db)):
-                from app.tasks.crm_tasks import birthday_greetings
-                birthday_greetings()
-        finally:
-            wa_module.send_whatsapp_message = original
+        with patch("app.core.database.SessionLocal", return_value=_db_ctx(db)):
+            from app.tasks.crm_tasks import birthday_greetings
+            birthday_greetings()
 
 
 # ─── leasing_tasks wrappers ──────────────────────────────────────────────────
@@ -229,15 +205,9 @@ class TestLeasingTasksWrappers:
 
     def test_send_due_reminders_wrapper_runs(self, db):
         """send_due_reminders task wrapper يشتغل بدون exception"""
-        import app.core.kernel.whatsapp as wa_module
-        original = wa_module.send_whatsapp_message
-        wa_module.send_whatsapp_message = lambda *a, **kw: None
-        try:
-            with patch("app.core.database.SessionLocal", return_value=_db_ctx(db)):
-                from app.tasks.leasing_tasks import send_due_reminders
-                send_due_reminders()
-        finally:
-            wa_module.send_whatsapp_message = original
+        with patch("app.core.database.SessionLocal", return_value=_db_ctx(db)):
+            from app.tasks.leasing_tasks import send_due_reminders
+            send_due_reminders()
 
 
 # ─── timeshare send_visit_reminders / send_installment_reminders wrappers ────

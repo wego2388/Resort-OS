@@ -214,10 +214,16 @@ class TestFindFraudSignalsOtherRules:
 
 
 class TestScanForFraudSignalsTask:
-    def test_task_sends_whatsapp_and_dedups(self, db, monkeypatch):
-        """اتصال الـ task الكامل: نداء notify_admin فعلي (mocked) لمرة واحدة
-        بس — تاني نداء لنفس الكاشير/القاعدة خلال نافذة الـ dedup ما بيبعتش
-        تنبيه تاني."""
+    def test_task_logs_and_dedups(self, db, monkeypatch, caplog):
+        """اتصال الـ task الكامل: تسجيل تحذير فعلي مرة واحدة بس — تاني نداء
+        لنفس الكاشير/القاعدة خلال نافذة الـ dedup ما بيسجّلش تنبيه تاني.
+        (كان بيتأكد منه عبر mock لـ notify_admin وقت ما الإشعارات كانت
+        بتتبعت واتساب — بعد إلغاء قناة الواتساب، منطق الاكتشاف والـdedup
+        نفسه لسه حقيقي ومستخدم فعليًا في لوحة الأونر "الاستثناءات"
+        (owner.services)، فبنتأكد منه هنا عن طريق سجلات logger.warning
+        بدل رسائل واتساب.)"""
+        import logging
+
         import app.tasks.fraud_tasks as fraud_tasks_module
 
         user = _make_user(db)
@@ -225,11 +231,6 @@ class TestScanForFraudSignalsTask:
         for _ in range(20):
             _add_audit_log(db, user.id, "refund_order_item", now - timedelta(minutes=5))
 
-        sent_messages = []
-        monkeypatch.setattr(
-            "app.core.kernel.whatsapp.notify_admin",
-            lambda msg: sent_messages.append(msg) or True,
-        )
         monkeypatch.setattr("app.core.database.SessionLocal", lambda: db)
         # منع الـ context manager من قفل الـ session بتاع التست نفسه
         monkeypatch.setattr(type(db), "__enter__", lambda self: self, raising=False)
@@ -246,16 +247,17 @@ class TestScanForFraudSignalsTask:
         )
         monkeypatch.setattr(fraud_tasks_module.settings, "FRAUD_REFUND_COUNT_THRESHOLD", 5)
 
-        def _messages_for_user() -> list[str]:
+        def _warnings_for_user() -> list[str]:
             # الاستعلام عالمي عمدًا (راجع find_fraud_signals docstring) —
             # التستات التانية في نفس الجلسة ممكن تكون سابت بيانات محفوظة
             # (db.rollback() بيلغي بس الغير-محفوظ)، فبنفلتر على اسم هذا
-            # المستخدم تحديدًا بدل افتراض صندوق بريد فاضي عالميًا.
-            return [m for m in sent_messages if user.full_name in m]
+            # المستخدم تحديدًا بدل افتراض سجل فاضي عالميًا.
+            return [r.message for r in caplog.records if str(user.id) in r.message]
 
-        fraud_tasks_module.scan_for_fraud_signals()
-        assert len(_messages_for_user()) == 1
+        with caplog.at_level(logging.WARNING, logger="app.tasks.fraud_tasks"):
+            fraud_tasks_module.scan_for_fraud_signals()
+            assert len(_warnings_for_user()) == 1
 
-        # تاني نداء لنفس البيانات (نفس المرتجعات لسه موجودة) — مفيش تنبيه تاني
-        fraud_tasks_module.scan_for_fraud_signals()
-        assert len(_messages_for_user()) == 1
+            # تاني نداء لنفس البيانات (نفس المرتجعات لسه موجودة) — مفيش تنبيه تاني
+            fraud_tasks_module.scan_for_fraud_signals()
+            assert len(_warnings_for_user()) == 1

@@ -30,8 +30,6 @@ def activity_reminders(self):
         with SessionLocal() as db:
             try:
                 from app.modules.crm.models import Activity  # noqa: PLC0415
-                from app.modules.hr.models import Employee  # noqa: PLC0415
-                from app.core.kernel.whatsapp import send_whatsapp_message  # noqa: PLC0415
 
                 due_activities = (
                     db.query(Activity)
@@ -49,13 +47,6 @@ def activity_reminders(self):
                         act.id, act.activity_type, act.customer_id,
                         act.due_date, act.assigned_to, urgency,
                     )
-                    if act.assigned_to:
-                        emp = db.query(Employee).filter(Employee.id == act.assigned_to).first()
-                        if emp and emp.phone:
-                            send_whatsapp_message(
-                                emp.phone,
-                                f"تذكير: نشاط CRM ({act.activity_type}) مستحق {urgency} — عميل #{act.customer_id}.",
-                            )
 
                 logger.info("CRM reminders sent: %s", len(due_activities))
 
@@ -104,8 +95,6 @@ def overdue_activities_alert(self):
                             act.id, act.activity_type, act.customer_id,
                             act.due_date, act.assigned_to,
                         )
-                    from app.core.kernel.whatsapp import notify_admin  # noqa: PLC0415
-                    notify_admin(f"تنبيه CRM: فيه {len(overdue)} نشاط متأخر محتاج متابعة.")
 
             except ImportError:
                 logger.debug("CRM module not yet built — skipped")
@@ -131,7 +120,6 @@ def birthday_greetings(self):
         with SessionLocal() as db:
             try:
                 from app.modules.crm.models import Customer  # noqa: PLC0415
-                from app.core.kernel.whatsapp import send_whatsapp_message  # noqa: PLC0415
 
                 birthdays = (
                     db.query(Customer)
@@ -155,11 +143,6 @@ def birthday_greetings(self):
                             "Birthday greeting: customer=%s name=%s phone=%s",
                             customer.id, customer.full_name, customer.phone,
                         )
-                        if customer.phone:
-                            send_whatsapp_message(
-                                customer.phone,
-                                f"عيد ميلاد سعيد يا {customer.full_name}! 🎉 كل سنة وحضرتك طيب من كل أسرة الخيمة بيتش.",
-                            )
                         sent += 1
 
                 logger.info("Birthday greetings sent: %s", sent)

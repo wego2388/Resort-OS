@@ -121,8 +121,7 @@ def send_due_reminders(self):
 
         with SessionLocal() as db:
             try:
-                from app.modules.leasing.models import LeaseContract, LeasePayment  # noqa: PLC0415
-                from app.core.kernel.whatsapp import send_whatsapp_message  # noqa: PLC0415
+                from app.modules.leasing.models import LeasePayment  # noqa: PLC0415
 
                 due_soon = (
                     db.query(LeasePayment)
@@ -137,12 +136,6 @@ def send_due_reminders(self):
                         "Lease due reminder: id=%s amount=%s due=%s",
                         p.id, p.amount, p.due_date,
                     )
-                    contract = db.query(LeaseContract).filter(LeaseContract.id == p.contract_id).first()
-                    if contract and contract.tenant_phone:
-                        send_whatsapp_message(
-                            contract.tenant_phone,
-                            f"تذكير مبكر: دفعة إيجار بقيمة {p.amount:,.2f} ج.م مستحقة بعد أسبوع ({p.due_date:%Y-%m-%d}).",
-                        )
 
             except ImportError:
                 pass

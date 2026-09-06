@@ -182,53 +182,42 @@ class TestBeachB2BOverdue:
 
         assert contract.is_overdue is False
 
-    def test_whatsapp_sent_first_time_overdue(self, db):
-        """واتساب يُرسل أول مرة يصبح العقد overdue"""
-        import app.core.kernel.whatsapp as wa_module
-        sent = []
-        original = wa_module.send_whatsapp_message
-        wa_module.send_whatsapp_message = lambda phone, msg: sent.append(phone)
-        try:
-            branch = _make_branch(db)
-            _seed_finance_accounts(db, branch)
-            contract = _make_b2b_contract(
-                db, branch, contact_phone="01099991111", payment_terms_days=7,
-            )
-            old_day = date.today() - timedelta(days=45)
-            _bill_month(db, old_day)
+    def test_notified_overdue_set_first_time_overdue(self, db):
+        """notified_overdue يتحط True أول مرة يصبح العقد overdue"""
+        branch = _make_branch(db)
+        _seed_finance_accounts(db, branch)
+        contract = _make_b2b_contract(
+            db, branch, contact_phone="01099991111", payment_terms_days=7,
+        )
+        old_day = date.today() - timedelta(days=45)
+        _bill_month(db, old_day)
 
-            from app.modules.beach.services import mark_b2b_contracts_overdue
-            mark_b2b_contracts_overdue(db, date.today())
-            db.commit()
-            assert "01099991111" in sent
-        finally:
-            wa_module.send_whatsapp_message = original
+        from app.modules.beach.services import mark_b2b_contracts_overdue
+        mark_b2b_contracts_overdue(db, date.today())
+        db.commit()
+        db.refresh(contract)
+        assert contract.is_overdue is True
+        assert contract.notified_overdue is True
 
-    def test_whatsapp_not_sent_twice(self, db):
-        """واتساب لا يُرسل مرة تانية لو notified_overdue=True"""
-        import app.core.kernel.whatsapp as wa_module
-        sent = []
-        original = wa_module.send_whatsapp_message
-        wa_module.send_whatsapp_message = lambda phone, msg: sent.append(phone)
-        try:
-            branch = _make_branch(db)
-            _seed_finance_accounts(db, branch)
-            contract = _make_b2b_contract(
-                db, branch, contact_phone="01099990000", payment_terms_days=7,
-            )
-            contract.is_overdue = True
-            contract.notified_overdue = True
-            db.commit()
+    def test_notified_overdue_stays_true_while_still_overdue(self, db):
+        """notified_overdue يفضل True (مش بيتصفّر) طول ما العقد لسه overdue"""
+        branch = _make_branch(db)
+        _seed_finance_accounts(db, branch)
+        contract = _make_b2b_contract(
+            db, branch, contact_phone="01099990000", payment_terms_days=7,
+        )
+        contract.is_overdue = True
+        contract.notified_overdue = True
+        db.commit()
 
-            old_day = date.today() - timedelta(days=45)
-            _bill_month(db, old_day)
+        old_day = date.today() - timedelta(days=45)
+        _bill_month(db, old_day)
 
-            from app.modules.beach.services import mark_b2b_contracts_overdue
-            mark_b2b_contracts_overdue(db, date.today())
-            db.commit()
-            assert "01099990000" not in sent
-        finally:
-            wa_module.send_whatsapp_message = original
+        from app.modules.beach.services import mark_b2b_contracts_overdue
+        mark_b2b_contracts_overdue(db, date.today())
+        db.commit()
+        db.refresh(contract)
+        assert contract.notified_overdue is True
 
     def test_no_billed_months_no_overdue(self, db):
         """عقد من غير أي رسم شهري مُرحَّل لا يُصبح overdue"""
@@ -244,19 +233,13 @@ class TestBeachB2BOverdue:
 
     def test_task_runs_without_error(self, db):
         """task mark_b2b_overdue يشتغل بدون exception"""
-        import app.core.kernel.whatsapp as wa_module
-        original = wa_module.send_whatsapp_message
-        wa_module.send_whatsapp_message = lambda *a, **kw: None
-        try:
-            from unittest.mock import patch, MagicMock
-            ctx = MagicMock()
-            ctx.__enter__ = MagicMock(return_value=db)
-            ctx.__exit__ = MagicMock(return_value=False)
-            with patch("app.core.database.SessionLocal", return_value=ctx):
-                from app.tasks.beach_tasks import mark_b2b_overdue
-                mark_b2b_overdue()
-        finally:
-            wa_module.send_whatsapp_message = original
+        from unittest.mock import patch, MagicMock
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=db)
+        ctx.__exit__ = MagicMock(return_value=False)
+        with patch("app.core.database.SessionLocal", return_value=ctx):
+            from app.tasks.beach_tasks import mark_b2b_overdue
+            mark_b2b_overdue()
 
 
 # ─── post_b2b_monthly_fees task ──────────────────────────────────────────────
