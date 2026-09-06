@@ -9,10 +9,10 @@
 #
 #  Usage:
 #      ./scripts/resort-data backup        --target local|vps
-#      ./scripts/resort-data seed-july     --target local|vps --period 2026-07 [--apply --confirm "..."] [--validate-only]
-#      ./scripts/resort-data validate      --target local|vps --period 2026-07
-#      ./scripts/resort-data reset-dataset --target local|vps --period 2026-07 [--apply --confirm "..."]
 #      ./scripts/resort-data rebuild-trial --target local|vps [--apply --confirm "..."]
+#
+#  (seed-july/validate/reset-dataset removed 2026-09-06 along with the demo
+#  data generators they drove — July-2026-demo-only scope, per Mohamed.)
 #
 #  Connection details are read from environment/secrets only — never pass a
 #  DB URL or password as a CLI argument here (see backend/app/
