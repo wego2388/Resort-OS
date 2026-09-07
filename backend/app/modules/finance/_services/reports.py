@@ -10,7 +10,9 @@ from datetime import date
 from decimal import Decimal
 from typing import Optional, TYPE_CHECKING
 from sqlalchemy.orm import Session
+from app.core.config import settings
 from app.modules.finance import crud
+from app.resort_os.timezone_utils import business_today
 
 if TYPE_CHECKING:
     from app.modules.finance.models import Account  # noqa: F401
@@ -94,7 +96,7 @@ def get_aging_report(db: Session, branch_id: int, as_of: Optional[date] = None) 
     + مصروفات آجلة لسه من غير سداد كامل، عمرها من تاريخ الأمر/المصروف).
     مفيش منطق مالي جديد هنا — بس تجميع وترتيب بيانات موجودة أصلاً."""
     if as_of is None:
-        as_of = date.today()
+        as_of = business_today(settings.TIMEZONE)
 
     receivables: list[ReceivableAgingLine] = []
     receivables_total = Decimal("0")

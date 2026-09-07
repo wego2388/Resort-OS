@@ -2359,6 +2359,30 @@ class TestAgingReport:
         report = services.get_aging_report(db, branch.id, as_of=date.today())
         assert report.receivables == []
 
+    def test_omitted_as_of_uses_business_today_not_raw_utc_date(self, db, branch, monkeypatch):
+        """2026-09-07 audit fix: as_of=None كان بيقع على date.today() الخام
+        (توقيت السيرفر UTC) بدل business_today(settings.TIMEZONE) — نفس فئة
+        باج §13 بند ⓾. نتأكد فعليًا إن business_today هي اللي بتتنادى (مش
+        date.today()) بعمل monkeypatch لها لقيمة مميزة واستخدام النتيجة
+        كـ"as_of" صريح للمقارنة."""
+        from app.modules.finance._services import reports as reports_module
+        from app.modules.finance.models import Folio
+
+        sentinel_date = date.today() - timedelta(days=100)
+        monkeypatch.setattr(reports_module, "business_today", lambda tz: sentinel_date)
+
+        check_in = datetime.combine(sentinel_date - timedelta(days=40), datetime.min.time())
+        folio = Folio(
+            branch_id=branch.id, guest_name="ضيف sentinel", check_in=check_in,
+            check_out=check_in + timedelta(days=1), status="open", total=Decimal("777"),
+        )
+        db.add(folio); db.commit()
+
+        report = services.get_aging_report(db, branch.id, as_of=None)
+        assert len(report.receivables) == 1
+        assert report.receivables[0].folio_id == folio.id
+        assert report.receivables[0].bucket == "31-60"  # (sentinel_date - 40 days) relative to sentinel_date
+
     def test_payables_from_unpaid_purchase_order_and_deferred_expense(self, db, branch):
         from app.modules.finance.models import Account
         from app.modules.finance.schemas import ExpenseCreate
