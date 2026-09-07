@@ -173,8 +173,14 @@ body {
    * min-height at any text-scale preference (useTextScale.ts scales the
    * root font-size) — a flat px budget here desynced from the nav's actual
    * rendered height by ~1.3px at the "large" text-scale root size, tripping
-   * the 320/390/768 viewport "navigation never covers content" e2e check. */
-  padding-bottom: calc(3.5rem + env(safe-area-inset-bottom));
+   * the 320/390/768 viewport "navigation never covers content" e2e check.
+   * Kept a full 4.75rem, not just matching .bottom-nav-item's min-height
+   * 1:1 — exact-match previously undershot the *actual* rendered content
+   * (icon+label+padding) by a few px once the icon grew (2026-08-19 nav
+   * size increase), since real font-metric line-height isn't hand-
+   * calculable precisely. Both numbers must stay identical on any future
+   * edit, with headroom kept generous rather than exact. */
+  padding-bottom: calc(4.75rem + env(safe-area-inset-bottom));
 }
 
 .bottom-nav {
@@ -195,8 +201,13 @@ body {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 0.625rem 0;
-  min-height: 3.5rem;
+  padding: 0.75rem 0;
+  /* 2026-08-19: كبّرت من 3.5rem — طلب محمد الصريح ("شريط الأيقونات
+   * محتاج يكبر"). لازم تفضل متزامنة مع .owner-main's padding-bottom
+   * تحت — القيمتين لازم يبقوا نفس الرقم بالظبط عند أي تعديل، وإلا
+   * النافبار بيغطي آخر بكسر من المحتوى (نفس الباج اللي اتصلح 2026-08-17
+   * لما جذر حجم الخط كبر — راجع .owner-main). */
+  min-height: 4.75rem;
   color: rgb(var(--owner-muted));
   text-decoration: none;
   transition: color 0.15s ease;
@@ -209,11 +220,20 @@ body {
   color: rgb(var(--owner-green));
 }
 
-.bottom-nav-item span {
-  font-size: 0.625rem;
+/* أيقونة SVG حقيقية (AppIcon) بدل إيموجي — الإيموجي كانت بتتجاهل لون
+ * .active تمامًا (الإيموجي محتفظة بألوانها الأصلية دايمًا، مش بتورث
+ * currentColor)، فحالة active كانت شغالة على النص بس. SVG بيورث اللون
+ * فعليًا، فالتلوين الأخضر بقى شغال على الأيقونة والنص مع بعض. */
+.bottom-nav-item svg {
+  width: 1.5rem;
+  height: 1.5rem;
+}
+
+.bottom-nav-label {
+  font-size: 0.75rem;
   font-weight: 600;
-  margin-top: 0.25rem;
-  letter-spacing: 0.03em;
+  margin-top: 0.3125rem;
+  letter-spacing: 0.02em;
 }
 
 /* Desktop/tablet landscape: keep the same six destinations but present them

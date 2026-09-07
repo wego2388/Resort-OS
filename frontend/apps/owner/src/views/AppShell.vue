@@ -11,7 +11,7 @@
 import { computed, ref } from 'vue'
 import { useRoute, useRouter, RouterView } from 'vue-router'
 import { useAuthStore } from '@resort-os/core'
-import { ThemeToggle } from '@resort-os/ui'
+import { ThemeToggle, AppIcon, type IconName } from '@resort-os/ui'
 import SearchOverlay from '../components/SearchOverlay.vue'
 import { useTextScale } from '../composables/useTextScale'
 
@@ -23,14 +23,20 @@ const { cycleScale, label: textScaleLabel } = useTextScale()
 const searchOpen = ref(false)
 const activeTitle = computed(() => String(route.meta.title || 'نظرة المالك'))
 
-const navItems = [
-  { name: 'now',         label: 'الآن',       icon: '⚡' },
-  { name: 'performance', label: 'الأداء',     icon: '📊' },
-  { name: 'sales',       label: 'المبيعات',   icon: '🛒' },
-  { name: 'expenses',    label: 'المصروفات',  icon: '💰' },
-  { name: 'shifts',      label: 'الورديات',   icon: '🔔' },
-  { name: 'hr',          label: 'الموظفين',   icon: '👥' },
-] as const
+// 2026-08-19: استبدال الإيموجي بأيقونات SVG حقيقية من الـDesign System —
+// طلب محمد الصريح ("شريط الأيقونات محتاج يكبر أو طريقة عرض أفضل"). فايدة
+// إضافية حقيقية مش بصرية بس: الإيموجي بتتجاهل CSS `color` تمامًا (بتحتفظ
+// بألوانها الأصلية دايمًا)، يعني حالة "active" (اللون الأخضر) كانت بتأثر
+// على النص بس مش الأيقونة نفسها من الأساس. أيقونات SVG بتورث اللون فعليًا
+// عبر currentColor، فحالة active بقت شغالة على الأيقونة والنص مع بعض.
+const navItems: ReadonlyArray<{ name: string; label: string; icon: IconName }> = [
+  { name: 'now',         label: 'الآن',       icon: 'bolt' },
+  { name: 'performance', label: 'الأداء',     icon: 'chart' },
+  { name: 'sales',       label: 'المبيعات',   icon: 'cart' },
+  { name: 'expenses',    label: 'المصروفات',  icon: 'cash' },
+  { name: 'shifts',      label: 'الورديات',   icon: 'bell' },
+  { name: 'hr',          label: 'الموظفين',   icon: 'users' },
+]
 
 const activeNav = computed(() => route.name as string)
 
@@ -118,8 +124,8 @@ function vibrate(ms = 6) {
         :aria-current="activeNav === item.name ? 'page' : undefined"
         @click="vibrate()"
       >
-        <span class="text-lg leading-none" aria-hidden="true">{{ item.icon }}</span>
-        <span class="text-[10px]">{{ item.label }}</span>
+        <AppIcon :name="item.icon" size="lg" />
+        <span class="bottom-nav-label">{{ item.label }}</span>
       </RouterLink>
     </nav>
   </div>

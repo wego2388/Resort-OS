@@ -24,6 +24,10 @@ const props = defineProps<{
   /** الكارت بيبقى قابل للضغط (تفصيل أكتر — 2026-08-17) — بيظهر مؤشّر ‹
    * وبيتحول لـ<button> حقيقي بدل <div> عشان الوصول (keyboard/screen reader). */
   clickable?: boolean
+  /** يمرّر لـSparkLine — true للمقاييس اللي "الأقل فيها أحسن" (المصروفات
+   * مثلاً)، عشان لون اتجاه الرسم البياني يعكس دلالته الحقيقية بدل
+   * "صاعد=أخضر" الثابتة اللي بتناسب الإيراد بس. */
+  sparkInvert?: boolean
 }>()
 
 const emit = defineEmits<{ 'toggle-pin': []; click: [] }>()
@@ -87,6 +91,7 @@ const emit = defineEmits<{ 'toggle-pin': []; click: [] }>()
       <SparkLine
         v-if="sparkValues && sparkValues.length > 1"
         :values="sparkValues"
+        :invert="sparkInvert"
         class="mb-2"
       />
 

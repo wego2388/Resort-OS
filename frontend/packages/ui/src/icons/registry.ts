@@ -36,7 +36,7 @@ import {
   MinusCircleIcon, NoSymbolIcon, CheckBadgeIcon, FlagIcon, BuildingOfficeIcon,
   ChartBarIcon, ChartPieIcon, PresentationChartLineIcon, InboxIcon,
   ArchiveBoxIcon, CubeIcon, ScaleIcon, CalculatorIcon, DevicePhoneMobileIcon,
-  ComputerDesktopIcon, WifiIcon, SignalSlashIcon,
+  ComputerDesktopIcon, WifiIcon, SignalSlashIcon, BoltIcon,
 } from '@heroicons/vue/24/outline'
 
 export const ICONS = {
@@ -141,6 +141,7 @@ export const ICONS = {
   desktop: ComputerDesktopIcon,
   online: WifiIcon,
   offline: SignalSlashIcon,
+  bolt: BoltIcon,
 } as const
 
 export type IconName = keyof typeof ICONS

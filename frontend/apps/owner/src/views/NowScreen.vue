@@ -121,13 +121,15 @@ const pinnedWithValues = computed(() => {
     }))
 })
 
-/** يحوّل array من DaySnapshot لـ numbers لكل sparkline */
+/** يحوّل array من DaySnapshot لـ numbers لكل sparkline. كاش الأدراج
+ * عمدًا مش هنا — get_now_history's cash_in_drawers صفر ثابت لكل يوم
+ * ماضي (مفهوم "وردية مفتوحة" لحظي، مالوش قيمة تاريخية حقيقية)، فرسم
+ * بياني منه كان هيبقى خط شبه مسطّح مضلّل مش اتجاه حقيقي (2026-08-19). */
 const spark = computed(() => {
   const days = historyData.value?.days ?? []
   return {
     revenue:   days.map(d => parseFloat(d.revenue)),
     expense:   days.map(d => parseFloat(d.expense)),
-    cash:      days.map(d => parseFloat(d.cash_in_drawers)),
     occupancy: days.map(d => parseFloat(d.occupancy_pct)),
     beach:     days.map(d => parseFloat(d.beach_utilisation_pct)),
   }
@@ -226,7 +228,6 @@ const spark = computed(() => {
             label="كاش الأدراج المتوقع"
             :value="formatMoney(data.cash_in_drawers)"
             :subtitle="`${data.open_shift_count} وردية مفتوحة`"
-            :spark-values="spark.cash"
             color-scheme="default"
             :pinned="watchlist.isPinned('cash_in_drawers')"
             clickable
@@ -239,6 +240,7 @@ const spark = computed(() => {
             :value="formatMoney(data.expense_today)"
             :is-provisional="data.period.is_provisional"
             :spark-values="spark.expense"
+            spark-invert
             color-scheme="amber"
             :pinned="watchlist.isPinned('expense_today')"
             clickable
