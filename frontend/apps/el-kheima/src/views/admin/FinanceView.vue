@@ -15,6 +15,7 @@ import DepreciationTab from '../../components/finance/DepreciationTab.vue'
 import BankReconciliationTab from '../../components/finance/BankReconciliationTab.vue'
 import ChecksTab from '../../components/finance/ChecksTab.vue'
 import PeriodsTab from '../../components/finance/PeriodsTab.vue'
+import OverviewTab from '../../components/finance/OverviewTab.vue'
 import BalanceSheetTab from '../../components/finance/BalanceSheetTab.vue'
 import TrialBalanceTab from '../../components/finance/TrialBalanceTab.vue'
 import IncomeStatementTab from '../../components/finance/IncomeStatementTab.vue'
@@ -211,7 +212,6 @@ interface PaymentChannel {
 }
 
 const accounts = ref<Account[]>([])
-const financeData = ref<{ total_revenue: number; total_expense: number; net_income: number } | null>(null)
 const loading = ref(false)
 
 // ── Depreciation — استُخرج لـ DepreciationTab.vue (2026-09-07) ───────
@@ -437,28 +437,16 @@ async function loadTab(tabId: typeof tab.value) {
   if (tabId === 'trial-balance') { return }
   if (tabId === 'income-statement') { return }
   if (tabId === 'periods') { return }
+  if (tabId === 'overview') { return }
 
   loading.value = true
   try {
-    if (tabId === 'overview') {
-      const res = await api.get(ENDPOINTS.finance.reportsIncomeStatement, {
-        params: { branch_id: branchId.value, date_from: firstOfMonth, date_to: today },
-      })
-      financeData.value = {
-        total_revenue: Number(res.data.total_revenue),
-        total_expense: Number(res.data.total_expense),
-        net_income: Number(res.data.net_income),
-      }
-    } else if (tabId === 'accounts') {
+    if (tabId === 'accounts') {
       const res = await api.get(ENDPOINTS.finance.accounts, { params: { branch_id: branchId.value } })
       accounts.value = res.data.accounts ?? res.data.items ?? res.data
     }
   } catch {
-    const messages: Record<'overview' | 'accounts', string> = {
-      overview: t('backoffice.finance.loadIncomeStatementError'),
-      accounts: t('backoffice.finance.loadAccountsError'),
-    }
-    toast.error(messages[tabId as 'overview' | 'accounts'])
+    toast.error(t('backoffice.finance.loadAccountsError'))
   } finally { loading.value = false }
 }
 
@@ -1154,31 +1142,7 @@ const shiftStatusList = computed<{ v: 'all' | 'open' | 'closed'; l: string }[]>(
     </div>
 
     <!-- Overview -->
-    <div v-if="tab === 'overview'">
-      <div v-if="loading" class="flex justify-center py-12"><AppSpinner size="lg" /></div>
-      <div v-else-if="financeData" class="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <AppCard padding="lg" class="text-center">
-          <div class="text-sm text-gray-500 dark:text-gray-400 mb-2">{{ t('backoffice.finance.totalRevenue') }}</div>
-          <div class="text-3xl font-black text-green-600 dark:text-green-300">{{ formatNumber(financeData.total_revenue) }}</div>
-          <div class="text-xs text-gray-400 dark:text-gray-400 mt-1">{{ t('backoffice.finance.egpWord') }}</div>
-        </AppCard>
-        <AppCard padding="lg" class="text-center">
-          <div class="text-sm text-gray-500 dark:text-gray-400 mb-2">{{ t('backoffice.finance.totalExpense') }}</div>
-          <div class="text-3xl font-black text-red-500">{{ formatNumber(financeData.total_expense) }}</div>
-          <div class="text-xs text-gray-400 dark:text-gray-400 mt-1">{{ t('backoffice.finance.egpWord') }}</div>
-        </AppCard>
-        <AppCard padding="lg" class="text-center">
-          <div class="text-sm text-gray-500 dark:text-gray-400 mb-2">{{ t('backoffice.finance.netIncome') }}</div>
-          <div :class="['text-3xl font-black', financeData.net_income >= 0 ? 'text-blue-700 dark:text-blue-300' : 'text-red-500 dark:text-red-300']">
-            {{ formatNumber(financeData.net_income) }}
-          </div>
-          <div class="text-xs text-gray-400 dark:text-gray-400 mt-1">{{ t('backoffice.finance.egpWord') }}</div>
-        </AppCard>
-      </div>
-      <AppCard v-else padding="lg">
-        <EmptyState icon="📊" :title="t('backoffice.finance.noFinancialData')" />
-      </AppCard>
-    </div>
+    <OverviewTab v-if="tab === 'overview'" :branch-id="branchId" />
 
     <!-- Checks -->
     <ChecksTab v-if="tab === 'checks'" :branch-id="branchId" />
