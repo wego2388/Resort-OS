@@ -766,7 +766,7 @@ migrations) في `PROJECT_STATUS.md`.
   alias حرفي على `/restaurant`/`/cafe`** — الروترين القديمين متلمسوش فمفيش حاجة تحتاج alias، اتأكد
   بـ route dump كامل (493 مسار، صفر تصادم) + الاختبارات القديمة عدّت من غير تعديل. **D-05 → D-08
   (تحويل analytics/finance للقراءة من dining، الفرونت إند، حذف الموديولين القديمين) لسه مؤجَّلين
-  عمدًا** — راجع `DINING_CUTOVER_PLAN.md` (جذر المشروع) للمقترح المكتوب الكامل. تفاصيل تقنية كاملة
+  عمدًا** — راجع `docs/archive/DINING_CUTOVER_PLAN.md` للمقترح المكتوب الكامل. تفاصيل تقنية كاملة
   في `PROJECT_STATUS.md`.
 - **موديول `dining` — Batch B: free-text extra-group prompt + أول POS/admin/KDS حقيقي على الـ Design
   System** (2026-07-12) — مقارنة مع نظام "Click" القديم اللي المنتجع ده كان شغال بيه كشفت فجوة حقيقية:
@@ -806,7 +806,7 @@ migrations) في `PROJECT_STATUS.md`.
 
   **متلمسناش عمدًا**: `restaurant/`, `cafe/`, `analytics/`, `finance/`، ولا مصدر البيانات لأي تقرير/
   dashboard موجود — قرار الـ cutover الكامل (D-05 → D-08) لسه محتاج مراجعة مخصصة مع Mohamed منفصلة عن
-  الدفعة دي (راجع `DINING_CUTOVER_PLAN.md`)، مش جزء منها.
+  الدفعة دي (راجع `docs/archive/DINING_CUTOVER_PLAN.md`)، مش جزء منها.
 
 - **موديول `dining` — Cutover الكامل D-05 → D-08: حذف `restaurant`/`cafe` نهائيًا** (2026-07-13) —
   إذن صريح من Mohamed (بالعامية المصرية): يتحول التقرير المالي على `dining`، تبقى شاشات dining هي
@@ -884,7 +884,7 @@ migrations) في `PROJECT_STATUS.md`.
   الشاشات القديمة المذكورة في مدخل Batch B فوق ("الشاشات دي مش الـ POS الافتراضي") **بقت الافتراضي
   فعليًا دلوقتي** — الجملة دي باقية كسجل تاريخي لوقتها، مش وصف للوضع الحالي.
 - **Operations & Control Layer — Batch 1: موافقة PIN على الخصم** (2026-07-13، راجع
-  `OPERATIONS_CONTROL_LAYER_PLAN.md`) — قرار Mohamed: الكاشير صفر صلاحية خصم خالص (مفيش جدول درجات
+  `docs/archive/OPERATIONS_CONTROL_LAYER_PLAN.md`) — قرار Mohamed: الكاشير صفر صلاحية خصم خالص (مفيش جدول درجات
   نسب مئوية)، أي محاولة تطبيق خصم من مستوى أقل من مدير محتاجة `core.services.resolve_pin_approval
   (min_approver_level=60)` بغض النظر عن نتيجة القاعدة، بالظبط زي `void_order_item`. `POST
   /dining/orders/{id}/discount` بقى ياخد `ApplyDiscountRequest` (`approver_user_id`/`approver_pin`)،
