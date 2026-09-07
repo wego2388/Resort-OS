@@ -431,3 +431,53 @@ def test_owner_shifts_cache_control(client, db, setup_db):
     )
     assert resp.status_code == 200
     assert "no-store" in resp.headers.get("cache-control", "")
+
+
+# ══════════════════════════════════════════════════════════════════════
+# GET /owner/shifts/{shift_id}/invoices — branch isolation regression
+# (2026-09-07 audit finding: get_shift_invoices bypassed ownership check
+# entirely with zero branch scoping — any owner could enumerate shift_id
+# and read another branch's itemized invoices. Same bug class as C-01/
+# H-01/SEC-06/SEC-07, all previously fixed — see CLAUDE.md §18.)
+# ══════════════════════════════════════════════════════════════════════
+
+def test_owner_shift_invoices_rejects_cross_branch(client, db, setup_db):
+    """مالك فرع A ميقدرش يجيب فواتير وردية تخصّ فرع B بمجرد تخمين shift_id."""
+    branch_a = _branch(db)
+    branch_b = _branch(db)
+    owner_a  = _owner(db, f"owna_{uuid.uuid4().hex[:6]}@test.local", branch_a.id)
+    cashier_b = _cashier_user(db, f"cshb_{uuid.uuid4().hex[:6]}@test.local")
+
+    from app.modules.finance.models import CashierShift
+    shift_b = CashierShift(
+        branch_id=branch_b.id, cashier_id=cashier_b.id, opened_by=cashier_b.id,
+        opening_float=Decimal("500"), status="open", opened_at=datetime.utcnow(),
+    )
+    db.add(shift_b); db.commit()
+
+    resp = client.get(
+        f"/api/v1/owner/shifts/{shift_b.id}/invoices",
+        headers={"Authorization": f"Bearer {_tok(owner_a.email, branch_a.id)}"},
+    )
+    assert resp.status_code == 404, resp.text
+
+
+def test_owner_shift_invoices_returns_200_same_branch(client, db, setup_db):
+    """مالك فرع نفسه يقدر يجيب فواتير وردية في فرعه (قايمة فاضية مقبولة)."""
+    branch  = _branch(db)
+    cashier = _cashier_user(db, f"cshc_{uuid.uuid4().hex[:6]}@test.local")
+    owner   = _owner(db, f"ownc_{uuid.uuid4().hex[:6]}@test.local", branch.id)
+
+    from app.modules.finance.models import CashierShift
+    shift = CashierShift(
+        branch_id=branch.id, cashier_id=cashier.id, opened_by=cashier.id,
+        opening_float=Decimal("500"), status="open", opened_at=datetime.utcnow(),
+    )
+    db.add(shift); db.commit()
+
+    resp = client.get(
+        f"/api/v1/owner/shifts/{shift.id}/invoices",
+        headers={"Authorization": f"Bearer {_tok(owner.email, branch.id)}"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert isinstance(resp.json(), list)

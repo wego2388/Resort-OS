@@ -387,8 +387,9 @@ def owner_shift_invoices(shift_id: int, response: Response, db: OwnerReadDb, use
     فواتير، عايز يعرف بالظبط إيه اللي اتباع في كل فاتورة (ساندوتش/بيتزا/
     مشروبات). المالك يقرأ فقط."""
     response.headers["Cache-Control"] = _NO_STORE
+    branch_id = _get_branch(user)
     try:
-        return services.get_shift_invoices(db, shift_id)
+        return services.get_shift_invoices(db, shift_id, branch_id)
     except ValueError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
     except Exception as exc:

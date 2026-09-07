@@ -407,13 +407,23 @@ def get_shift_history(db: Session, branch_id: int, days: int = 7) -> ShiftHistor
     )
 
 
-def get_shift_invoices(db: Session, shift_id: int):
+def get_shift_invoices(db: Session, shift_id: int, branch_id: int):
     """2026-09-05 — طلب Mohamed: تفصيل حقيقي لكل فاتورة في وردية معيّنة
     (مش بس ملخص فئات) — نفس بيانات شاشة "سجل الفواتير" في FinanceView
     (المحاسب)، بس من غير قيد ownership/موافقة PIN لأن get_owner_reader
     (owner أو super_admin بس) هو البوابة الكافية هنا — راجع
-    finance.services.list_shift_invoices's bypass_ownership_check."""
+    finance.services.list_shift_invoices's bypass_ownership_check.
+
+    branch_id هنا مش تحسين اختياري — bypass_ownership_check يشيل قيد
+    "كاشير يشوف وردية نفسه بس" بالكامل، فمن غيره أي owner (أو super_admin)
+    يقدر يجيب فواتير أي وردية في أي فرع بمجرد تخمين shift_id (نفس فئة باج
+    C-01/H-01/SEC-06/SEC-07 المُصلَّحين قبل كده — راجع CLAUDE.md §18)."""
+    from app.modules.finance import crud as finance_crud  # noqa: PLC0415
     from app.modules.finance import services as finance_services  # noqa: PLC0415
+
+    shift = finance_crud.get_shift(db, shift_id)
+    if not shift or shift.branch_id != branch_id:
+        raise ValueError(f"الوردية {shift_id} غير موجودة")
 
     return finance_services.list_shift_invoices(
         db, shift_id, requesting_user=None, bypass_ownership_check=True,
