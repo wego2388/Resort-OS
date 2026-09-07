@@ -6070,7 +6070,8 @@
         "grill": "شواية",
         "cold": "بارد",
         "bar": "بار",
-        "dessert": "حلويات"
+        "dessert": "حلويات",
+        "direct": "بدون تحضير (تسليم مباشر)"
       },
       "outletType": {
         "restaurant": "مطعم",

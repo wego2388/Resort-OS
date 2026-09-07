@@ -618,6 +618,56 @@ class TestOrderStatus:
             services.update_order_status(db, 9999, "paid")
 
 
+class TestDirectStationItems:
+    """station="direct" (2026-09-07، ملاحظة Mohamed أثناء إضافة منيو
+    حقيقية: آيس كريم/شيشة/تسالي مفيهاش تحضير حقيقي خالص) — مفيش تذكرة KDS
+    ليها، وبتتسجّل served فورًا بدل ما تفضل pending للأبد."""
+
+    def test_direct_item_gets_no_kitchen_ticket(self, db):
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch)
+        direct_item = make_item(db, branch, outlet, station="direct")
+        hot_item = make_item(db, branch, outlet, station="hot")
+        data = OrderCreate(
+            outlet_id=outlet.id, order_type="takeaway", guests_count=1,
+            items=[
+                OrderItemCreate(item_id=direct_item.id, quantity=1),
+                OrderItemCreate(item_id=hot_item.id, quantity=1),
+            ],
+        )
+        order = services.create_order(db, branch.id, data, waiter_id=1)
+        services.update_order_status(db, order.id, "in_kitchen")
+
+        tickets = services.get_kds_tickets(db, branch.id)
+        assert len(tickets) == 1
+        assert tickets[0]["station"] == "hot"
+
+    def test_direct_item_marked_served_immediately_on_create(self, db):
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch)
+        direct_item = make_item(db, branch, outlet, station="direct")
+        order = make_order(db, branch, outlet, direct_item, quantity=1)
+        db.refresh(order)
+        assert order.items[0].status == "served"
+
+    def test_direct_item_marked_served_immediately_on_add_items(self, db):
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch)
+        item = make_item(db, branch, outlet, station="hot")
+        direct_item = make_item(db, branch, outlet, station="direct")
+        order = make_order(db, branch, outlet, item, quantity=1)
+
+        updated = services.add_items_to_order(
+            db, order.id, [OrderItemCreate(item_id=direct_item.id, quantity=1)],
+        )
+        added = next(i for i in updated.items if i.item_id == direct_item.id)
+        assert added.status == "served"
+
+        # الصنف اللي عنده تحضير حقيقي لازم يفضل pending زي ما هو دايمًا.
+        original = next(i for i in updated.items if i.item_id == item.id)
+        assert original.status == "pending"
+
+
 class TestRevenueAccountRouting:
     """wagdy.md D-03 — لب الإصلاح: حساب الإيراد خاصية على Outlet نفسه، مش
     literal ثابت في الكود. منفذين مختلفين لازم يرحّلوا لحسابين مختلفين."""

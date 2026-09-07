@@ -63,6 +63,7 @@ const STATIONS = computed<SelectOption[]>(() => [
   { value: 'hot', label: `🔥 ${t('backoffice.diningMenu.station.hot')}` }, { value: 'grill', label: `🥩 ${t('backoffice.diningMenu.station.grill')}` },
   { value: 'cold', label: `🥗 ${t('backoffice.diningMenu.station.cold')}` }, { value: 'bar', label: `🍹 ${t('backoffice.diningMenu.station.bar')}` },
   { value: 'dessert', label: `🍰 ${t('backoffice.diningMenu.station.dessert')}` },
+  { value: 'direct', label: `✋ ${t('backoffice.diningMenu.station.direct')}` },
 ])
 const OUTLET_TYPES = computed<SelectOption[]>(() => [
   { value: 'restaurant', label: t('backoffice.diningMenu.outletType.restaurant') }, { value: 'cafe', label: t('backoffice.diningMenu.outletType.cafe') },

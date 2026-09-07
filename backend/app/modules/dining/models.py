@@ -188,9 +188,15 @@ class DiningItem(Base, TimestampMixin):
     description_it:      Mapped[str | None]  = mapped_column(Text, nullable=True)
     # وصف قصير للصنف — بيظهر في قائمة الضيف QR (OrderView) تحت الاسم
     station:             Mapped[str]         = mapped_column(String(50), default="hot")
-    # hot|grill|cold|bar|dessert — لتوجيه الـ KDS تلقائياً (راجع docstring
-    # الكلاس فوق). إجباري بعمود حقيقي على كل صنف من كل outlet — مفيش أي
-    # fallback ثابت في الكود زي الباج القديم.
+    # hot|grill|cold|bar|dessert|direct — لتوجيه الـ KDS تلقائياً (راجع
+    # docstring الكلاس فوق). إجباري بعمود حقيقي على كل صنف من كل outlet —
+    # مفيش أي fallback ثابت في الكود زي الباج القديم.
+    # direct (2026-09-07، ملاحظة Mohamed أثناء إضافة أصناف حقيقية): بعض
+    # الأصناف مفيهاش تحضير حقيقي خالص (آيس كريم جاهز، شيشة، تسالي معبّأة)
+    # — إجبارها على محطة hot/cold/bar/dessert كان بيولّد تذكرة KDS وهمية
+    # محدش هيقفلها فعليًا لأنها مش شغل حقيقي. صنف بـstation="direct" مفيش
+    # ليه تذكرة KDS خالص، وبيتسجّل status="served" فورًا وقت الإضافة —
+    # راجع services.orders._create_kitchen_tickets_for_items.
     linked_product_id:   Mapped[int | None]  = mapped_column(ForeignKey("products.id", ondelete="SET NULL"), nullable=True)
     # ربط اختياري بصنف مخزني (inventory.Product) — fallback خصم مخزون 1:1
     # لو الصنف مفهوش وصفة حقيقية (راجع services._deduct_inventory_for_order).

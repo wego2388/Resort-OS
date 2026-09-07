@@ -190,6 +190,11 @@ def create_order(
             "quantity":   item_req.quantity,
             "notes":      item_req.notes,
             "extras":     extras_data,
+            # direct (2026-09-07): صنف بدون تحضير حقيقي (آيس كريم/شيشة/
+            # تسالي) بيتسجّل "served" فورًا — مفيش تذكرة KDS هتتولّد له
+            # خالص (راجع _create_kitchen_tickets_for_items تحت)، فمفيش
+            # سبب يفضل "pending" للأبد وهو أصلاً جاهز للتسليم.
+            "status":     "served" if item.station == "direct" else "pending",
         })
 
     vat_amount, svc_charge, gross_total = calculate_mixed_pricing(
@@ -329,6 +334,11 @@ def _create_kitchen_tickets_for_items(
     items_by_ticket: dict[tuple[int, str], list[dict]] = {}
     for order_item in order_items:
         station = station_by_item.get(order_item.item_id, "hot")
+        # direct: صنف بدون تحضير حقيقي (آيس كريم/شيشة/تسالي) — مفيش تذكرة
+        # KDS خالص، هو أصلاً بيتسجّل status="served" فورًا وقت الإضافة
+        # (راجع create_order/add_items_to_order فوق).
+        if station == "direct":
+            continue
         outlet_id = order_item.outlet_id or order.outlet_id
         items_by_ticket.setdefault((outlet_id, station), []).append({
             "order_item_id": order_item.id,
@@ -432,7 +442,7 @@ def add_items_to_order(db: Session, order_id: int, items: list, added_by: Option
             listed_unit_price=listed_base_price,
             quantity  = item_req.quantity,
             notes     = item_req.notes,
-            status    = "pending",
+            status    = "served" if item.station == "direct" else "pending",
             added_by  = added_by,
         )
         db.add(new_item)

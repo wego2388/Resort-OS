@@ -104,7 +104,11 @@ class DiningItemCreate(BaseModel):
     is_available:        bool = True
     preparation_minutes: int  = 10
     image_url:           str | None = Field(None, max_length=500)
-    station:             str = Field("hot", pattern=r"^(hot|grill|cold|bar|dessert)$")
+    # direct (2026-09-07): صنف من غير تحضير حقيقي (آيس كريم جاهز، شيشة،
+    # تسالي معبّأة) — مفيش تذكرة KDS بتتولّد له خالص، ولا يظهر على أي شاشة
+    # مطبخ/بار (راجع docstring DiningItem.station وservices.orders
+    # _create_kitchen_tickets_for_items).
+    station:             str = Field("hot", pattern=r"^(hot|grill|cold|bar|dessert|direct)$")
     linked_product_id:   int | None = None
     available_from_time:  time | None = None
     available_until_time: time | None = None
@@ -120,7 +124,7 @@ class DiningItemUpdate(BaseModel):
     is_available:        bool | None    = None
     preparation_minutes: int | None     = None
     category_id:         int | None     = None
-    station:             str | None     = Field(None, pattern=r"^(hot|grill|cold|bar|dessert)$")
+    station:             str | None     = Field(None, pattern=r"^(hot|grill|cold|bar|dessert|direct)$")
     image_url:           str | None     = None
     linked_product_id:   int | None     = None
     available_from_time:  time | None   = None
