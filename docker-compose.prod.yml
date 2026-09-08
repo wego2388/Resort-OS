@@ -203,6 +203,13 @@ services:
         VITE_CONTACT_PHONE: ${CONTACT_PHONE:-}
         VITE_CONTACT_EMAIL: ${CONTACT_EMAIL:-}
         VITE_CONTACT_RESERVATION_EMAIL: ${CONTACT_RESERVATION_EMAIL:-}
+        # El Kheima's real GA4/GTM/Facebook Pixel IDs — public tracking
+        # identifiers (not secrets), empty default keeps analytics off
+        # until GA_TRACKING_ID/GTM_ID/FACEBOOK_PIXEL_ID are exported (or set
+        # in a compose .env) at build time — same as CONTACT_* above.
+        VITE_GA_TRACKING_ID: ${GA_TRACKING_ID:-}
+        VITE_GTM_ID: ${GTM_ID:-}
+        VITE_FACEBOOK_PIXEL_ID: ${FACEBOOK_PIXEL_ID:-}
     restart: unless-stopped
     depends_on:
       backend:
