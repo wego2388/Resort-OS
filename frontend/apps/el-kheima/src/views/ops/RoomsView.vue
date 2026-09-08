@@ -29,6 +29,10 @@ const { formatNumber, formatDate: fmtDateFn } = useStaffFormat()
 const auth = useAuthStore()
 const branchId = computed(() => auth.branchId)
 const canRunNightAudit = computed(() => auth.hasPermission('pms.night_audit:run'))
+// إدارة أسعار أنواع الغرف (2026-09-08، طلب Mohamed) — كان مفيش أي شاشة
+// خالص تقدر تعدّل RoomType.base_rate/sea_view_surcharge، غير التعديل
+// المباشر في قاعدة البيانات. راجع PATCH /pms/room-types/{id} الجديد.
+const canManageRoomTypes = computed(() => auth.hasPermission('pms.room_configuration:manage'))
 
 interface Room {
   id: number
@@ -44,6 +48,8 @@ interface RoomTypeOption {
   id: number
   name: string
   name_ar?: string | null
+  base_rate?: string | number | null
+  sea_view_surcharge?: string | number | null
 }
 
 interface CurrentBookingInfo {
@@ -101,6 +107,42 @@ async function fetchRoomTypes() {
     roomTypesById.value = Object.fromEntries(list.map((rt) => [rt.id, rt]))
   } catch (e: any) {
     toast.error(e?.response?.data?.detail ?? t('backoffice.rooms.loadRoomTypesError'))
+  }
+}
+
+// ── إدارة أسعار أنواع الغرف ──────────────────────────────────────────
+const roomTypesModalOpen = ref(false)
+const roomTypeEdits = ref<Record<number, { base_rate: string; sea_view_surcharge: string }>>({})
+const savingRoomTypeId = ref<number | null>(null)
+
+function openRoomTypesModal() {
+  roomTypeEdits.value = Object.fromEntries(
+    Object.values(roomTypesById.value).map((rt) => [
+      rt.id,
+      {
+        base_rate: rt.base_rate != null ? String(rt.base_rate) : '',
+        sea_view_surcharge: rt.sea_view_surcharge != null ? String(rt.sea_view_surcharge) : '',
+      },
+    ]),
+  )
+  roomTypesModalOpen.value = true
+}
+
+async function saveRoomTypePrice(roomTypeId: number) {
+  const edit = roomTypeEdits.value[roomTypeId]
+  if (!edit) return
+  savingRoomTypeId.value = roomTypeId
+  try {
+    const payload: Record<string, string> = {}
+    if (edit.base_rate.trim() !== '') payload.base_rate = edit.base_rate.trim()
+    if (edit.sea_view_surcharge.trim() !== '') payload.sea_view_surcharge = edit.sea_view_surcharge.trim()
+    const res = await api.patch(`/api/v1/pms/room-types/${roomTypeId}`, payload)
+    roomTypesById.value = { ...roomTypesById.value, [roomTypeId]: res.data }
+    toast.success(t('backoffice.rooms.roomTypeSaved'))
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail ?? t('backoffice.rooms.roomTypeSaveError'))
+  } finally {
+    savingRoomTypeId.value = null
   }
 }
 
@@ -223,6 +265,11 @@ onUnmounted(() => clearInterval(refreshInterval))
       <h1 class="text-xl font-bold text-gray-900 dark:text-gray-100">{{ t('backoffice.rooms.title') }}</h1>
       <div class="flex items-center gap-2">
         <button
+          v-if="canManageRoomTypes"
+          @click="openRoomTypesModal"
+          class="px-3 py-1.5 bg-amber-600 text-white rounded-lg text-sm font-medium hover:bg-amber-700 transition-colors"
+        >💰 {{ t('backoffice.rooms.roomTypesPricing') }}</button>
+        <button
           v-if="canRunNightAudit"
           @click="openNightAudit"
           class="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors"
@@ -286,6 +333,40 @@ onUnmounted(() => clearInterval(refreshInterval))
             class="w-full bg-stone-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 py-2.5 rounded-xl font-semibold hover:bg-stone-200 transition-colors"
           >{{ t('backoffice.rooms.close') }}</button>
         </template>
+      </div>
+    </AppModal>
+
+    <AppModal :open="roomTypesModalOpen" :title="`💰 ${t('backoffice.rooms.roomTypesPricing')}`" @close="roomTypesModalOpen = false">
+      <div class="space-y-3">
+        <p class="text-sm text-gray-600 dark:text-gray-400">{{ t('backoffice.rooms.roomTypesPricingHint') }}</p>
+        <div v-for="rt in Object.values(roomTypesById)" :key="rt.id" class="border border-stone-200 dark:border-border rounded-xl p-3 space-y-2">
+          <div class="font-semibold text-gray-900 dark:text-gray-100">
+            {{ locale.startsWith('ar') ? (rt.name_ar || rt.name) : rt.name }}
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">{{ t('backoffice.rooms.baseRate') }}</label>
+              <input
+                v-if="roomTypeEdits[rt.id]"
+                v-model="roomTypeEdits[rt.id].base_rate" type="number" step="0.01" min="0"
+                class="w-full px-2 py-1.5 text-sm rounded-lg border border-stone-200 dark:border-border"
+              />
+            </div>
+            <div>
+              <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">{{ t('backoffice.rooms.seaViewSurcharge') }}</label>
+              <input
+                v-if="roomTypeEdits[rt.id]"
+                v-model="roomTypeEdits[rt.id].sea_view_surcharge" type="number" step="0.01" min="0"
+                class="w-full px-2 py-1.5 text-sm rounded-lg border border-stone-200 dark:border-border"
+              />
+            </div>
+          </div>
+          <button
+            @click="saveRoomTypePrice(rt.id)" :disabled="savingRoomTypeId === rt.id"
+            class="w-full bg-amber-600 text-white py-2 rounded-lg text-sm font-semibold hover:bg-amber-700 transition-colors disabled:opacity-50"
+          >{{ savingRoomTypeId === rt.id ? t('backoffice.rooms.saving') : t('backoffice.rooms.save') }}</button>
+        </div>
+        <EmptyState v-if="!Object.keys(roomTypesById).length" icon="🏨" :title="t('backoffice.rooms.noRoomTypes')" />
       </div>
     </AppModal>
 

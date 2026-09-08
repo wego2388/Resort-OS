@@ -408,6 +408,45 @@ class TestPMSPermissions:
         )
         assert resp.status_code == 403
 
+    def test_update_room_type_requires_admin(self, client: TestClient, db, fake_redis, manager_headers):
+        """PATCH /pms/room-types/{id} (2026-09-08) — نفس مستوى صلاحية
+        الإنشاء (admin 80+)، manager (60) لازم يترفض."""
+        branch = make_branch_committed(db)
+        room_type = make_room_type_committed(db, branch)
+        resp = client.patch(
+            f"/api/v1/pms/room-types/{room_type.id}",
+            json={"base_rate": "9999.00"},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 403
+
+    def test_update_room_type_changes_price_and_surcharge(self, client: TestClient, db, fake_redis, super_admin_headers):
+        """المسار الفعلي وراء تغيير أسعار الغرف (طلب Mohamed 2026-09-08) —
+        admin يقدر يعدّل base_rate وsea_view_surcharge لنوع غرفة موجود."""
+        branch = make_branch_committed(db)
+        selected_admin = selected_super_admin_headers(db, branch)
+        room_type = make_room_type_committed(db, branch)
+
+        resp = client.patch(
+            f"/api/v1/pms/room-types/{room_type.id}",
+            json={"base_rate": "8400.00", "sea_view_surcharge": "1300.00"},
+            headers=selected_admin,
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert Decimal(str(body["base_rate"])) == Decimal("8400.00")
+        assert Decimal(str(body["sea_view_surcharge"])) == Decimal("1300.00")
+
+    def test_update_room_type_not_found(self, client: TestClient, db, fake_redis, super_admin_headers):
+        branch = make_branch_committed(db)
+        selected_admin = selected_super_admin_headers(db, branch)
+        resp = client.patch(
+            "/api/v1/pms/room-types/999999",
+            json={"base_rate": "100.00"},
+            headers=selected_admin,
+        )
+        assert resp.status_code == 404
+
     def test_create_booking_allows_cashier_level(self, client: TestClient, db, fake_redis, cashier_headers):
         """⚠️ باج صلاحيات حقيقي اتكشف حي (2026-07-06، اختبار استقبال كامل):
         إنشاء حجز/تسجيل دخول/تسجيل خروج كانوا محتاجين get_manager_user

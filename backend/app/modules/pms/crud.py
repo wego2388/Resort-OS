@@ -12,7 +12,7 @@ from app.modules.pms.models import (
     Booking, BookingRoom, HousekeepingTask, NightAuditLog, RatePlan, Room, RoomBundle, RoomType,
 )
 from app.modules.pms.schemas import (
-    BookingCreate, RatePlanCreate, RatePlanUpdate, RoomCreate, RoomTypeCreate,
+    BookingCreate, RatePlanCreate, RatePlanUpdate, RoomCreate, RoomTypeCreate, RoomTypeUpdate,
 )
 
 
@@ -34,6 +34,13 @@ def create_room_type(db: Session, data: RoomTypeCreate) -> RoomType:
     db.add(obj)
     db.flush()
     return obj
+
+
+def update_room_type(db: Session, room_type: RoomType, data: RoomTypeUpdate) -> RoomType:
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(room_type, field, value)
+    db.flush()
+    return room_type
 
 
 # ── Room ──────────────────────────────────────────────────────────────

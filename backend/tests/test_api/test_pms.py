@@ -38,7 +38,7 @@ def make_room_type(db, branch):
     return rt
 
 
-def make_room(db, branch, room_type):
+def make_room(db, branch, room_type, view_type="none"):
     from app.modules.pms.models import Room
     r = Room(
         branch_id=branch.id,
@@ -46,6 +46,7 @@ def make_room(db, branch, room_type):
         name=f"R-{uuid.uuid4().hex[:6].upper()}",
         floor=1,
         status="available",
+        view_type=view_type,
     )
     db.add(r)
     db.flush()
@@ -773,6 +774,87 @@ class TestRatePlanBookingIntegration:
                 check_in=ci, check_out=ci + timedelta(days=1),
                 room_ids=[room.id], rate_plan_id=plan.id,
             ))
+
+
+class TestSeaViewSurcharge:
+    """RoomType.sea_view_surcharge (2026-09-08، طلب Mohamed) — أسعار
+    حقيقية مختلفة حسب الإطلالة. قبل كده مستحيل فعليًا تسعّر غرفة بحر
+    مختلف عن غرفة حديقة من نفس النوع — base_rate واحد للنوع كله."""
+
+    def test_sea_view_room_gets_full_surcharge(self, db):
+        branch = make_branch(db)
+        rt = make_room_type(db, branch)  # base_rate = 500.00
+        rt.sea_view_surcharge = Decimal("150.00")
+        db.commit()
+        room = make_room(db, branch, rt, view_type="sea")
+        ci = date.today() + timedelta(days=20)
+        booking = services.create_booking(db, BookingCreate(
+            branch_id=branch.id, guest_name="ضيف بحر",
+            check_in=ci, check_out=ci + timedelta(days=1),
+            room_ids=[room.id],
+        ))
+        assert booking.rooms[0].daily_rate == Decimal("650.00")  # 500 + 150
+
+    def test_garden_view_room_gets_no_surcharge(self, db):
+        branch = make_branch(db)
+        rt = make_room_type(db, branch)  # base_rate = 500.00
+        rt.sea_view_surcharge = Decimal("150.00")
+        db.commit()
+        room = make_room(db, branch, rt, view_type="garden_view")
+        ci = date.today() + timedelta(days=21)
+        booking = services.create_booking(db, BookingCreate(
+            branch_id=branch.id, guest_name="ضيف حديقة",
+            check_in=ci, check_out=ci + timedelta(days=1),
+            room_ids=[room.id],
+        ))
+        assert booking.rooms[0].daily_rate == Decimal("500.00")
+
+    def test_side_sea_view_gets_half_surcharge(self, db):
+        branch = make_branch(db)
+        rt = make_room_type(db, branch)  # base_rate = 500.00
+        rt.sea_view_surcharge = Decimal("150.00")
+        db.commit()
+        room = make_room(db, branch, rt, view_type="side_sea")
+        ci = date.today() + timedelta(days=22)
+        booking = services.create_booking(db, BookingCreate(
+            branch_id=branch.id, guest_name="ضيف إطلالة جانبية",
+            check_in=ci, check_out=ci + timedelta(days=1),
+            room_ids=[room.id],
+        ))
+        assert booking.rooms[0].daily_rate == Decimal("575.00")  # 500 + 150/2
+
+    def test_surcharge_applies_on_top_of_rate_plan_multiplier(self, db):
+        branch = make_branch(db)
+        rt = make_room_type(db, branch)  # base_rate = 500.00
+        rt.sea_view_surcharge = Decimal("150.00")
+        db.commit()
+        room = make_room(db, branch, rt, view_type="sea")
+        plan = crud.create_rate_plan(db, RatePlanCreate(
+            branch_id=branch.id, room_type_id=rt.id, name="موسم عالي",
+            rate_multiplier=Decimal("1.5000"),
+            valid_from=date.today(), valid_until=date.today() + timedelta(days=365),
+        ))
+        db.commit()
+        ci = date.today() + timedelta(days=23)
+        booking = services.create_booking(db, BookingCreate(
+            branch_id=branch.id, guest_name="ضيف بحر موسم عالي",
+            check_in=ci, check_out=ci + timedelta(days=1),
+            room_ids=[room.id], rate_plan_id=plan.id,
+        ))
+        # (500 * 1.5) + 150 = 900 — الفرق بيتضاف فوق سعر الخطة، مش جزء منها
+        assert booking.rooms[0].daily_rate == Decimal("900.00")
+
+    def test_no_surcharge_configured_means_zero(self, db):
+        branch = make_branch(db)
+        rt = make_room_type(db, branch)  # sea_view_surcharge لسه None
+        room = make_room(db, branch, rt, view_type="sea")
+        ci = date.today() + timedelta(days=24)
+        booking = services.create_booking(db, BookingCreate(
+            branch_id=branch.id, guest_name="ضيف",
+            check_in=ci, check_out=ci + timedelta(days=1),
+            room_ids=[room.id],
+        ))
+        assert booking.rooms[0].daily_rate == Decimal("500.00")
 
 
 class TestRatePlanManagement:

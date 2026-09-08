@@ -14,11 +14,24 @@ class RoomTypeCreate(BaseModel):
     name_ar:       Optional[str] = None
     # None is an explicit "not approved yet" state, not a zero price/capacity.
     base_rate:     Optional[Decimal] = Field(None, gt=0)
+    # فرق سعر إطلالة البحر المباشرة فوق base_rate — None/0 يعني بدون فرق.
+    sea_view_surcharge: Optional[Decimal] = Field(None, ge=0)
     # Keep the existing API default for ordinary manual creates while still
     # permitting an explicit unconfigured state for reviewed real inventory.
     max_occupancy: Optional[int] = Field(2, ge=1)
     amenities:     Optional[str] = None
     is_active:     bool = True
+
+
+class RoomTypeUpdate(BaseModel):
+    """كل الحقول اختيارية — تحديث جزئي (مثلاً تعديل الأسعار بس)."""
+    name:          Optional[str] = Field(None, max_length=100)
+    name_ar:       Optional[str] = None
+    base_rate:     Optional[Decimal] = Field(None, gt=0)
+    sea_view_surcharge: Optional[Decimal] = Field(None, ge=0)
+    max_occupancy: Optional[int] = Field(None, ge=1)
+    amenities:     Optional[str] = None
+    is_active:     Optional[bool] = None
 
 
 class RoomTypeRead(RoomTypeCreate):

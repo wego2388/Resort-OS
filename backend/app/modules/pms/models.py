@@ -31,6 +31,13 @@ class RoomType(Base, TimestampMixin):
     # be coerced to zero because a zero-value booking would become a financial
     # fact.  PMS booking services fail closed until a base/override rate exists.
     base_rate:    Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    # سعر إضافي لليلة لغرف بإطلالة بحر مباشرة (Room.view_type == "sea") فوق
+    # base_rate (اللي بيمثّل سعر الإطلالة العادية/الحديقة) — طلب Mohamed
+    # 2026-09-08: أسعار حقيقية مختلفة حسب الإطلالة، والنظام قبل كده مكانش
+    # عنده أي طريقة يفرّق سعريًا بين غرفتين من نفس النوع بإطلالة مختلفة.
+    # NULL/0 = بدون فرق سعر. "side_sea" (إطلالة جانبية جزئية) بتاخد نص
+    # الفرق ده — قرار Mohamed لسه محتاج تأكيد له، افتراضي معقول مؤقتًا.
+    sea_view_surcharge: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
     max_occupancy:Mapped[int | None]     = mapped_column(Integer, nullable=True)
     amenities:    Mapped[str | None]  = mapped_column(Text, nullable=True)   # JSON list
     is_active:    Mapped[bool]        = mapped_column(Boolean, default=True)

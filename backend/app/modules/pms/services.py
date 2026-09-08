@@ -75,22 +75,38 @@ def _resolve_rate_plan(db: Session, data: BookingCreate, nights: int) -> Optiona
     return plan
 
 
+def _view_surcharge_for(room_type: "RoomType | None", view_type: str) -> Decimal:
+    """فرق سعر الإطلالة فوق base_rate — sea = الفرق كامل، side_sea (إطلالة
+    جانبية جزئية) = نص الفرق (قرار معقول مؤقت لحد ما Mohamed يأكّده)،
+    garden_view/none = صفر. راجع docstring RoomType.sea_view_surcharge."""
+    surcharge = (room_type.sea_view_surcharge if room_type else None) or Decimal("0")
+    if view_type == "sea":
+        return surcharge
+    if view_type == "side_sea":
+        return (surcharge / 2).quantize(Decimal("0.01"))
+    return Decimal("0")
+
+
 def _room_rate_for(
     room_type: "RoomType | None",
     plan: "RatePlan | None",
     room_type_id: int,
+    view_type: str = "none",
 ) -> Decimal | None:
     """السعر اليومي الفعلي لغرفة معيّنة: سعر الخطة (override أو multiplier)
     لو الخطة سارية وعامة (room_type_id=None) أو مطابقة لنوع الغرفة دي بالظبط،
-    وإلا السعر الأساسي الخام لنوع الغرفة."""
+    وإلا السعر الأساسي الخام لنوع الغرفة — زائد فرق الإطلالة (2026-09-08،
+    طلب Mohamed) فوق أي من الحالتين، لو الغرفة دي إطلالة بحر."""
     base = room_type.base_rate if room_type else None
     if plan and (plan.room_type_id is None or plan.room_type_id == room_type_id):
         if plan.base_rate_override is not None:
-            return plan.base_rate_override
+            return plan.base_rate_override + _view_surcharge_for(room_type, view_type)
         if base is None:
             return None
-        return (base * plan.rate_multiplier).quantize(Decimal("0.01"))
-    return base
+        return (base * plan.rate_multiplier).quantize(Decimal("0.01")) + _view_surcharge_for(room_type, view_type)
+    if base is None:
+        return None
+    return base + _view_surcharge_for(room_type, view_type)
 
 
 def _validate_rate_plan_dates(valid_from: date, valid_until: date) -> None:
@@ -210,7 +226,7 @@ def _lock_and_price_rooms(
             if not room_type or room_type.branch_id != branch_id:
                 raise ValueError(f"نوع الغرفة المرتبط بالغرفة {room_id} لا ينتمي لهذا الفرع")
             applies = rate_plan and (rate_plan.room_type_id is None or rate_plan.room_type_id == room.room_type_id)
-            daily_rate = _room_rate_for(room_type, rate_plan, room.room_type_id)
+            daily_rate = _room_rate_for(room_type, rate_plan, room.room_type_id, room.view_type)
             applied_rate_plan_id = rate_plan.id if applies else None
         if daily_rate is None:
             raise ValueError(

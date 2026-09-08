@@ -5339,7 +5339,16 @@
       "loadCurrentBookingsError": "تعذّر تحميل الحجوزات الحالية",
       "loadRoomMapError": "تعذّر تحميل خريطة الغرف",
       "nightAuditSuccess": "تم تشغيل التدقيق الليلي بنجاح",
-      "nightAuditError": "تعذّر تشغيل التدقيق الليلي"
+      "nightAuditError": "تعذّر تشغيل التدقيق الليلي",
+      "roomTypesPricing": "أسعار الغرف",
+      "roomTypesPricingHint": "السعر الأساسي (لإطلالة الحديقة) وفرق سعر إطلالة البحر لكل نوع غرفة — الفرق ده بيتضاف تلقائيًا لأي غرفة إطلالتها بحر مباشر، ونصه لإطلالة البحر الجانبية.",
+      "baseRate": "السعر الأساسي (إطلالة حديقة)",
+      "seaViewSurcharge": "فرق إطلالة البحر",
+      "roomTypeSaved": "تم حفظ السعر",
+      "roomTypeSaveError": "تعذّر حفظ السعر",
+      "noRoomTypes": "لا توجد أنواع غرف",
+      "save": "حفظ",
+      "saving": "جاري الحفظ..."
     },
     "housekeeping": {
       "title": "مهام التدبير المنزلي",

@@ -17,7 +17,7 @@ from app.modules.pms.schemas import (
     BookingCreate, BookingRead, BundleBookingCreate, CheckinRequest, EarlyLateRequest,
     HousekeepingTaskRead, HousekeepingTaskStatusUpdate,
     NightAuditLogRead, RatePlanCreate, RatePlanRead, RatePlanUpdate, RoomBundleRead, RoomCreate,
-    RoomRead, RoomStatusUpdate, RoomTypeCreate, RoomTypeRead,
+    RoomRead, RoomStatusUpdate, RoomTypeCreate, RoomTypeRead, RoomTypeUpdate,
 )
 from app.modules.core.schemas import PaginatedResponse
 
@@ -151,6 +151,26 @@ def create_room_type(
 ):
     _assert_pms_branch(db, user, data.branch_id, "إنشاء نوع غرفة")
     obj = crud.create_room_type(db, data)
+    db.commit(); db.refresh(obj)
+    return RoomTypeRead.model_validate(obj)
+
+
+@router.patch(
+    "/pms/room-types/{room_type_id}",
+    response_model=RoomTypeRead,
+    dependencies=[Depends(require_permission("pms.room_configuration", "manage", min_role_level=80))],
+)
+def update_room_type(
+    room_type_id: int,
+    data: RoomTypeUpdate,
+    db: DbDep,
+    user=Depends(get_pms_user),
+):
+    obj = crud.get_room_type(db, room_type_id)
+    if not obj:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "نوع الغرفة غير موجود")
+    _assert_pms_branch(db, user, obj.branch_id, "تعديل نوع غرفة")
+    obj = crud.update_room_type(db, obj, data)
     db.commit(); db.refresh(obj)
     return RoomTypeRead.model_validate(obj)
 
