@@ -201,6 +201,8 @@ services:
         # Empty is safer than publishing invented contact details.
         VITE_CONTACT_WHATSAPP: ${CONTACT_WHATSAPP:-}
         VITE_CONTACT_PHONE: ${CONTACT_PHONE:-}
+        VITE_CONTACT_EMAIL: ${CONTACT_EMAIL:-}
+        VITE_CONTACT_RESERVATION_EMAIL: ${CONTACT_RESERVATION_EMAIL:-}
     restart: unless-stopped
     depends_on:
       backend:
