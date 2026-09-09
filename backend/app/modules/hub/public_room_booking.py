@@ -203,6 +203,10 @@ def submit_public_room_booking(
 
     db.commit()
     db.refresh(booking)
+
+    from app.tasks.hub_tasks import notify_new_room_booking  # noqa: PLC0415
+    notify_new_room_booking.delay(booking.id)
+
     return PublicRoomBookingResponse(
         message=_SUCCESS_MESSAGES.get(data.language, _SUCCESS_MESSAGES["en"]),
         reference=booking.public_reference,

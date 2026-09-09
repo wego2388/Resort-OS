@@ -320,6 +320,9 @@ def submit_public_contact(
     _audit(db, form, "public_contact_submitted")
     db.commit()
 
+    from app.tasks.hub_tasks import notify_new_contact_form  # noqa: PLC0415
+    notify_new_contact_form.delay(form.id)
+
     return ContactFormResponse(
         message=_SUCCESS_MESSAGES.get(data.language, _SUCCESS_MESSAGES["en"]),
         reference=form.public_reference,

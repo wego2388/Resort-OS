@@ -63,6 +63,23 @@ def _make_online_booking(db, branch, status="pending", created_at=None):
     return booking
 
 
+def _make_contact_form(db, branch, purpose="general_inquiry"):
+    from app.modules.hub.models import ContactForm
+    form = ContactForm(
+        branch_id=branch.id,
+        full_name="Guest Name",
+        phone="01000000000",
+        email="guest@example.com",
+        subject="Question",
+        message="Test message",
+        purpose=purpose,
+        service_contact_authorized=True,
+    )
+    db.add(form)
+    db.commit()
+    return form
+
+
 def _db_ctx(db):
     ctx = MagicMock()
     ctx.__enter__ = MagicMock(return_value=db)
@@ -238,3 +255,81 @@ class TestRefreshSitemap:
         with patch("app.core.database.SessionLocal", return_value=_db_ctx(db)):
             from app.tasks.hub_tasks import refresh_sitemap
             refresh_sitemap()
+
+
+# ─── notify_new_room_booking / notify_new_contact_form ───────────────────────
+
+class TestNotifyNewRoomBooking:
+
+    def test_sends_to_reservation_email_with_booking_details(self, db):
+        branch = _make_branch(db)
+        booking = _make_online_booking(db, branch)
+        booking.guest_email = "guest@example.com"
+        booking.public_reference = f"BK-{uuid.uuid4().hex[:8]}"
+        db.commit()
+
+        with patch("app.core.database.SessionLocal", return_value=_db_ctx(db)), \
+             patch("app.tasks.hub_tasks.send_email", return_value=True) as mock_send:
+            from app.tasks.hub_tasks import notify_new_room_booking
+            notify_new_room_booking(booking.id)
+
+        mock_send.assert_called_once()
+        kwargs = mock_send.call_args.kwargs
+        assert kwargs["to"] == "reservation@elkheima.com"
+        assert booking.public_reference in kwargs["subject"]
+        assert booking.guest_name in kwargs["body"]
+        assert booking.guest_phone in kwargs["body"]
+
+    def test_missing_booking_does_not_raise(self, db):
+        with patch("app.core.database.SessionLocal", return_value=_db_ctx(db)), \
+             patch("app.tasks.hub_tasks.send_email") as mock_send:
+            from app.tasks.hub_tasks import notify_new_room_booking
+            notify_new_room_booking(999999)
+        mock_send.assert_not_called()
+
+    def test_send_failure_triggers_retry(self, db):
+        branch = _make_branch(db)
+        booking = _make_online_booking(db, branch)
+
+        with patch("app.core.database.SessionLocal", return_value=_db_ctx(db)), \
+             patch("app.tasks.hub_tasks.send_email", return_value=False):
+            from app.tasks.hub_tasks import notify_new_room_booking
+            with pytest.raises(Exception):
+                notify_new_room_booking(booking.id)
+
+
+class TestNotifyNewContactForm:
+
+    def test_general_inquiry_sends_to_info_email(self, db):
+        branch = _make_branch(db)
+        form = _make_contact_form(db, branch, purpose="general_inquiry")
+
+        with patch("app.core.database.SessionLocal", return_value=_db_ctx(db)), \
+             patch("app.tasks.hub_tasks.send_email", return_value=True) as mock_send:
+            from app.tasks.hub_tasks import notify_new_contact_form
+            notify_new_contact_form(form.id)
+
+        mock_send.assert_called_once()
+        kwargs = mock_send.call_args.kwargs
+        assert kwargs["to"] == "info@elkheima.com"
+        assert form.public_reference in kwargs["subject"]
+
+    def test_non_general_purpose_skipped_no_channel_yet(self, db):
+        """beach_service/activity_request/... لسه بتنتظر قناة واتساب — مفيش
+        إيميل يتبعت ليهم لحد ما تُبنى (راجع docstring في notify_new_contact_form)."""
+        branch = _make_branch(db)
+        form = _make_contact_form(db, branch, purpose="beach_service")
+
+        with patch("app.core.database.SessionLocal", return_value=_db_ctx(db)), \
+             patch("app.tasks.hub_tasks.send_email") as mock_send:
+            from app.tasks.hub_tasks import notify_new_contact_form
+            notify_new_contact_form(form.id)
+
+        mock_send.assert_not_called()
+
+    def test_missing_form_does_not_raise(self, db):
+        with patch("app.core.database.SessionLocal", return_value=_db_ctx(db)), \
+             patch("app.tasks.hub_tasks.send_email") as mock_send:
+            from app.tasks.hub_tasks import notify_new_contact_form
+            notify_new_contact_form(999999)
+        mock_send.assert_not_called()

@@ -2,14 +2,24 @@
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime
 
 from app.celery_app import celery_app
 from app.core.config import settings
+from app.core.kernel.email import send_email
 from app.core.kernel.worker import notify_task_failure
 from app.resort_os.timezone_utils import local_today
 
 logger = logging.getLogger(__name__)
+
+# قرار Mohamed 2026-09-09: أي حجز/استفسار غرفة يروح لإيميل الحجوزات، وأي
+# استفسار عام (نموذج تواصل معنا/تايم شير — purpose="general_inquiry") يروح
+# لإيميل الاستعلامات العام. قابلين للتجاوز عبر env var لو الصندوق اتغيّر.
+RESERVATION_NOTIFY_EMAIL = os.getenv(
+    "RESERVATION_NOTIFY_EMAIL", "reservation@elkheima.com"
+)
+INFO_NOTIFY_EMAIL = os.getenv("INFO_NOTIFY_EMAIL", "info@elkheima.com")
 
 
 @celery_app.task(
@@ -170,3 +180,99 @@ def process_pending_bookings_reminder(self):
     except Exception as exc:
         logger.error("hub process_pending_bookings_reminder failed: %s", exc)
         notify_task_failure("app.tasks.hub_tasks.process_pending_bookings_reminder", exc)
+
+
+@celery_app.task(
+    name="app.tasks.hub_tasks.notify_new_room_booking",
+    bind=True,
+    max_retries=3,
+)
+def notify_new_room_booking(self, booking_id: int):
+    """طلب حجز غرفة عام جديد (الموقع التسويقي) — إيميل فوري لصندوق الحجوزات.
+    مُستدعاة مرة واحدة فور إنشاء HubOnlineBooking (راجع
+    hub.public_room_booking.submit_public_room_booking)، مش دورية."""
+    try:
+        from app.core.database import SessionLocal            # noqa: PLC0415
+        from app.modules.hub.models import HubOnlineBooking    # noqa: PLC0415
+
+        with SessionLocal() as db:
+            booking = db.get(HubOnlineBooking, booking_id)
+            if not booking:
+                logger.warning("notify_new_room_booking: booking %s not found", booking_id)
+                return
+
+            lines = [
+                f"مرجع الطلب: {booking.public_reference}",
+                f"الاسم: {booking.guest_name}",
+                f"الهاتف: {booking.guest_phone}",
+            ]
+            if booking.guest_email:
+                lines.append(f"الإيميل: {booking.guest_email}")
+            lines.extend([
+                f"تاريخ الوصول: {booking.check_in}",
+                f"تاريخ المغادرة: {booking.check_out}",
+                f"عدد الكبار: {booking.adults} — عدد الأطفال: {booking.children}",
+            ])
+            if booking.quoted_total is not None:
+                lines.append(
+                    f"السعر التقديري: {booking.quoted_total} {booking.quoted_currency}"
+                )
+            if booking.notes:
+                lines.append(f"ملاحظات الضيف: {booking.notes}")
+
+            sent = send_email(
+                to=RESERVATION_NOTIFY_EMAIL,
+                subject=f"طلب حجز جديد من الموقع — {booking.public_reference}",
+                body="\n".join(lines),
+            )
+            if not sent:
+                raise RuntimeError("send_email returned False")
+    except Exception as exc:
+        logger.error("notify_new_room_booking failed: %s", exc)
+        raise self.retry(exc=exc, countdown=300)
+
+
+@celery_app.task(
+    name="app.tasks.hub_tasks.notify_new_contact_form",
+    bind=True,
+    max_retries=3,
+)
+def notify_new_contact_form(self, contact_form_id: int):
+    """استفسار عام جديد (نموذج تواصل معنا/تايم شير — purpose="general_inquiry")
+    من الموقع التسويقي — إيميل فوري لصندوق الاستعلامات العام. استفسارات
+    الشاطئ/الأنشطة/الفعاليات (باقي قيم purpose) لسه بتنتظر قناة واتساب
+    (محتاجة حساب Twilio حقيقي — راجع core.kernel.whatsapp) قبل ما تتوصّل
+    تلقائيًا؛ مُستدعاة مرة واحدة فور إنشاء ContactForm، مش دورية."""
+    try:
+        from app.core.database import SessionLocal      # noqa: PLC0415
+        from app.modules.hub.models import ContactForm   # noqa: PLC0415
+
+        with SessionLocal() as db:
+            form = db.get(ContactForm, contact_form_id)
+            if not form:
+                logger.warning("notify_new_contact_form: contact %s not found", contact_form_id)
+                return
+            if form.purpose != "general_inquiry":
+                return
+
+            lines = [
+                f"مرجع الطلب: {form.public_reference}",
+                f"الاسم: {form.full_name}",
+                f"الهاتف: {form.phone}",
+            ]
+            if form.email:
+                lines.append(f"الإيميل: {form.email}")
+            if form.subject:
+                lines.append(f"الموضوع: {form.subject}")
+            lines.append(f"الرسالة: {form.message}")
+
+            sent = send_email(
+                to=INFO_NOTIFY_EMAIL,
+                subject=f"استفسار جديد من الموقع — {form.public_reference}",
+                body="\n".join(lines),
+            )
+            if not sent:
+                raise RuntimeError("send_email returned False")
+    except Exception as exc:
+        logger.error("notify_new_contact_form failed: %s", exc)
+        raise self.retry(exc=exc, countdown=300)
