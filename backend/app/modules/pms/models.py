@@ -38,6 +38,13 @@ class RoomType(Base, TimestampMixin):
     # NULL/0 = بدون فرق سعر. "side_sea" (إطلالة جانبية جزئية) بتاخد نص
     # الفرق ده — قرار Mohamed لسه محتاج تأكيد له، افتراضي معقول مؤقتًا.
     sea_view_surcharge: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    # سعر إعلان بالدولار لليلة، مستقل عن base_rate — قرار Mohamed 2026-09-09:
+    # الموقع العام يعرض الجنيه للعربي والدولار لبقية اللغات، وده رقم تجاري
+    # ثابت هو اللي يحدده (مش تحويل حي بسعر صرف يوم بيوم عبر exchange_rates،
+    # اللي أصلاً غير محدّث وممكن يختلف عن قرار Mohamed السعري). NULL = مفيش
+    # سعر دولار معلَن لهذا النوع بعد؛ الموقع العام يعرض الجنيه لكل اللغات
+    # وقتها (راجع hub.public_catalog.get_public_catalog).
+    list_price_usd: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
     max_occupancy:Mapped[int | None]     = mapped_column(Integer, nullable=True)
     amenities:    Mapped[str | None]  = mapped_column(Text, nullable=True)   # JSON list
     is_active:    Mapped[bool]        = mapped_column(Boolean, default=True)

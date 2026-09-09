@@ -327,6 +327,10 @@ class RoomCatalogEntryRead(BaseModel):
     price_unit:          str
     effective_from:      date
     includes_breakfast:  bool
+    usd_base_price:      Optional[Decimal] = None
+    usd_vat_amount:      Optional[Decimal] = None
+    usd_service_amount:  Optional[Decimal] = None
+    usd_total:           Optional[Decimal] = None
 
 
 class RoomQuoteRead(BaseModel):

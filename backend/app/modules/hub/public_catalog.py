@@ -50,6 +50,13 @@ class CatalogEntry:
     price_unit: str
     effective_from: date
     includes_breakfast: bool
+    # قرار Mohamed 2026-09-09: الموقع العام يعرض الجنيه للعربي والدولار
+    # لبقية اللغات — سعر دولار تجاري ثابت (RoomType.list_price_usd)، مش
+    # تحويل عبر سعر صرف. None لأي نوع/باقة لسه من غير سعر دولار معلَن.
+    usd_base_price: Decimal | None = None
+    usd_vat_amount: Decimal | None = None
+    usd_service_amount: Decimal | None = None
+    usd_total: Decimal | None = None
 
 
 def get_public_catalog(db: Session, branch_id: int) -> list[CatalogEntry]:
@@ -69,12 +76,18 @@ def get_public_catalog(db: Session, branch_id: int) -> list[CatalogEntry]:
         if rt.base_rate is None or rt.max_occupancy is None:
             continue
         vat, service = _vat_and_service(rt.base_rate)
+        usd_vat = usd_service = usd_total = None
+        if rt.list_price_usd is not None:
+            usd_vat, usd_service = _vat_and_service(rt.list_price_usd)
+            usd_total = rt.list_price_usd + usd_vat + usd_service
         entries.append(CatalogEntry(
             entry_type="room_type", id=rt.id, name=rt.name, name_ar=rt.name_ar,
             capacity=rt.max_occupancy, base_price=rt.base_rate,
             vat_amount=vat, service_amount=service, total=rt.base_rate + vat + service,
             currency=settings.DEFAULT_CURRENCY, price_unit=PRICE_UNIT,
             effective_from=PUBLISHED_PRICING_EFFECTIVE_FROM, includes_breakfast=INCLUDES_BREAKFAST,
+            usd_base_price=rt.list_price_usd, usd_vat_amount=usd_vat,
+            usd_service_amount=usd_service, usd_total=usd_total,
         ))
 
     bundles = (

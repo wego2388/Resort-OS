@@ -30,8 +30,8 @@ const auth = useAuthStore()
 const branchId = computed(() => auth.branchId)
 const canRunNightAudit = computed(() => auth.hasPermission('pms.night_audit:run'))
 // إدارة أسعار أنواع الغرف (2026-09-08، طلب Mohamed) — كان مفيش أي شاشة
-// خالص تقدر تعدّل RoomType.base_rate/sea_view_surcharge، غير التعديل
-// المباشر في قاعدة البيانات. راجع PATCH /pms/room-types/{id} الجديد.
+// خالص تقدر تعدّل RoomType.base_rate/list_price_usd، غير التعديل المباشر
+// في قاعدة البيانات. راجع PATCH /pms/room-types/{id}.
 const canManageRoomTypes = computed(() => auth.hasPermission('pms.room_configuration:manage'))
 
 interface Room {
@@ -49,7 +49,7 @@ interface RoomTypeOption {
   name: string
   name_ar?: string | null
   base_rate?: string | number | null
-  sea_view_surcharge?: string | number | null
+  list_price_usd?: string | number | null
 }
 
 interface CurrentBookingInfo {
@@ -112,7 +112,7 @@ async function fetchRoomTypes() {
 
 // ── إدارة أسعار أنواع الغرف ──────────────────────────────────────────
 const roomTypesModalOpen = ref(false)
-const roomTypeEdits = ref<Record<number, { base_rate: string; sea_view_surcharge: string }>>({})
+const roomTypeEdits = ref<Record<number, { base_rate: string; list_price_usd: string }>>({})
 const savingRoomTypeId = ref<number | null>(null)
 
 function openRoomTypesModal() {
@@ -121,7 +121,7 @@ function openRoomTypesModal() {
       rt.id,
       {
         base_rate: rt.base_rate != null ? String(rt.base_rate) : '',
-        sea_view_surcharge: rt.sea_view_surcharge != null ? String(rt.sea_view_surcharge) : '',
+        list_price_usd: rt.list_price_usd != null ? String(rt.list_price_usd) : '',
       },
     ]),
   )
@@ -135,7 +135,7 @@ async function saveRoomTypePrice(roomTypeId: number) {
   try {
     const payload: Record<string, string> = {}
     if (edit.base_rate.trim() !== '') payload.base_rate = edit.base_rate.trim()
-    if (edit.sea_view_surcharge.trim() !== '') payload.sea_view_surcharge = edit.sea_view_surcharge.trim()
+    if (edit.list_price_usd.trim() !== '') payload.list_price_usd = edit.list_price_usd.trim()
     const res = await api.patch(`/api/v1/pms/room-types/${roomTypeId}`, payload)
     roomTypesById.value = { ...roomTypesById.value, [roomTypeId]: res.data }
     toast.success(t('backoffice.rooms.roomTypeSaved'))
@@ -353,10 +353,10 @@ onUnmounted(() => clearInterval(refreshInterval))
               />
             </div>
             <div>
-              <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">{{ t('backoffice.rooms.seaViewSurcharge') }}</label>
+              <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">{{ t('backoffice.rooms.listPriceUsd') }}</label>
               <input
                 v-if="roomTypeEdits[rt.id]"
-                v-model="roomTypeEdits[rt.id].sea_view_surcharge" type="number" step="0.01" min="0"
+                v-model="roomTypeEdits[rt.id].list_price_usd" type="number" step="0.01" min="0"
                 class="w-full px-2 py-1.5 text-sm rounded-lg border border-stone-200 dark:border-border"
               />
             </div>
