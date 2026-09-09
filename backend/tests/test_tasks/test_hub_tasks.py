@@ -264,7 +264,7 @@ class TestNotifyNewRoomBooking:
     def test_sends_to_reservation_email_with_booking_details(self, db):
         branch = _make_branch(db)
         booking = _make_online_booking(db, branch)
-        booking.guest_email = "guest@example.com"
+        booking.guest_email = None  # isolate: no guest reply expected here
         booking.public_reference = f"BK-{uuid.uuid4().hex[:8]}"
         db.commit()
 
@@ -279,6 +279,54 @@ class TestNotifyNewRoomBooking:
         assert booking.public_reference in kwargs["subject"]
         assert booking.guest_name in kwargs["body"]
         assert booking.guest_phone in kwargs["body"]
+
+    def test_guest_with_email_also_gets_confirmation_reply(self, db):
+        """Mohamed 2026-09-09: 'الهدف التأكد من المراسلة بالإيميلات شغالة' —
+        مراسلة باتجاهين، مش بس تنبيه للموظفين."""
+        branch = _make_branch(db)
+        booking = _make_online_booking(db, branch)
+        booking.guest_email = "guest@example.com"
+        booking.public_reference = f"BK-{uuid.uuid4().hex[:8]}"
+        db.commit()
+
+        with patch("app.core.database.SessionLocal", return_value=_db_ctx(db)), \
+             patch("app.tasks.hub_tasks.send_email", return_value=True) as mock_send:
+            from app.tasks.hub_tasks import notify_new_room_booking
+            notify_new_room_booking(booking.id, "en")
+
+        assert mock_send.call_count == 2
+        staff_call, guest_call = mock_send.call_args_list
+        assert staff_call.kwargs["to"] == "reservation@elkheima.com"
+        assert guest_call.kwargs["to"] == "guest@example.com"
+        assert booking.public_reference in guest_call.kwargs["subject"]
+        assert booking.guest_name in guest_call.kwargs["body"]
+
+    def test_guest_without_email_gets_no_second_send(self, db):
+        branch = _make_branch(db)
+        booking = _make_online_booking(db, branch)
+        booking.guest_email = None
+        db.commit()
+
+        with patch("app.core.database.SessionLocal", return_value=_db_ctx(db)), \
+             patch("app.tasks.hub_tasks.send_email", return_value=True) as mock_send:
+            from app.tasks.hub_tasks import notify_new_room_booking
+            notify_new_room_booking(booking.id)
+
+        assert mock_send.call_count == 1
+
+    def test_guest_reply_language_defaults_to_arabic(self, db):
+        branch = _make_branch(db)
+        booking = _make_online_booking(db, branch)
+        booking.guest_email = "guest@example.com"
+        db.commit()
+
+        with patch("app.core.database.SessionLocal", return_value=_db_ctx(db)), \
+             patch("app.tasks.hub_tasks.send_email", return_value=True) as mock_send:
+            from app.tasks.hub_tasks import notify_new_room_booking
+            notify_new_room_booking(booking.id)  # no language arg
+
+        _, guest_call = mock_send.call_args_list
+        assert "تأكيد استلام طلب حجزك" in guest_call.kwargs["subject"]
 
     def test_missing_booking_does_not_raise(self, db):
         with patch("app.core.database.SessionLocal", return_value=_db_ctx(db)), \

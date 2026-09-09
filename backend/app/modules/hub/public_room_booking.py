@@ -205,7 +205,7 @@ def submit_public_room_booking(
     db.refresh(booking)
 
     from app.tasks.hub_tasks import notify_new_room_booking  # noqa: PLC0415
-    notify_new_room_booking.delay(booking.id)
+    notify_new_room_booking.delay(booking.id, data.language)
 
     return PublicRoomBookingResponse(
         message=_SUCCESS_MESSAGES.get(data.language, _SUCCESS_MESSAGES["en"]),

@@ -187,9 +187,11 @@ def process_pending_bookings_reminder(self):
     bind=True,
     max_retries=3,
 )
-def notify_new_room_booking(self, booking_id: int):
-    """طلب حجز غرفة عام جديد (الموقع التسويقي) — إيميل فوري لصندوق الحجوزات.
-    مُستدعاة مرة واحدة فور إنشاء HubOnlineBooking (راجع
+def notify_new_room_booking(self, booking_id: int, language: str = "ar"):
+    """طلب حجز غرفة عام جديد (الموقع التسويقي) — إيميل فوري لصندوق الحجوزات،
+    وإيميل تأكيد فوري للضيف نفسه لو سجّل إيميله (راجع Mohamed 2026-09-09:
+    "الهدف التأكد من المراسلة بالإيميلات شغالة" — مراسلة باتجاهين، مش بس
+    تنبيه للموظفين). مُستدعاة مرة واحدة فور إنشاء HubOnlineBooking (راجع
     hub.public_room_booking.submit_public_room_booking)، مش دورية."""
     try:
         from app.core.database import SessionLocal            # noqa: PLC0415
@@ -227,9 +229,59 @@ def notify_new_room_booking(self, booking_id: int):
             )
             if not sent:
                 raise RuntimeError("send_email returned False")
+
+            if booking.guest_email:
+                subject, body = _room_booking_guest_reply_text(booking, language)
+                guest_sent = send_email(
+                    to=booking.guest_email,
+                    subject=subject,
+                    body=body,
+                )
+                if not guest_sent:
+                    raise RuntimeError("guest confirmation send_email returned False")
     except Exception as exc:
         logger.error("notify_new_room_booking failed: %s", exc)
         raise self.retry(exc=exc, countdown=300)
+
+
+def _room_booking_guest_reply_text(booking, language: str) -> tuple[str, str]:
+    """نص إيميل التأكيد المُرسَل للضيف نفسه — أربع لغات، نفس نبرة رسالة
+    النجاح الظاهرة في فورم الحجز على الموقع (Booking.vue/Rooms.vue)."""
+    texts = {
+        "ar": (
+            f"تأكيد استلام طلب حجزك — {booking.public_reference}",
+            f"مرحبًا {booking.guest_name}،\n\n"
+            f"استلمنا طلب حجزك بمرجع {booking.public_reference} "
+            f"من {booking.check_in} إلى {booking.check_out}.\n"
+            "فريقنا هيتواصل معاك قريب لتأكيد التفاصيل والدفع.\n\n"
+            "شكرًا لاختيارك El Kheima Beach.",
+        ),
+        "en": (
+            f"We received your booking request — {booking.public_reference}",
+            f"Hello {booking.guest_name},\n\n"
+            f"We received your booking request (reference {booking.public_reference}) "
+            f"for {booking.check_in} to {booking.check_out}.\n"
+            "Our team will contact you shortly to confirm details and payment.\n\n"
+            "Thank you for choosing El Kheima Beach.",
+        ),
+        "ru": (
+            f"Ваш запрос на бронирование получен — {booking.public_reference}",
+            f"Здравствуйте, {booking.guest_name}!\n\n"
+            f"Мы получили ваш запрос на бронирование (номер {booking.public_reference}) "
+            f"с {booking.check_in} по {booking.check_out}.\n"
+            "Наша команда свяжется с вами в ближайшее время для подтверждения деталей и оплаты.\n\n"
+            "Спасибо, что выбрали El Kheima Beach.",
+        ),
+        "it": (
+            f"Richiesta di prenotazione ricevuta — {booking.public_reference}",
+            f"Ciao {booking.guest_name},\n\n"
+            f"Abbiamo ricevuto la tua richiesta di prenotazione (riferimento {booking.public_reference}) "
+            f"dal {booking.check_in} al {booking.check_out}.\n"
+            "Il nostro team ti contatterà a breve per confermare i dettagli e il pagamento.\n\n"
+            "Grazie per aver scelto El Kheima Beach.",
+        ),
+    }
+    return texts.get(language, texts["ar"])
 
 
 @celery_app.task(
