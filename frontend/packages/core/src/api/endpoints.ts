@@ -112,6 +112,7 @@ export const ENDPOINTS = {
     orderItemStatus: (orderId: number, itemId: number) => `/api/v1/dining/orders/${orderId}/items/${itemId}/status`,
     orderStatus: (orderId: number) => `/api/v1/dining/orders/${orderId}/status`,
     orderTransfer: (orderId: number) => `/api/v1/dining/orders/${orderId}/transfer`,
+    orderClaim: (orderId: number) => `/api/v1/dining/orders/${orderId}/claim`,
     orderDiscount: (orderId: number) => `/api/v1/dining/orders/${orderId}/discount`,
     orderSplitBill: (orderId: number) => `/api/v1/dining/orders/${orderId}/split-bill`,
     orderMerge: (orderId: number) => `/api/v1/dining/orders/${orderId}/merge`,

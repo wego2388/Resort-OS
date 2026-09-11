@@ -41,22 +41,58 @@ export default defineConfig(({ mode }) => {
         include: resolve(__dirname, '../../packages/core/src/i18n/locales/**'),
       }),
       VitePWA({
-        registerType: 'autoUpdate',
-        includeAssets: ['icon-192.png', 'icon-512.png'],
+        // 2026-09-11: 'autoUpdate' كان بيعمل window.location.reload() صامت
+        // فورًا بمجرد ما نسخة جديدة تتفعّل — على تابلت شغّال طول اليوم، ده
+        // معناه احتمال حقيقي إن كاشير يبقى نص طلب (سلة لسه ماتبعتتش/اتدفعتش،
+        // موجودة بس في ref محلي مش متخزّنة) ويترجع الطلب فجأة من غير تحذير.
+        // 'prompt' + PWAUpdateBanner.vue (App.vue) بيدّي الموظف تحكّم فعلي —
+        // التحديث يحصل لما هو مستعد (بين طلب وطلب)، مش يقاطعه بالغلط.
+        registerType: 'prompt',
+        includeAssets: [
+          'pwa-icon-192.png',
+          'pwa-icon-512.png',
+          'pwa-icon-maskable-512.png',
+          'apple-touch-icon.png',
+        ],
         manifest: {
-          name: 'Resort OS — El Kheima',
-          short_name: 'Resort OS',
-          description: 'نظام إدارة المنتجع المتكامل — نقطة البيع، المطبخ، العمليات، الإدارة، الجرسون، بوابة الموظفين',
+          id: '/',
+          name: 'El Kheima Beach — Staff POS',
+          short_name: 'El Kheima POS',
+          description: 'تطبيق فريق El Kheima Beach للطلبات، نقطة البيع، المطبخ، والعمليات',
           theme_color: '#0B4F8A',
-          background_color: '#F9F7F4',
+          // Android builds the launch splash from background + maskable icon.
+          // Blue avoids the bright white flash staff used to get before mount.
+          background_color: '#0B4F8A',
           display: 'standalone',
-          start_url: '/',
+          display_override: ['standalone'],
+          // Explicitly support both roles: cashier stands normally use
+          // landscape, while a waiter carrying the same 8.7" tablet may use
+          // portrait one-handed. A global landscape lock would harm one role.
+          orientation: 'any',
+          start_url: '/pos/dining?source=pwa',
           scope: '/',
           dir: 'rtl',
           lang: 'ar-EG',
+          categories: ['business', 'productivity'],
+          prefer_related_applications: false,
           icons: [
-            { src: 'icon-192.png', sizes: '192x192', type: 'image/png' },
-            { src: 'icon-512.png', sizes: '512x512', type: 'image/png' },
+            { src: 'pwa-icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+            { src: 'pwa-icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+            { src: 'pwa-icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+          ],
+          shortcuts: [
+            {
+              name: 'نقطة بيع الدايننج',
+              short_name: 'الدايننج',
+              url: '/pos/dining?source=pwa-shortcut',
+              icons: [{ src: 'pwa-icon-192.png', sizes: '192x192', type: 'image/png' }],
+            },
+            {
+              name: 'الوردية',
+              short_name: 'الوردية',
+              url: '/pos/shift?source=pwa-shortcut',
+              icons: [{ src: 'pwa-icon-192.png', sizes: '192x192', type: 'image/png' }],
+            },
           ],
         },
         workbox: {
@@ -65,6 +101,8 @@ export default defineConfig(({ mode }) => {
           // precached; offline writes use the separately identity-scoped IDB
           // queue and are reconciled with the server when the same user returns.
           cleanupOutdatedCaches: true,
+          navigateFallback: '/index.html',
+          navigateFallbackDenylist: [/^\/api\//],
           runtimeCaching: [],
         },
       }),

@@ -548,6 +548,11 @@ class DiningOrder(Base, TimestampMixin):
         "DiningOrderItem", back_populates="order", lazy="select", cascade="all, delete-orphan",
     )
 
+    @property
+    def source(self) -> str:
+        """Safe staff-facing order origin without exposing guest session data."""
+        return "guest_qr" if self.guest_session_id is not None else "staff"
+
 
 class DiningOrderItem(Base, TimestampMixin):
     """يدمج restaurant.OrderItem + cafe.CafeOrderItem — نفس الأعمدة، بما

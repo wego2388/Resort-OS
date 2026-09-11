@@ -3,6 +3,7 @@ import type { DiningExtrasItem } from '../DiningExtrasModal.vue'
 export type OrderType = 'dine_in' | 'takeaway' | 'delivery' | 'room_service'
 export type PaymentMethod = 'cash' | 'card' | 'room' | 'wallet' | 'credit_account'
 export type POSWorkspace = 'tables' | 'order' | 'active' | 'beach_map'
+export type DiningOrderSource = 'staff' | 'guest_qr'
 
 export interface DiningOutlet {
   id: number
@@ -36,6 +37,7 @@ export interface VenueTable {
   // DiningOrder.guest_name/guest_phone بتاعة الطلب النشط.
   active_order_guest_name: string | null
   active_order_guest_phone: string | null
+  active_order_source: DiningOrderSource | null
 }
 
 export interface DiningItemRow extends DiningExtrasItem {
@@ -76,6 +78,7 @@ export interface ActiveOrder {
   total: number | string
   guests_count: number
   created_at: string
+  source: DiningOrderSource
   // هوية الضيف (2026-08-03) — راجع VenueTable.active_order_guest_name
   guest_name: string | null
   guest_phone: string | null
@@ -87,6 +90,11 @@ export interface ActiveOrder {
   // الباك إند يرجّع hotel_name (لا b2b_hotel_name) — راجع OrderRead.hotel_name
   b2b_contract_id: number | null
   hotel_name: string | null
+  // متابعة النادل (2026-09-11) — waiter_id بيتحدد تلقائيًا لمُنشئ الطلب من
+  // الموظفين، لكن طلبات QR (source=guest_qr) بتتولد بلا نادل خالص — راجع
+  // PATCH /dining/orders/{id}/claim وDiningOrderDetailModal.vue.
+  waiter_id: number | null
+  waiter_name: string | null
 }
 
 export interface POSCustomer {
@@ -133,6 +141,7 @@ export interface DiningOrderDetail {
   order_type: OrderType
   table_id: number | null
   created_at: string
+  source: DiningOrderSource
   guests_count: number
   payment_method: PaymentMethod | 'split' | null
   subtotal: number | string
@@ -153,6 +162,9 @@ export interface DiningOrderDetail {
   // الباك إند يرجّع hotel_name (لا b2b_hotel_name) — راجع OrderRead.hotel_name
   b2b_contract_id: number | null
   hotel_name: string | null
+  // متابعة النادل (2026-09-11) — راجع ActiveOrder.waiter_id فوق
+  waiter_id: number | null
+  waiter_name: string | null
   items: OrderItem[]
 }
 

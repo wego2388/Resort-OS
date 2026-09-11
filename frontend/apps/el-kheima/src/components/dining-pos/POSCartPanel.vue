@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useStaffFormat } from '@resort-os/core/i18n/staff'
-import { AppBadge, AppButton, AppTextarea, EmptyState, IconButton } from '@resort-os/ui'
+import { AppBadge, AppButton, AppIcon, AppTextarea, EmptyState, IconButton } from '@resort-os/ui'
 import type { CartLine, OrderType, POSCustomer, B2BContractOption } from './types'
 import POSHotelSelector from './POSHotelSelector.vue'
 
@@ -259,7 +259,8 @@ const cartGroups = computed(() => {
         :loading="applyingDiscount"
         @click="emit('discount')"
       >
-        🏷️ {{ t('backoffice.pos.applyDiscount') }}
+        <AppIcon name="discount" size="sm" />
+        {{ t('backoffice.pos.applyDiscount') }}
       </AppButton>
       <p v-if="!isAppendMode && discountError" role="alert" class="text-xs text-danger">{{ discountError }}</p>
 
@@ -274,7 +275,8 @@ const cartGroups = computed(() => {
             {{ t('backoffice.pos.appendItems.cancel') }}
           </AppButton>
           <AppButton variant="primary" size="lg" :disabled="cart.length === 0" :loading="submitting" @click="emit('append')">
-            ➕ {{ t('backoffice.pos.appendItems.confirm') }}
+            <AppIcon name="add" size="sm" />
+            {{ t('backoffice.pos.appendItems.confirm') }}
           </AppButton>
         </div>
       </div>
@@ -286,7 +288,8 @@ const cartGroups = computed(() => {
           :loading="submitting"
           @click="emit('send')"
         >
-          🍳 {{ t('backoffice.pos.sendToKitchen') }}
+          <AppIcon name="kitchen" size="sm" />
+          {{ t('backoffice.pos.sendToKitchen') }}
         </AppButton>
         <AppButton
           v-if="canSettlePayment"
@@ -296,7 +299,8 @@ const cartGroups = computed(() => {
           :loading="submitting"
           @click="emit('pay')"
         >
-          💳 {{ t('backoffice.pos.cart.payNow') }}
+          <AppIcon name="card" size="sm" />
+          {{ t('backoffice.pos.cart.payNow') }}
         </AppButton>
       </div>
       <p v-if="!isAppendMode && canSettlePayment && !online" class="text-xs text-amber-700 dark:text-amber-300 text-center">

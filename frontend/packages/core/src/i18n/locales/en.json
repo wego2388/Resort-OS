@@ -3607,6 +3607,9 @@
       "branchSwitchFailed": "Could not set the operational branch. Please sign in again.",
       "logout": "Sign Out",
       "moreActions": "More settings",
+      "installApp": "Install El Kheima on this device",
+      "updateAvailable": "A new app version is ready",
+      "updateNow": "Update now",
       "pos": "Point of Sale",
       "orderTaker": "Order Taker",
       "resortOs": "Resort OS",
@@ -3987,6 +3990,19 @@
         "connecting": "Connecting...",
         "disconnected": "No live connection"
       },
+      "guestOrder": {
+        "badge": "Guest order",
+        "filter": "Guest orders",
+        "awaitingAction": "Review and send",
+        "liveTitle": "A new guest order just arrived",
+        "toast": "New guest order {number} — {location}",
+        "itemsCount": "{count} item(s)",
+        "openAction": "Open order",
+        "dismiss": "Dismiss guest-order alert",
+        "roomLocation": "Room {number}",
+        "detailTitle": "This order was sent by the guest via QR",
+        "detailHint": "Review items and notes, then send it to the kitchen; collection remains cashier-only."
+      },
       "selectTable": "Select table",
       "noTables": "No tables registered for this branch",
       "tableSummary": {
@@ -4299,6 +4315,10 @@
         "voidPinTitle": "Void item approval",
         "voidPinMessage": "Voiding an order item requires manager PIN approval.",
         "refundStepUpDescription": "A post-payment refund is a real financial reversal — confirm your password and enter a reason.",
+        "unassignedWaiter": "No waiter assigned",
+        "claimTitle": "This order has no assigned waiter",
+        "claimHint": "Claiming it means you're the one following up with the guest from here.",
+        "claimAction": "Claim this order",
         "messages": {
           "transferred": "Order transferred to the new table ✓",
           "merged": "Orders merged ✓",
@@ -4307,7 +4327,8 @@
           "discountApplied": "Discount of {amount} applied ✓",
           "sent": "Order sent to the kitchen ✓",
           "served": "Order marked as served ✓",
-          "paid": "Payment completed ✓"
+          "paid": "Payment completed ✓",
+          "claimed": "You're now assigned to this order ✓"
         },
         "errors": {
           "load": "Could not load the order.",
@@ -4320,7 +4341,8 @@
           "refundItem": "Could not record the refund.",
           "stepUpInvalid": "Identity proof is invalid or expired — confirm again.",
           "send": "Could not send the order to the kitchen.",
-          "status": "Could not update the order status."
+          "status": "Could not update the order status.",
+          "claim": "Could not claim this order — it may already be assigned to another waiter."
         }
       },
       "extrasModal": {

@@ -80,6 +80,7 @@ const props = defineProps<{
   open: boolean
   order: DiningOrderDetail | null
   branchId: number | null
+  startMode?: 'single' | 'split'
 }>()
 const emit = defineEmits<{
   close: []
@@ -241,7 +242,7 @@ function initialSplitRows(): SplitRow[] {
 }
 
 function resetPaymentState() {
-  mode.value = 'single'
+  mode.value = props.startMode ?? 'single'
   paymentMethod.value = 'cash'
   cashCurrency.value = 'EGP'
   foreignReceived.value = ''

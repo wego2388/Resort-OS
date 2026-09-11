@@ -341,6 +341,7 @@ def list_tables_with_orders(db: Session, branch_id: int) -> list[dict]:
             "active_order_outlet_id": None,
             "active_order_guest_name":  None,
             "active_order_guest_phone": None,
+            "active_order_source":      None,
         }
         o = order_by_table.get(t.id)
         if o:
@@ -352,6 +353,7 @@ def list_tables_with_orders(db: Session, branch_id: int) -> list[dict]:
             row["active_order_outlet_id"] = o.outlet_id
             row["active_order_guest_name"]  = o.guest_name
             row["active_order_guest_phone"] = o.guest_phone
+            row["active_order_source"]      = o.source
         result.append(row)
     return result
 

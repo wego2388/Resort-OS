@@ -37,6 +37,7 @@ from app.core.deps import (
     require_permission,
     user_level,
 )
+from app.core.kernel.realtime import DistributedWebSocketManager
 from app.modules.core import services as core_services
 from app.modules.core.schemas import PaginatedResponse
 from app.modules.credit import services as credit_services
@@ -145,6 +146,7 @@ def _enrich_order(db, order: DiningOrder) -> OrderRead:
 
     للقوائم استخدم _enrich_order_list بدلاً منها لتجنب N+1 queries.
     """
+    from app.core.kernel.models.user import User
     from app.modules.beach.models import B2BContract, BeachLocation
 
     LOCATION_TYPE_ICONS = {
@@ -156,6 +158,7 @@ def _enrich_order(db, order: DiningOrder) -> OrderRead:
 
     hotel_name: str | None = None
     beach_location_label: str | None = None
+    waiter_name: str | None = None
 
     if order.b2b_contract_id:
         contract = db.query(B2BContract).filter(B2BContract.id == order.b2b_contract_id).first()
@@ -168,9 +171,15 @@ def _enrich_order(db, order: DiningOrder) -> OrderRead:
             icon = LOCATION_TYPE_ICONS.get(location.location_type, "📍")
             beach_location_label = f"{icon} {location.location_type.capitalize()} {location.number}"
 
+    if order.waiter_id:
+        waiter = db.query(User).filter(User.id == order.waiter_id).first()
+        if waiter:
+            waiter_name = waiter.full_name
+
     validated = OrderRead.model_validate(order)
     validated.hotel_name = hotel_name
     validated.beach_location_label = beach_location_label
+    validated.waiter_name = waiter_name
     return validated
 
 
@@ -180,6 +189,7 @@ def _enrich_order_list(db, orders: list[DiningOrder]) -> list[OrderRead]:
     بدلاً من N+1 queries (query لكل طلب)، بيجمع كل الـ IDs المطلوبة
     ويعمل query واحدة لكل نوع (B2BContract وBeachLocation)، ثم يوزّعها.
     """
+    from app.core.kernel.models.user import User
     from app.modules.beach.models import B2BContract, BeachLocation
 
     LOCATION_TYPE_ICONS = {
@@ -195,6 +205,7 @@ def _enrich_order_list(db, orders: list[DiningOrder]) -> list[OrderRead]:
     # جمع الـ IDs الفريدة
     contract_ids = {o.b2b_contract_id for o in orders if o.b2b_contract_id}
     location_ids = {o.beach_location_id for o in orders if o.beach_location_id}
+    waiter_ids = {o.waiter_id for o in orders if o.waiter_id}
 
     # query واحدة لكل نوع
     contracts_map: dict[int, str] = {}
@@ -208,11 +219,17 @@ def _enrich_order_list(db, orders: list[DiningOrder]) -> list[OrderRead]:
             icon = LOCATION_TYPE_ICONS.get(loc.location_type, "📍")
             locations_map[loc.id] = f"{icon} {loc.location_type.capitalize()} {loc.number}"
 
+    waiters_map: dict[int, str] = {}
+    if waiter_ids:
+        for w in db.query(User).filter(User.id.in_(waiter_ids)).all():
+            waiters_map[w.id] = w.full_name
+
     result = []
     for order in orders:
         validated = OrderRead.model_validate(order)
         validated.hotel_name = contracts_map.get(order.b2b_contract_id) if order.b2b_contract_id else None
         validated.beach_location_label = locations_map.get(order.beach_location_id) if order.beach_location_id else None
+        validated.waiter_name = waiters_map.get(order.waiter_id) if order.waiter_id else None
         result.append(validated)
     return result
 
@@ -221,28 +238,7 @@ def _enrich_order_list(db, orders: list[DiningOrder]) -> list[OrderRead]:
 # dining بيبث لمشتركي /dining/ws/* لوحده — restaurant/cafe اتحذفوا بالكامل
 # (DINING_CUTOVER_PLAN.md Batch 6)، dining هو مصدر البث اللحظي الوحيد دلوقتي.
 
-class ConnectionManager:
-    def __init__(self):
-        self.active: dict[str, list[WebSocket]] = {}
-
-    async def connect(self, ws: WebSocket, key: str):
-        await ws.accept()
-        self.active.setdefault(key, []).append(ws)
-
-    def disconnect(self, ws: WebSocket, key: str):
-        connections = self.active.get(key, [])
-        if ws in connections:
-            connections.remove(ws)
-
-    async def broadcast(self, key: str, data: dict):
-        for ws in list(self.active.get(key, [])):
-            try:
-                await ws.send_json(data)
-            except Exception:
-                pass
-
-
-dining_manager = ConnectionManager()
+dining_manager = DistributedWebSocketManager("dining")
 
 
 @router.websocket("/dining/ws/kds/{branch_id}")
@@ -681,12 +677,20 @@ def delete_table(table_id: int, db: DbDep, _=Depends(get_manager_user)):
 
 @router.get("/dining/orders", response_model=PaginatedResponse)
 def list_orders(
-    db: DbDep, _=Depends(get_cashier_user),
+    db: DbDep, user=Depends(get_waiter_user),
     branch_id: int = Query(...), outlet_id: int | None = Query(None),
     status_filter: str | None = Query(None, alias="status"),
     order_date: date | None = Query(None),
     page: int = Query(1, ge=1), size: int = Query(20, ge=1, le=100),
 ):
+    # نفس الشاشة بتخدم waiter/cashier، والويتر محتاج يشوف الطلبات المفتوحة
+    # عشان يستلم طلب QR ويرسله للمطبخ. التحصيل ما زال cashier-only في
+    # update_order_status/split_bill. كان الـendpoint مقفول cashier رغم إن
+    # التبويب ظاهر للويتر؛ وفوق ده لم يكن يتحقق من branch_id المطلوب صراحةً.
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "عرض طلبات هذا الفرع")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     items, total = crud.list_orders(db, branch_id, outlet_id, status_filter, order_date,
                                     (page - 1) * size, size)
     return PaginatedResponse(total=total, page=page, size=size,
@@ -860,6 +864,29 @@ async def transfer_order_table(order_id: int, data: OrderTransferRequest,
         "type": "table_updated", "table_id": order.table_id,
     })
     return order
+
+
+@router.patch("/dining/orders/{order_id}/claim", response_model=OrderRead)
+async def claim_order_waiter(order_id: int, db: DbDep, user=Depends(get_waiter_user)):
+    """نادل يتولى طلب غير مسند لحد (بالذات طلبات QR — waiter_id=None من
+    الأساس، راجع services.claim_order_waiter). عكس /waiter تحت (مدير+،
+    سبب إجباري، AuditLog)، دي عملية ذاتية بسيطة بدون موافقة — مسموحة بس
+    لو الطلب فعلاً بلا نادل أو مسند لنفس النادل بالفعل؛ سرقة طلب نادل
+    تاني برّه النطاق، تمر عبر /waiter بس (مدير+)."""
+    _assert_order_branch(db, user, order_id, "تولي هذا الطلب")
+    try:
+        order = services.claim_order_waiter(db, order_id, user.id)
+    except services.OrderPaymentConcurrencyError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, {"error_code": "ORDER_PAYMENT_IN_PROGRESS", "message": str(exc)})
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    # كل شاشات الويتر/الكاشير تعيد تحميل الطلبات من نفس قناة الطاولات؛
+    # ده يمنع نادلًا آخر من رؤية طلب QR كأنه ما زال بلا مسؤول بعد استلامه.
+    await dining_manager.broadcast(f"tables-{order.branch_id}", {
+        "type": "table_updated" if order.table_id else "tables_updated",
+        "table_id": order.table_id,
+    })
+    return _enrich_order(db, order)
 
 
 @router.patch("/dining/orders/{order_id}/waiter", response_model=OrderRead)
@@ -1476,12 +1503,15 @@ async def create_guest_order(
 
         if location.location_type == "dining_table":
             table_id, order_type, notes = location.location_id, "dine_in", data.notes
+            table = crud.get_table(db, location.location_id)
+            staff_location_label = table.table_number if table else str(location.location_id)
         else:
             from app.modules.pms.models import Room
             room = db.query(Room).filter(Room.id == location.location_id).first()
             room_label = f"🛎️ خدمة غرف — غرفة {room.name}" if room else "🛎️ خدمة غرف"
             notes = f"{room_label}\n{data.notes}" if data.notes else room_label
             table_id, order_type = None, "room_service"
+            staff_location_label = room.name if room else str(location.location_id)
 
         order_data = OrderCreate(
             outlet_id=data.outlet_id,
@@ -1497,6 +1527,12 @@ async def create_guest_order(
             guest_name=session.guest_name,
             guest_phone=session.guest_phone,
         )
+        # افحص الـidempotency قبل الإنشاء: replay لازم يرجّع نفس الطلب للضيف
+        # لكن لا يرن جرس الموظفين مرة ثانية بسبب timeout عند جهاز الضيف.
+        replayed_order = (
+            crud.get_order_by_local_id(db, idempotency_key)
+            if idempotency_key else None
+        )
         order = services.create_order(
             db, branch_id=location.branch_id, data=order_data, waiter_id=None,
             guest_session_id=session.id, guest_public_reference=f"ord_{secrets.token_urlsafe(18)}",
@@ -1510,20 +1546,23 @@ async def create_guest_order(
         # فمحاولة الضيف يتابع حالة الطلب بيه (GET .../orders/{public_reference})
         # كانت هترجع 404 دايمًا على أي replay.
         #
-        # ⚠️ باج تكامل حقيقي اتصلح في نفس الجولة: مفيش أي بث WebSocket كان
-        # بيحصل هنا خالص — طلب ضيف حقيقي (من طاولة أو أوضة) كان بيتسجّل صح
-        # في الداتابيز (الطاولة تبقى occupied، تذكرة مطبخ تتعمل) بس شاشة
-        # النادل/الكاشير (خريطة الطاولات + الطلبات النشطة) ماكانتش تتحدّث
-        # لحظيًا — لازم refresh يدوي/تنقّل بين الشاشات عشان يظهر. KDS لوحده
-        # كان بيلحقها خلال 15 ثانية (polling fallback موجود أصلاً)، لكن
-        # خريطة الطاولات والطلبات النشطة معندهمش أي polling — بث لحظي زي
-        # نفس نمط create_order الداخلي (نادل) بقى هنا كمان.
-        if order.table_id:
+        # حدث صريح للـPOS بدل table_updated مبهم: الواجهة تعمل صوت + اهتزاز
+        # + شارة وتفتح الطلب بنقرة واحدة. البيانات تشغيلية آمنة فقط؛ لا
+        # guest-session token ولا public reference. الـreplay لا يبث مجددًا.
+        if replayed_order is None:
             await dining_manager.broadcast(f"tables-{order.branch_id}", {
-                "type": "table_updated", "table_id": order.table_id,
+                "type": "guest_order_created",
+                "order": {
+                    "id": order.id,
+                    "order_number": order.order_number,
+                    "order_type": order.order_type,
+                    "table_id": order.table_id,
+                    "location_type": location.location_type,
+                    "location_label": staff_location_label,
+                    "items_count": sum(item.quantity for item in order.items),
+                    "total": str(order.total),
+                },
             })
-        else:
-            await dining_manager.broadcast(f"tables-{order.branch_id}", {"type": "tables_updated"})
         return GuestOrderRead(
             public_reference=order.guest_public_reference or "",
             order_number=order.order_number,

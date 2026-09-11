@@ -44,6 +44,11 @@ const outletOptions = computed<SelectOption[]>(() => [
 
 const statusFilters = computed(() => [
   { value: 'all', label: t('backoffice.pos.activeOrders.all'), count: props.orders.length },
+  {
+    value: 'guest_qr',
+    label: t('backoffice.pos.guestOrder.filter'),
+    count: props.orders.filter(order => order.source === 'guest_qr').length,
+  },
   { value: 'open', label: t('backoffice.pos.orderStatus.open'), count: countStatus('open') },
   { value: 'in_kitchen', label: t('backoffice.pos.orderStatus.inKitchen'), count: countStatus('in_kitchen') },
   { value: 'served', label: t('backoffice.pos.orderStatus.served'), count: countStatus('served') },
@@ -56,7 +61,8 @@ function countStatus(status: string): number {
 const filteredOrders = computed(() => {
   const normalized = query.value.trim().toLowerCase()
   return props.orders.filter(order => {
-    if (statusFilter.value !== 'all' && order.status !== statusFilter.value) return false
+    if (statusFilter.value === 'guest_qr' && order.source !== 'guest_qr') return false
+    if (!['all', 'guest_qr'].includes(statusFilter.value) && order.status !== statusFilter.value) return false
     if (outletFilter.value !== 'all' && order.outlet_id !== Number(outletFilter.value)) return false
     if (!normalized) return true
     return order.order_number.toLowerCase().includes(normalized) ||
@@ -92,14 +98,17 @@ function orderTypeKey(type: ActiveOrder['order_type']): string {
   }[type]
 }
 
-function statusLabel(status: string): string {
+function statusLabel(order: ActiveOrder): string {
+  if (order.source === 'guest_qr' && order.status === 'open') {
+    return t('backoffice.pos.guestOrder.awaitingAction')
+  }
   const key: Record<string, string> = {
     open: 'open',
     in_kitchen: 'inKitchen',
     served: 'served',
     held: 'held',
   }
-  return key[status] ? t(`backoffice.pos.orderStatus.${key[status]}`) : status
+  return key[order.status] ? t(`backoffice.pos.orderStatus.${key[order.status]}`) : order.status
 }
 
 function statusVariant(status: string): 'info' | 'warning' | 'success' | 'neutral' {
@@ -199,7 +208,11 @@ function orderUrgencyClass(order: { status: string; created_at: string }): strin
           v-for="order in filteredOrders"
           :key="order.id"
           type="button"
-          :class="['min-h-[156px] rounded-2xl border-2 bg-white dark:bg-surface p-4 text-start shadow-sm hover:shadow-md transition-all flex flex-col justify-between gap-4 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2', orderUrgencyClass(order)]"
+          :class="[
+            'min-h-[156px] rounded-2xl border-2 bg-white dark:bg-surface p-4 text-start shadow-sm hover:shadow-md active:scale-[0.985] transition-all flex flex-col justify-between gap-4 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+            orderUrgencyClass(order),
+            order.source === 'guest_qr' ? 'ring-2 ring-amber-300/80 dark:ring-amber-500/70 bg-amber-50/50 dark:bg-amber-950/15' : '',
+          ]"
           @click="emit('open', order.id)"
         >
           <div class="w-full">
@@ -215,8 +228,28 @@ function orderUrgencyClass(order: { status: string; created_at: string }): strin
                   <span aria-hidden="true">🏨</span>
                   <span>{{ order.hotel_name }}</span>
                 </div>
+                <!-- متابعة النادل (2026-09-11): طلب QR بلا نادل محتاج حد يتولاه -->
+                <div
+                  v-if="order.waiter_name"
+                  class="text-xs font-semibold text-gray-500 dark:text-gray-400 mt-0.5 truncate flex items-center gap-1"
+                >
+                  <span aria-hidden="true">🧑‍💼</span>
+                  <span>{{ order.waiter_name }}</span>
+                </div>
+                <div
+                  v-else-if="!['paid', 'cancelled'].includes(order.status)"
+                  class="text-xs font-bold text-amber-700 dark:text-amber-400 mt-0.5 truncate flex items-center gap-1"
+                >
+                  <span aria-hidden="true">🙋</span>
+                  <span>{{ t('backoffice.pos.orderDetail.unassignedWaiter') }}</span>
+                </div>
               </div>
-              <AppBadge :variant="statusVariant(order.status)">{{ statusLabel(order.status) }}</AppBadge>
+              <div class="flex flex-col items-end gap-1.5">
+                <AppBadge v-if="order.source === 'guest_qr'" variant="warning" size="sm">
+                  📲 {{ t('backoffice.pos.guestOrder.badge') }}
+                </AppBadge>
+                <AppBadge :variant="statusVariant(order.status)">{{ statusLabel(order) }}</AppBadge>
+              </div>
             </div>
             <div class="flex flex-wrap gap-x-3 gap-y-1 text-sm text-gray-500 dark:text-gray-400 mt-3">
               <span>{{ outletName(order.outlet_id) }}</span>

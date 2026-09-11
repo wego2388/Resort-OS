@@ -169,6 +169,7 @@ function activate(table: VenueTable) {
               tableState(table) === 'served' ? 'bg-amber-50 dark:bg-amber-950/20 border-amber-300 hover:border-amber-500' : '',
               tableState(table) === 'reserved' ? 'bg-blue-50 dark:bg-blue-950/20 border-blue-300 hover:border-blue-500' : '',
               tableState(table) === 'out_of_service' ? 'bg-gray-100 dark:bg-gray-800 border-gray-200 opacity-60 cursor-not-allowed' : '',
+              table.active_order_source === 'guest_qr' ? 'ring-2 ring-amber-300 dark:ring-amber-500 ring-offset-2 dark:ring-offset-background' : '',
             ]"
             @click="activate(table)"
           >
@@ -191,6 +192,9 @@ function activate(table: VenueTable) {
             </div>
 
             <div v-if="table.active_order_id" class="space-y-1 text-sm w-full">
+              <AppBadge v-if="table.active_order_source === 'guest_qr'" variant="warning" size="sm">
+                📲 {{ t('backoffice.pos.guestOrder.badge') }}
+              </AppBadge>
               <div v-if="table.active_order_guest_name" class="font-black text-gray-900 dark:text-gray-100 truncate">
                 👤 {{ table.active_order_guest_name }}
               </div>

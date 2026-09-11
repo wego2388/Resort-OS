@@ -8,6 +8,7 @@ import {
   AppBadge,
   AppButton,
   AppDrawer,
+  AppIcon,
   AppSelect,
   AppTextarea,
   LoadingState,
@@ -36,6 +37,17 @@ const canRefund = computed(() => auth.hasRole('manager'))
 const canApplyDiscount = computed(() => auth.hasRole('cashier'))
 const canCompletePayment = computed(() => auth.hasRole('cashier'))
 const canTransferTable = computed(() => auth.hasRole('waiter'))
+const canAddItems = computed(() => auth.hasRole('waiter'))
+// متابعة النادل (2026-09-11): طلبات QR بتتولد بلا نادل خالص (waiter_id=null)
+// — أي نادل يقدر يتولاها. عكس نقل النادل (مدير+، سبب إجباري)، دي عملية
+// ذاتية بسيطة، متاحة بس لو الطلب فعلاً بلا نادل ومش مقفول.
+const canClaimWaiter = computed(() =>
+  auth.hasRole('waiter') &&
+  !order.value?.waiter_id &&
+  !['paid', 'cancelled'].includes(order.value?.status ?? ''),
+)
+const claimingWaiter = ref(false)
+const claimError = ref('')
 
 const order = ref<DiningOrderDetail | null>(null)
 const loading = ref(false)
@@ -43,6 +55,7 @@ const busy = ref(false)
 const errorMessage = ref('')
 const successMessage = ref('')
 const paymentOpen = ref(false)
+const paymentStartMode = ref<'single' | 'split'>('single')
 
 const transferOpen = ref(false)
 const transferTableId = ref('')
@@ -163,6 +176,11 @@ async function loadOrder() {
   }
 }
 
+function openPayment(mode: 'single' | 'split') {
+  paymentStartMode.value = mode
+  paymentOpen.value = true
+}
+
 watch(() => props.orderId, loadOrder, { immediate: true })
 
 function openTransferPrompt() {
@@ -196,6 +214,22 @@ async function confirmTransfer() {
     transferError.value = apiMessage(error, 'backoffice.pos.orderDetail.errors.transfer')
   } finally {
     busy.value = false
+  }
+}
+
+async function claimOrder() {
+  if (!order.value) return
+  claimingWaiter.value = true
+  claimError.value = ''
+  try {
+    const { data } = await api.patch(ENDPOINTS.dining.orderClaim(order.value.id))
+    order.value = data
+    showSuccess(t('backoffice.pos.orderDetail.messages.claimed'))
+    emit('changed')
+  } catch (error: any) {
+    claimError.value = apiMessage(error, 'backoffice.pos.orderDetail.errors.claim')
+  } finally {
+    claimingWaiter.value = false
   }
 }
 
@@ -435,6 +469,20 @@ function paymentMethodLabel(method: string): string {
     <LoadingState v-if="loading" :label="t('backoffice.pos.orderDetail.loading')" />
 
     <div v-else-if="order" class="space-y-5">
+      <section
+        v-if="order.source === 'guest_qr'"
+        class="rounded-2xl border-2 border-amber-300 bg-amber-50 px-4 py-3 text-amber-950 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-100"
+      >
+        <div class="flex items-start gap-3">
+          <span class="text-2xl" aria-hidden="true">📲</span>
+          <div>
+            <div class="font-black">{{ t('backoffice.pos.guestOrder.detailTitle') }}</div>
+            <p class="mt-0.5 text-sm font-semibold text-amber-800 dark:text-amber-200">
+              {{ t('backoffice.pos.guestOrder.detailHint') }}
+            </p>
+          </div>
+        </div>
+      </section>
       <section class="rounded-2xl bg-primary-950 text-white p-5">
         <div class="flex items-start justify-between gap-4">
           <div>
@@ -450,6 +498,9 @@ function paymentMethodLabel(method: string): string {
               {{ formatDateTime(order.created_at) }}
               <span v-if="order.guests_count > 0"> · {{ t('backoffice.pos.orderDetail.guests', { count: order.guests_count }) }}</span>
             </div>
+            <div class="text-sm text-primary-200 mt-1 font-semibold">
+              🧑‍💼 {{ order.waiter_name ?? t('backoffice.pos.orderDetail.unassignedWaiter') }}
+            </div>
           </div>
           <StatusBadge :status="order.status" :map="statusMap" />
         </div>
@@ -459,6 +510,18 @@ function paymentMethodLabel(method: string): string {
         </div>
       </section>
 
+      <section v-if="canClaimWaiter" class="rounded-2xl border border-primary-200 dark:border-primary-800 bg-primary-50 dark:bg-primary-950/20 p-4 flex items-center justify-between gap-3">
+        <div>
+          <div class="font-black text-primary-900 dark:text-primary-200">{{ t('backoffice.pos.orderDetail.claimTitle') }}</div>
+          <p class="text-sm text-primary-800 dark:text-primary-300 mt-0.5">{{ t('backoffice.pos.orderDetail.claimHint') }}</p>
+        </div>
+        <AppButton size="sm" :loading="claimingWaiter" @click="claimOrder">
+          <AppIcon name="user" size="sm" />
+          {{ t('backoffice.pos.orderDetail.claimAction') }}
+        </AppButton>
+      </section>
+      <p v-if="claimError" role="alert" class="text-sm text-danger">{{ claimError }}</p>
+
       <section
         v-if="canTransferTable && order.order_type === 'dine_in' && !['paid', 'cancelled'].includes(order.status)"
         class="rounded-2xl border border-stone-200 dark:border-border p-4"
@@ -466,10 +529,11 @@ function paymentMethodLabel(method: string): string {
         <button
           v-if="!transferOpen"
           type="button"
-          class="min-h-[44px] font-bold text-primary-700 dark:text-primary-300"
+          class="min-h-[44px] font-bold text-primary-700 dark:text-primary-300 inline-flex items-center gap-2"
           @click="openTransferPrompt"
         >
-          🔀 {{ t('backoffice.pos.orderDetail.transferAction') }}
+          <AppIcon name="table" size="sm" />
+          {{ t('backoffice.pos.orderDetail.transferAction') }}
         </button>
         <div v-else class="space-y-3">
           <h3 class="font-black text-gray-900 dark:text-gray-100">{{ t('backoffice.pos.orderDetail.transferTitle') }}</h3>
@@ -493,10 +557,11 @@ function paymentMethodLabel(method: string): string {
         <button
           v-if="!mergeOpen"
           type="button"
-          class="min-h-[44px] font-bold text-purple-700 dark:text-purple-300"
+          class="min-h-[44px] font-bold text-purple-700 dark:text-purple-300 inline-flex items-center gap-2"
           @click="openMergePrompt"
         >
-          🔗 {{ t('backoffice.pos.orderDetail.mergeAction') }}
+          <AppIcon name="link" size="sm" />
+          {{ t('backoffice.pos.orderDetail.mergeAction') }}
         </button>
         <div v-else class="space-y-3">
           <div>
@@ -625,7 +690,8 @@ function paymentMethodLabel(method: string): string {
         :loading="applyingDiscount"
         @click="requestDiscount"
       >
-        🏷️ {{ t('backoffice.pos.applyDiscount') }}
+        <AppIcon name="discount" size="sm" />
+        {{ t('backoffice.pos.applyDiscount') }}
       </AppButton>
       <p v-if="discountError" role="alert" class="text-sm text-danger">{{ discountError }}</p>
 
@@ -646,14 +712,15 @@ function paymentMethodLabel(method: string): string {
       من الشاشة دي خالص — الباك إند (add_items_to_order) كان جاهز
       ويدعم held/open/in_kitchen/served، الفجوة كانت في الفرونت إند بس. -->
       <AppButton
-        v-if="['held', 'open', 'in_kitchen', 'served'].includes(order.status) && canApplyDiscount"
+        v-if="['held', 'open', 'in_kitchen', 'served'].includes(order.status) && canAddItems"
         variant="outline"
         size="lg"
         block
         class="mb-2"
         @click="emit('addItems', order)"
       >
-        ➕ {{ t('backoffice.pos.orderDetail.addItems') }}
+        <AppIcon name="add" size="sm" />
+        {{ t('backoffice.pos.orderDetail.addItems') }}
       </AppButton>
       <div class="grid grid-cols-2 gap-2">
         <AppButton variant="ghost" size="lg" @click="emit('close')">{{ t('backoffice.pos.close') }}</AppButton>
@@ -663,7 +730,8 @@ function paymentMethodLabel(method: string): string {
           :loading="busy"
           @click="resumeAndSend"
         >
-          🍳 {{ t('backoffice.pos.sendToKitchen') }}
+          <AppIcon name="kitchen" size="sm" />
+          {{ t('backoffice.pos.sendToKitchen') }}
         </AppButton>
         <AppButton
           v-if="order.status === 'in_kitchen'"
@@ -671,15 +739,25 @@ function paymentMethodLabel(method: string): string {
           :loading="busy"
           @click="markServed"
         >
-          🍽️ {{ t('backoffice.pos.orderDetail.markServed') }}
+          <AppIcon name="check" size="sm" />
+          {{ t('backoffice.pos.orderDetail.markServed') }}
         </AppButton>
         <AppButton
           v-if="['open', 'in_kitchen', 'served'].includes(order.status) && canCompletePayment"
-          :class="order.status === 'served' ? 'col-span-2' : ''"
           size="lg"
-          @click="paymentOpen = true"
+          @click="openPayment('single')"
         >
-          💳 {{ t('backoffice.pos.orderDetail.collectPayment') }}
+          <AppIcon name="card" size="sm" />
+          {{ t('backoffice.pos.orderDetail.collectPayment') }}
+        </AppButton>
+        <AppButton
+          v-if="['open', 'in_kitchen', 'served'].includes(order.status) && canCompletePayment"
+          variant="outline"
+          size="lg"
+          @click="openPayment('split')"
+        >
+          <AppIcon name="document-duplicate" size="sm" />
+          {{ t('backoffice.pos.payment.split') }}
         </AppButton>
       </div>
     </template>
@@ -689,6 +767,7 @@ function paymentMethodLabel(method: string): string {
     :open="paymentOpen"
     :order="order"
     :branch-id="branchId"
+    :start-mode="paymentStartMode"
     @close="paymentOpen = false"
     @paid="onPaymentCompleted"
   />

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import uuid
 from decimal import Decimal
+from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -474,7 +475,10 @@ class TestPublicOrderEndpoint:
             "guests_count": 2,
             "items": [{"item_id": item.id, "quantity": 1}],
         }
-        resp = client.post("/api/v1/dining/public/orders", json=payload, headers=headers)
+        from app.modules.dining.api.router import dining_manager
+
+        with patch.object(dining_manager, "broadcast", new_callable=AsyncMock) as broadcast:
+            resp = client.post("/api/v1/dining/public/orders", json=payload, headers=headers)
         assert resp.status_code == 201, resp.text
 
         data = resp.json()
@@ -483,6 +487,54 @@ class TestPublicOrderEndpoint:
         assert data["status"] in ("open", "in_kitchen", "held")
         assert data["items_count"] == 1
         assert data["message"]  # رسالة غير فارغة
+
+        # عقد الموظفين يميّز المصدر بدون كشف session/reference، والبث يحمل
+        # event صريح يقدر الـPOS يشغّل له صوت/شارة بدل table_updated مبهم.
+        from app.modules.dining import crud as dining_crud
+        from app.modules.dining.schemas import OrderRead
+
+        order = dining_crud.get_order_by_guest_public_reference(db, data["public_reference"])
+        assert OrderRead.model_validate(order).source == "guest_qr"
+        table_rows = dining_crud.list_tables_with_orders(db, branch.id)
+        table_row = next(row for row in table_rows if row["id"] == table.id)
+        assert table_row["active_order_source"] == "guest_qr"
+
+        call = broadcast.await_args
+        assert call.args[0] == f"tables-{branch.id}"
+        assert call.args[1]["type"] == "guest_order_created"
+        assert call.args[1]["order"]["id"] == order.id
+        assert call.args[1]["order"]["location_label"] == table.table_number
+        assert "public_reference" not in call.args[1]["order"]
+
+    def test_guest_order_idempotency_replay_does_not_alert_staff_twice(
+        self, client: TestClient, db,
+    ):
+        branch = make_branch(db)
+        enable_self_order(db, branch)
+        outlet = make_outlet(db, branch)
+        cat = make_category(db, branch, outlet)
+        item = make_item(db, branch, outlet, cat)
+        table = make_table(db, branch, outlet)
+        key = f"guest-order-{uuid.uuid4().hex}"
+        headers = {
+            **guest_session_headers(client, db, branch, table),
+            "Idempotency-Key": key,
+        }
+        payload = {
+            "outlet_id": outlet.id,
+            "items": [{"item_id": item.id, "quantity": 1}],
+        }
+
+        from app.modules.dining.api.router import dining_manager
+
+        with patch.object(dining_manager, "broadcast", new_callable=AsyncMock) as broadcast:
+            first = client.post("/api/v1/dining/public/orders", json=payload, headers=headers)
+            replay = client.post("/api/v1/dining/public/orders", json=payload, headers=headers)
+
+        assert first.status_code == 201, first.text
+        assert replay.status_code == 201, replay.text
+        assert replay.json()["public_reference"] == first.json()["public_reference"]
+        assert broadcast.await_count == 1
 
     def test_create_guest_order_unavailable_item(self, client: TestClient, db):
         """صنف is_available=False → 400."""

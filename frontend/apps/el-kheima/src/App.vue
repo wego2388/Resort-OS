@@ -10,6 +10,7 @@ import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ToastContainer, ConfirmDialogContainer } from '@resort-os/ui'
 import { useStaffLocaleSync } from './composables/useStaffLocaleSync'
+import PWAUpdateBanner from './components/PWAUpdateBanner.vue'
 
 // Gate 3A — keep the UI language reconciled to the signed-in user's saved
 // preferred_language on login / refresh / PIN switch (shared-terminal safety).
@@ -40,6 +41,7 @@ const confirmDefaultCancelText = computed(() => t('confirmDialog.defaultCancel')
 
 <template>
   <RouterView />
+  <PWAUpdateBanner />
   <ToastContainer />
   <ConfirmDialogContainer
     :default-title="confirmDefaultTitle"

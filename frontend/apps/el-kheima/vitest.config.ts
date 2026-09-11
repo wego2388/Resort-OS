@@ -10,7 +10,15 @@ import { resolve } from 'path'
 export default defineConfig({
   plugins: [vue()],
   resolve: {
-    alias: { '@': resolve(__dirname, 'src') },
+    alias: {
+      '@': resolve(__dirname, 'src'),
+      // VitePWA (excluded above) is what registers this virtual module in a
+      // real build — under jsdom it doesn't exist at all, so any component
+      // importing it fails to transform before a test even gets to mock it.
+      // PWAUpdateBanner.spec.ts still fully controls behavior via vi.mock on
+      // this same specifier; this alias only makes the import resolvable.
+      'virtual:pwa-register/vue': resolve(__dirname, 'src/__tests__/stubs/pwaRegisterVue.ts'),
+    },
   },
   test: {
     environment: 'jsdom',

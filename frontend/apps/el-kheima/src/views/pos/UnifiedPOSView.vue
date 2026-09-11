@@ -3,7 +3,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api, ENDPOINTS, useAuthStore, useResortWebSocket } from '@resort-os/core'
 import { useStaffFormat } from '@resort-os/core/i18n/staff'
-import { useOfflineQueue, useOrderDiscount, usePrintDocument } from '@resort-os/core/composables'
+import { useAlertSound, useOfflineQueue, useOrderDiscount, usePrintDocument } from '@resort-os/core/composables'
 import {
   AppBadge,
   AppIcon,
@@ -14,7 +14,7 @@ import {
   useConfirm,
   useToast,
 } from '@resort-os/ui'
-import type { SelectOption } from '@resort-os/ui'
+import type { IconName, SelectOption } from '@resort-os/ui'
 import DiningExtrasModal, { type DiningExtrasItem } from '../../components/DiningExtrasModal.vue'
 import DiningOrderDetailModal from '../../components/DiningOrderDetailModal.vue'
 import PinGuardModal from '../../components/PinGuardModal.vue'
@@ -45,6 +45,7 @@ const { formatMoney, name } = useStaffFormat()
 const toast = useToast()
 const { confirm } = useConfirm()
 const { printBlob } = usePrintDocument()
+const { playAlertSound } = useAlertSound()
 const auth = useAuthStore()
 const branchId = computed(() => auth.branchId)
 const currency = 'EGP'
@@ -78,6 +79,21 @@ const selectedCustomer = ref<POSCustomer | null>(null)
 const extrasModalItem = ref<DiningItemRow | null>(null)
 const customerModalOpen = ref(false)
 const mobileCartOpen = ref(false)
+
+interface GuestOrderRealtimeNotice {
+  id: number
+  order_number: string
+  order_type: OrderType
+  table_id: number | null
+  location_type: string
+  location_label: string
+  items_count: number
+  total: string
+}
+
+// آخر طلب QR وصل أثناء فتح الشاشة يظل ظاهرًا لحد ما الموظف يفتحه أو يغلق
+// التنبيه. القائمة نفسها تظل مصدر الحقيقة لكل الطلبات (وبها source badge).
+const guestOrderNotice = ref<GuestOrderRealtimeNotice | null>(null)
 
 // هوية الضيف عند فتح طاولة جديدة يدويًا (2026-08-03، طلب Mohamed) — راجع
 // POSGuestIdentityModal.vue وstartTableOrder/confirmGuestIdentity تحت.
@@ -166,10 +182,35 @@ const selectedContractId = ref<number | null>(null)
 // beach_location_id المختارة لما الكاشير يفتح طلب من الخريطة
 const selectedBeachLocationId = ref<number | null>(null)
 
+function guestOrderLocation(order: GuestOrderRealtimeNotice): string {
+  if (order.location_type === 'dining_table') {
+    const table = tables.value.find(item => item.id === order.table_id)
+    return t('backoffice.pos.tableLabel', {
+      number: table?.table_number ?? order.location_label,
+    })
+  }
+  if (order.location_type === 'room') {
+    return t('backoffice.pos.guestOrder.roomLocation', { number: order.location_label })
+  }
+  return order.location_label
+}
+
 const { status: wsStatus, onMessage: onWsMessage } = useResortWebSocket(
   computed(() => branchId.value != null ? ENDPOINTS.dining.tablesWs(branchId.value) : null),
 )
 onWsMessage((message: any) => {
+  if (message?.type === 'guest_order_created' && message.order?.id) {
+    guestOrderNotice.value = message.order as GuestOrderRealtimeNotice
+    playAlertSound()
+    if ('vibrate' in navigator) navigator.vibrate?.([120, 70, 120])
+    toast.info(t('backoffice.pos.guestOrder.toast', {
+      number: message.order.order_number,
+      location: guestOrderLocation(message.order),
+    }))
+    loadTables()
+    loadActiveOrders()
+    return
+  }
   if (message?.type === 'table_updated' || message?.type === 'tables_updated') {
     loadTables()
     loadActiveOrders()
@@ -180,17 +221,20 @@ const listSeparator = computed(() => locale.value === 'ar' ? '، ' : ', ')
 const cartLocked = computed(() => pendingOrderId.value !== null)
 const hasItems = computed(() => cart.value.length > 0)
 const cartSubtotal = computed(() => cart.value.reduce((sum, line) => sum + line.unitPrice * line.quantity, 0))
+const activeGuestOrderCount = computed(() =>
+  activeOrders.value.filter(order => order.source === 'guest_qr').length,
+)
 
 const outletOptions = computed<SelectOption[]>(() => outlets.value.map(outlet => ({
   value: outlet.id,
   label: localizedName(outlet),
 })))
 
-const orderTypeOptions = computed<Array<{ value: OrderType; label: string; icon: string }>>(() => [
-  { value: 'dine_in', label: t('backoffice.pos.orderTypes.dineIn'), icon: '🍽️' },
-  { value: 'takeaway', label: t('backoffice.pos.orderTypes.takeaway'), icon: '🥡' },
-  { value: 'delivery', label: t('backoffice.pos.orderTypes.delivery'), icon: '🛵' },
-  { value: 'room_service', label: t('backoffice.pos.orderTypes.roomService'), icon: '🛎️' },
+const orderTypeOptions = computed<Array<{ value: OrderType; label: string; icon: IconName }>>(() => [
+  { value: 'dine_in', label: t('backoffice.pos.orderTypes.dineIn'), icon: 'table' },
+  { value: 'takeaway', label: t('backoffice.pos.orderTypes.takeaway'), icon: 'cart' },
+  { value: 'delivery', label: t('backoffice.pos.orderTypes.delivery'), icon: 'delivery' },
+  { value: 'room_service', label: t('backoffice.pos.orderTypes.roomService'), icon: 'home' },
 ])
 
 // 2026-08-11: تحسين ذكي — الصنف الخلصان من المخزون (is_available=false) كان
@@ -279,6 +323,18 @@ const filteredItems = computed(() => {
     .sort((a, b) => Number(b.is_available) - Number(a.is_available))
 })
 
+// عدّاد الأصناف لكل فئة في الرف الجانبي — تسلسل بصري أوضح (2026-09-11،
+// جزء من التحسين التجميلي المطلوب) بدل قائمة نصوص مسطّحة بلا أي إشارة
+// لحجم كل فئة.
+const categoryItemCounts = computed<Record<number, number>>(() => {
+  const counts: Record<number, number> = {}
+  for (const item of items.value) {
+    if (item.category_id == null) continue
+    counts[item.category_id] = (counts[item.category_id] ?? 0) + 1
+  }
+  return counts
+})
+
 const cartContextLabel = computed(() => {
   // شمسية/برجولة — يتحقق الأول قبل الطاولة
   if (selectedBeachLocationId.value) {
@@ -292,7 +348,7 @@ const cartContextLabel = computed(() => {
       : t('backoffice.pos.orderTypes.dineIn')
   }
   const option = orderTypeOptions.value.find(item => item.value === orderType.value)
-  return option ? `${option.icon} ${option.label}` : ''
+  return option?.label ?? ''
 })
 
 const noteLabel = computed(() => {
@@ -457,6 +513,7 @@ function addLineToCart(
   ))
   if (existing) {
     existing.quantity += 1
+    if ('vibrate' in navigator) navigator.vibrate?.(18)
     return
   }
   const variant = (item.variants ?? []).find(value => value.id === choice.variantId)
@@ -488,6 +545,7 @@ function addLineToCart(
     extrasLabel: extras.map(option => localizedName(option)).join(listSeparator.value),
     textAnswersLabel: textAnswers.join(listSeparator.value),
   })
+  if ('vibrate' in navigator) navigator.vibrate?.(18)
 }
 
 function onExtrasConfirm(choice: {
@@ -814,6 +872,14 @@ function confirmGuestIdentity({ name, phone }: { name: string; phone: string | u
 }
 
 function openOrder(orderId: number) {
+  if (guestOrderNotice.value?.id === orderId) guestOrderNotice.value = null
+  selectedOrderId.value = orderId
+}
+
+function openGuestOrderNotice() {
+  if (!guestOrderNotice.value) return
+  const orderId = guestOrderNotice.value.id
+  guestOrderNotice.value = null
   selectedOrderId.value = orderId
 }
 
@@ -1003,8 +1069,44 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
       {{ lastPartialRejection.map(item => `${item.name} (×${item.requested_qty})`).join(listSeparator) }}
     </div>
 
-    <header class="bg-white dark:bg-surface border-b border-stone-200 dark:border-border px-3 lg:px-4 py-2.5 flex items-center gap-3 flex-shrink-0 shadow-sm">
-      <div class="w-44 lg:w-56 flex-shrink-0" ref="outletSelectEl">
+    <section
+      v-if="guestOrderNotice"
+      data-testid="guest-order-live-banner"
+      aria-live="assertive"
+      class="guest-order-live-banner flex-shrink-0 border-b border-amber-300 bg-gradient-to-r from-amber-50 via-white to-amber-50 px-3 py-2.5 text-amber-950 shadow-sm dark:border-amber-700 dark:from-amber-950/60 dark:via-surface dark:to-amber-950/60 dark:text-amber-100"
+    >
+      <div class="mx-auto flex max-w-[1500px] items-center gap-3">
+        <span class="relative flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-2xl bg-amber-400 text-xl shadow-sm" aria-hidden="true">
+          📲
+          <span class="absolute -end-1 -top-1 h-3 w-3 rounded-full bg-red-500 ring-2 ring-white motion-safe:animate-pulse dark:ring-surface" />
+        </span>
+        <div class="min-w-0 flex-1">
+          <div class="font-black leading-tight">{{ t('backoffice.pos.guestOrder.liveTitle') }}</div>
+          <div class="mt-0.5 truncate text-sm font-semibold text-amber-800 dark:text-amber-200">
+            {{ guestOrderNotice.order_number }} · {{ guestOrderLocation(guestOrderNotice) }} ·
+            {{ t('backoffice.pos.guestOrder.itemsCount', { count: guestOrderNotice.items_count }) }}
+          </div>
+        </div>
+        <button
+          type="button"
+          class="min-h-12 flex-shrink-0 rounded-xl bg-primary-800 px-4 text-sm font-black text-white shadow-sm active:scale-[0.98]"
+          @click="openGuestOrderNotice"
+        >
+          {{ t('backoffice.pos.guestOrder.openAction') }}
+        </button>
+        <button
+          type="button"
+          class="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl text-amber-800 hover:bg-amber-100 dark:text-amber-200 dark:hover:bg-amber-900/40"
+          :aria-label="t('backoffice.pos.guestOrder.dismiss')"
+          @click="guestOrderNotice = null"
+        >
+          <AppIcon name="close" />
+        </button>
+      </div>
+    </section>
+
+    <header class="pos-command-bar bg-white dark:bg-surface border-b border-stone-200 dark:border-border px-3 lg:px-4 py-2 flex items-center gap-2.5 flex-shrink-0 shadow-sm">
+      <div class="w-36 sm:w-40 lg:w-56 flex-shrink-0" ref="outletSelectEl">
         <AppSelect
           :model-value="selectedOutletId ?? ''"
           :options="outletOptions"
@@ -1018,7 +1120,7 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
           type="button"
           :aria-current="workspace === 'tables' ? 'page' : undefined"
           :class="[
-            'min-h-[46px] px-3 rounded-xl font-bold text-sm whitespace-nowrap flex items-center gap-2 transition-colors',
+            'min-h-12 px-3 rounded-xl font-bold text-sm whitespace-nowrap flex items-center gap-2 transition-colors active:scale-[0.98]',
             workspace === 'tables' ? 'bg-primary-700 text-white' : 'text-gray-700 dark:text-gray-300 hover:bg-stone-100 dark:hover:bg-gray-800',
           ]"
           @click="openWorkspace('tables')"
@@ -1030,7 +1132,7 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
           type="button"
           :aria-current="workspace === 'order' ? 'page' : undefined"
           :class="[
-            'min-h-[46px] px-3 rounded-xl font-bold text-sm whitespace-nowrap flex items-center gap-2 transition-colors',
+            'min-h-12 px-3 rounded-xl font-bold text-sm whitespace-nowrap flex items-center gap-2 transition-colors active:scale-[0.98]',
             workspace === 'order' ? 'bg-primary-700 text-white' : 'text-gray-700 dark:text-gray-300 hover:bg-stone-100 dark:hover:bg-gray-800',
           ]"
           @click="beginNewOrder"
@@ -1043,20 +1145,21 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
           type="button"
           :aria-current="workspace === 'active' ? 'page' : undefined"
           :class="[
-            'min-h-[46px] px-3 rounded-xl font-bold text-sm whitespace-nowrap flex items-center gap-2 transition-colors',
+            'min-h-12 px-3 rounded-xl font-bold text-sm whitespace-nowrap flex items-center gap-2 transition-colors active:scale-[0.98]',
             workspace === 'active' ? 'bg-primary-700 text-white' : 'text-gray-700 dark:text-gray-300 hover:bg-stone-100 dark:hover:bg-gray-800',
           ]"
           @click="openWorkspace('active')"
         >
           <AppIcon name="clipboard" size="sm" />
           <span>{{ t('backoffice.pos.workspaceNav.active') }}</span>
-          <AppBadge v-if="activeOrders.length" variant="info" size="sm">{{ activeOrders.length }}</AppBadge>
+          <AppBadge v-if="activeGuestOrderCount" variant="warning" size="sm">📲 {{ activeGuestOrderCount }}</AppBadge>
+          <AppBadge v-else-if="activeOrders.length" variant="info" size="sm">{{ activeOrders.length }}</AppBadge>
         </button>
         <button
           type="button"
           :aria-current="workspace === 'beach_map' ? 'page' : undefined"
           :class="[
-            'min-h-[46px] px-3 rounded-xl font-bold text-sm whitespace-nowrap flex items-center gap-2 transition-colors',
+            'min-h-12 px-3 rounded-xl font-bold text-sm whitespace-nowrap flex items-center gap-2 transition-colors active:scale-[0.98]',
             workspace === 'beach_map' ? 'bg-primary-700 text-white' : 'text-gray-700 dark:text-gray-300 hover:bg-stone-100 dark:hover:bg-gray-800',
           ]"
           @click="openWorkspace('beach_map')"
@@ -1069,7 +1172,7 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
       <div class="ms-auto flex items-center gap-2 flex-shrink-0">
         <span
           :class="[
-            'hidden sm:inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-bold',
+            'hidden xl:inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-bold',
             wsStatus === 'connected' ? 'bg-success/10 text-success' : wsStatus === 'connecting' ? 'bg-warning/10 text-warning' : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400',
           ]"
           :title="wsStatus === 'connected' ? t('backoffice.pos.wsStatus.connected') : wsStatus === 'connecting' ? t('backoffice.pos.wsStatus.connecting') : t('backoffice.pos.wsStatus.disconnected')"
@@ -1111,17 +1214,20 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
       />
 
       <div v-else class="pos-order-grid h-full min-h-0">
-        <nav class="pos-category-rail bg-white dark:bg-surface border-e border-stone-200 dark:border-border p-2 overflow-y-auto" :aria-label="t('backoffice.pos.categoriesLabel')">
+        <nav class="pos-category-rail bg-white dark:bg-surface border-e border-stone-200 dark:border-border p-2 overflow-y-auto overscroll-contain" :aria-label="t('backoffice.pos.categoriesLabel')">
           <button
             type="button"
             :aria-pressed="selectedCategoryId === 'all'"
             :class="[
-              'pos-category-button w-full min-h-[52px] rounded-xl px-3 py-2 text-sm font-bold transition-colors text-start',
-              selectedCategoryId === 'all' ? 'bg-primary-700 text-white' : 'text-gray-700 dark:text-gray-300 hover:bg-stone-100 dark:hover:bg-gray-800',
+              'pos-category-button w-full min-h-14 rounded-xl px-3 py-2 text-sm font-bold transition-colors text-start active:scale-[0.98] flex items-center justify-between gap-2 border-s-4',
+              selectedCategoryId === 'all'
+                ? 'border-primary-700 bg-primary-50 dark:bg-primary-950/30 text-primary-900 dark:text-primary-200'
+                : 'border-transparent text-gray-700 dark:text-gray-300 hover:bg-stone-100 dark:hover:bg-gray-800',
             ]"
             @click="selectedCategoryId = 'all'"
           >
-            {{ t('backoffice.pos.categoryAll') }}
+            <span>{{ t('backoffice.pos.categoryAll') }}</span>
+            <AppBadge size="sm" :variant="selectedCategoryId === 'all' ? 'info' : 'neutral'">{{ items.length }}</AppBadge>
           </button>
           <button
             v-for="category in categories"
@@ -1129,35 +1235,41 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
             type="button"
             :aria-pressed="selectedCategoryId === String(category.id)"
             :class="[
-              'pos-category-button w-full min-h-[52px] rounded-xl px-3 py-2 text-sm font-bold transition-colors text-start mt-1',
-              selectedCategoryId === String(category.id) ? 'bg-primary-700 text-white' : 'text-gray-700 dark:text-gray-300 hover:bg-stone-100 dark:hover:bg-gray-800',
+              'pos-category-button w-full min-h-14 rounded-xl px-3 py-2 text-sm font-bold transition-colors text-start mt-1 active:scale-[0.98] flex items-center justify-between gap-2 border-s-4',
+              selectedCategoryId === String(category.id)
+                ? 'border-primary-700 bg-primary-50 dark:bg-primary-950/30 text-primary-900 dark:text-primary-200'
+                : 'border-transparent text-gray-700 dark:text-gray-300 hover:bg-stone-100 dark:hover:bg-gray-800',
             ]"
             @click="selectedCategoryId = String(category.id)"
           >
-            {{ categoryName(category) }}
+            <span class="truncate">{{ categoryName(category) }}</span>
+            <AppBadge size="sm" :variant="selectedCategoryId === String(category.id) ? 'info' : 'neutral'">
+              {{ categoryItemCounts[category.id] ?? 0 }}
+            </AppBadge>
           </button>
         </nav>
 
         <section class="pos-menu min-h-0 flex flex-col bg-stone-50/80 dark:bg-background">
-          <div class="bg-white dark:bg-surface border-b border-stone-200 dark:border-border p-3 flex flex-col xl:flex-row xl:items-center gap-3 flex-shrink-0">
-            <div class="flex gap-1.5 overflow-x-auto pb-0.5" :aria-label="t('backoffice.pos.orderTypeLabel')">
+          <div class="pos-menu-toolbar bg-white dark:bg-surface border-b border-stone-200 dark:border-border p-2.5 flex flex-col md:flex-row md:items-center gap-2.5 flex-shrink-0">
+            <div class="flex min-w-0 gap-1.5 overflow-x-auto overscroll-contain pb-0.5 md:flex-1" :aria-label="t('backoffice.pos.orderTypeLabel')">
               <button
                 v-for="type in orderTypeOptions"
                 :key="type.value"
                 type="button"
                 :aria-pressed="orderType === type.value"
                 :class="[
-                  'min-h-[44px] whitespace-nowrap rounded-xl px-3 font-bold text-sm border-2 transition-colors',
+                  'min-h-12 whitespace-nowrap rounded-xl px-3 font-bold text-sm border-2 transition-colors active:scale-[0.98] inline-flex items-center gap-2',
                   orderType === type.value
                     ? 'border-primary-700 bg-primary-50 text-primary-800'
                     : 'border-stone-200 dark:border-border text-gray-600 dark:text-gray-300',
                 ]"
                 @click="changeOrderType(type.value)"
               >
-                {{ type.icon }} {{ type.label }}
+                <AppIcon :name="type.icon" size="sm" />
+                <span>{{ type.label }}</span>
               </button>
             </div>
-            <div class="xl:ms-auto xl:w-72">
+            <div class="flex-shrink-0 md:w-52 lg:w-64 xl:ms-auto xl:w-72">
               <SearchInput
                 ref="searchInputEl"
                 v-model="searchQuery"
@@ -1168,7 +1280,7 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
             </div>
           </div>
 
-          <div ref="menuScrollEl" class="flex-1 min-h-0 overflow-y-auto p-3 lg:p-4">
+          <div ref="menuScrollEl" class="flex-1 min-h-0 overflow-y-auto overscroll-contain p-3 lg:p-4">
             <!-- "الأكثر طلبًا" — تتبّع محلي بالجهاز، راجع frequentItems -->
             <div v-if="frequentItems.length" class="mb-4">
               <h3 class="text-xs font-black text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2 flex items-center gap-1.5">
@@ -1180,7 +1292,7 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
                   :key="`freq-${item.id}`"
                   type="button"
                   :disabled="cartLocked"
-                  class="flex-shrink-0 min-h-[64px] min-w-[140px] rounded-xl border-2 border-primary-200 dark:border-primary-800 bg-primary-50/60 dark:bg-primary-950/20 px-3 py-2 text-start hover:border-primary-400 active:scale-[0.98] transition-all disabled:opacity-60 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
+                  class="flex-shrink-0 min-h-[72px] min-w-[148px] rounded-xl border-2 border-primary-200 dark:border-primary-800 bg-primary-50/60 dark:bg-primary-950/20 px-3 py-2 text-start hover:border-primary-400 active:scale-[0.97] transition-all disabled:opacity-60 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
                   @click="onItemClick(item)"
                 >
                   <div class="font-bold text-gray-900 dark:text-gray-100 text-sm leading-snug line-clamp-2">{{ itemName(item) }}</div>
@@ -1202,7 +1314,7 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
                 type="button"
                 :disabled="cartLocked || !item.is_available"
                 :class="[
-                  'relative min-h-[138px] rounded-xl border p-3 text-start shadow-sm active:scale-[0.99] transition-all flex flex-col justify-between gap-3 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+                  'relative min-h-[138px] rounded-2xl border p-3 text-start shadow-sm active:scale-[0.97] transition-all flex flex-col justify-between gap-3 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
                   item.is_available
                     ? 'border-stone-200 dark:border-border bg-white dark:bg-surface hover:border-primary-400 hover:shadow-md disabled:opacity-60'
                     : 'border-stone-200 dark:border-border bg-stone-100 dark:bg-gray-900/40 opacity-60 grayscale-[35%]',
@@ -1212,7 +1324,7 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
                 <!-- badge كمية: يظهر لو الصنف موجود في السلة -->
                 <span
                   v-if="itemQtyInCart(item.id) > 0"
-                  class="absolute -top-2 -right-2 z-10 min-w-[22px] h-[22px] bg-primary-700 text-white text-[11px] font-black rounded-full flex items-center justify-center px-1 shadow"
+                  class="absolute -top-2 -end-2 z-10 min-w-[22px] h-[22px] bg-primary-700 text-white text-[11px] font-black rounded-full flex items-center justify-center px-1 shadow"
                   :aria-label="t('backoffice.pos.itemInCartQty', { qty: itemQtyInCart(item.id) })"
                 >{{ itemQtyInCart(item.id) }}</span>
                 <div class="w-full">
@@ -1270,7 +1382,7 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
         <button
           v-if="!mobileCartOpen"
           type="button"
-          class="pos-mobile-cart md:hidden fixed z-30 bottom-4 inset-x-4 min-h-[56px] rounded-2xl bg-primary-800 text-white px-4 shadow-xl flex items-center justify-between gap-3 font-black"
+          class="pos-mobile-cart md:hidden fixed z-30 inset-x-4 min-h-[60px] rounded-2xl bg-primary-800 text-white px-4 shadow-xl flex items-center justify-between gap-3 font-black active:scale-[0.99]"
           @click="mobileCartOpen = true"
         >
           <span>🛒 {{ t('backoffice.pos.cart.mobileCart', { count: cart.length }) }}</span>
@@ -1389,6 +1501,17 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
   grid-template-columns: repeat(auto-fill, minmax(155px, 1fr));
   gap: 0.75rem;
 }
+.pos-mobile-cart {
+  bottom: max(1rem, env(safe-area-inset-bottom));
+}
+.pos-command-bar,
+.pos-order-grid {
+  -webkit-tap-highlight-color: transparent;
+}
+.pos-command-bar :deep(button),
+.pos-order-grid :deep(button) {
+  touch-action: manipulation;
+}
 
 @media (max-width: 1279px) {
   .pos-order-grid {
@@ -1423,5 +1546,15 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
   }
   .pos-cart { display: none; }
   .pos-products-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* Lenovo Tab One class devices often expose a ~894x533 CSS viewport after
+   Android density scaling. Keep the menu controls on one row in landscape
+   and preserve useful vertical room without shrinking any touch target. */
+@media (min-width: 768px) and (max-height: 650px) {
+  .pos-products-grid {
+    grid-template-columns: repeat(auto-fill, minmax(145px, 1fr));
+    gap: 0.625rem;
+  }
 }
 </style>

@@ -297,9 +297,28 @@ class TestOrdersHTTP:
         mgr  = _linked(db, br, "manager")
         return br, o, item, hdrs, mgr
 
-    def test_list_orders(self, client, db, manager_headers):
-        r = client.get("/api/v1/dining/orders?branch_id=1", headers=manager_headers)
+    def test_list_orders(self, client, db):
+        branch = _branch(db)
+        headers = _linked(db, branch, "manager")
+        r = client.get(
+            "/api/v1/dining/orders", params={"branch_id": branch.id}, headers=headers,
+        )
         assert r.status_code == 200
+
+    def test_waiter_can_list_orders_only_for_assigned_branch(self, client, db):
+        assigned = _branch(db)
+        foreign = _branch(db)
+        headers = _linked(db, assigned, "waiter")
+
+        own = client.get(
+            "/api/v1/dining/orders", params={"branch_id": assigned.id}, headers=headers,
+        )
+        denied = client.get(
+            "/api/v1/dining/orders", params={"branch_id": foreign.id}, headers=headers,
+        )
+
+        assert own.status_code == 200, own.text
+        assert denied.status_code == 403, denied.text
 
     def test_create_order_via_http(self, client, db):
         br, o, item, hdrs, _ = self._setup(db)
@@ -309,6 +328,7 @@ class TestOrdersHTTP:
                                          "extra_ids": [], "extra_texts": {}}]},
                         headers=hdrs)
         assert r.status_code == 201
+        assert r.json()["source"] == "staff"
 
     def test_hold_order(self, client, db):
         br, o, item, hdrs, _ = self._setup(db)

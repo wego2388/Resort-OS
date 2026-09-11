@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, time
 from decimal import Decimal
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -311,6 +312,9 @@ class DiningTableRead(BaseModel):
     # guest_name/guest_phone بتاعة الطلب النشط، نفس نمط active_order_* فوق.
     active_order_guest_name:  str | None = None
     active_order_guest_phone: str | None = None
+    # مصدر الطلب فقط، بدون guest_session_id أو public reference. ده يسمح
+    # لخريطة الطاولات تميّز الطلب الذاتي بصريًا من غير كشف مفاتيح عامة.
+    active_order_source: Literal["staff", "guest_qr"] | None = None
 
 
 class DiningTableCreate(BaseModel):
@@ -439,6 +443,10 @@ class OrderRead(BaseModel):
     guests_count:              int
     notes:                     str | None
     waiter_id:                 int | None
+    waiter_name:               str | None = None   # اسم النادل المسند — بيتحسب في الراوتر
+    # مشتق من DiningOrder.guest_session_id عبر property آمنة في الموديل؛
+    # لا نرجّع session id نفسه للـ staff client لأنه لا يحتاجه.
+    source:                    Literal["staff", "guest_qr"] = "staff"
     payment_method:            str | None = None
     applied_discount_rule_id:  int | None
     customer_id:                int | None

@@ -799,6 +799,73 @@ class TestDiningWaiterTransferHTTP:
         assert resp.status_code == 403
 
 
+class TestDiningWaiterClaimHTTP:
+    """2026-09-11: طلبات QR (وأي طلب بلا نادل) بيقدر أي نادل يتولاها ذاتيًا —
+    عكس /waiter (مدير+، سبب إجباري)، دي عملية ذاتية بلا موافقة، لكن مقفولة
+    على طلب فعلاً بلا نادل أو نادل بيتولى طلبه هو (idempotent)."""
+
+    def _open_order(self, client, db, outlet, item, creator_headers):
+        return client.post(
+            f"/api/v1/dining/outlets/{outlet.id}/orders",
+            json={"outlet_id": outlet.id, "order_type": "takeaway", "guests_count": 1,
+                  "items": [{"item_id": item.id, "quantity": 1}]},
+            headers=creator_headers,
+        ).json()
+
+    def _unassign_waiter(self, db, order_id):
+        from app.modules.dining.models import DiningOrder
+        order = db.query(DiningOrder).filter_by(id=order_id).first()
+        order.waiter_id = None
+        db.commit()
+
+    def test_claim_unassigned_order_succeeds(self, client: TestClient, db):
+        from unittest.mock import AsyncMock, patch
+
+        from app.modules.dining.api.router import dining_manager
+
+        branch = make_branch_committed(db)
+        outlet = make_outlet_committed(db, branch)
+        item = make_item_committed(db, branch, outlet)
+        creator = make_branch_linked_headers(db, branch, "waiter")
+        order = self._open_order(client, db, outlet, item, creator)
+        self._unassign_waiter(db, order["id"])  # يحاكي طلب QR بلا نادل
+
+        claimer = make_branch_linked_headers(db, branch, "waiter")
+        with patch.object(dining_manager, "broadcast", new_callable=AsyncMock) as broadcast:
+            resp = client.patch(f"/api/v1/dining/orders/{order['id']}/claim", headers=claimer)
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["waiter_id"] is not None
+        assert resp.json()["waiter_name"]
+        broadcast.assert_awaited_once_with(
+            f"tables-{branch.id}", {"type": "tables_updated", "table_id": None},
+        )
+
+    def test_claim_already_mine_is_idempotent(self, client: TestClient, db):
+        branch = make_branch_committed(db)
+        outlet = make_outlet_committed(db, branch)
+        item = make_item_committed(db, branch, outlet)
+        creator = make_branch_linked_headers(db, branch, "waiter")
+        order = self._open_order(client, db, outlet, item, creator)
+
+        resp = client.patch(f"/api/v1/dining/orders/{order['id']}/claim", headers=creator)
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["waiter_id"] == order["waiter_id"]
+
+    def test_claim_order_assigned_to_another_waiter_rejected(self, client: TestClient, db):
+        branch = make_branch_committed(db)
+        outlet = make_outlet_committed(db, branch)
+        item = make_item_committed(db, branch, outlet)
+        creator = make_branch_linked_headers(db, branch, "waiter")
+        order = self._open_order(client, db, outlet, item, creator)
+
+        other_waiter = make_branch_linked_headers(db, branch, "waiter")
+        resp = client.patch(f"/api/v1/dining/orders/{order['id']}/claim", headers=other_waiter)
+        assert resp.status_code == 400
+
+    def test_claim_requires_auth(self, client: TestClient, db):
+        resp = client.patch("/api/v1/dining/orders/1/claim")
+        assert resp.status_code == 401
+
 
 
 def _make_split_finance_accounts(db, branch, revenue_code="4200"):

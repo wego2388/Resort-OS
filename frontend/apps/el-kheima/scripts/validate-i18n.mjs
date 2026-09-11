@@ -110,6 +110,7 @@ const STRICT_FILES = [
   'src/layouts/FieldLayout.vue',
   'src/layouts/KioskLayout.vue',
   'src/components/LanguageSwitcher.vue',
+  'src/components/PWAInstallButton.vue',
   'src/views/portal/ProfileView.vue',
   'src/views/account/SessionsView.vue',
   'src/views/admin/SettingsView.vue',

@@ -161,6 +161,27 @@ def transfer_order_waiter(
     return order
 
 
+def claim_order_waiter(db: Session, order_id: int, user_id: int) -> DiningOrder:
+    """تولّي نادل لطلب غير مسند لحد (بالذات طلبات QR اللي الضيف بيبعتها
+    بنفسه — waiter_id=None من الأساس، مفيش حد مسؤول عن متابعتها). عكس
+    transfer_order_waiter (مدير+، سبب إجباري، تدقيق كامل)، دي عملية ذاتية
+    بسيطة للنادل نفسه — بس مسموحة بس لو الطلب فعلاً بلا نادل أو نادل بيتولى
+    طلبه هو نفسه (idempotent)؛ سرقة طلب نادل تاني برّه النطاق، تمر عبر
+    transfer_order_waiter بس (مدير+)."""
+    order = _lock_order_or_conflict(db, order_id)
+    if order.status in ("paid", "cancelled", "refunded"):
+        raise ValueError(f"لا يمكن تولي طلب بحالة '{order.status}'")
+    if order.waiter_id is not None and order.waiter_id != user_id:
+        raise ValueError("الطلب مسند بالفعل لنادل آخر — راجع المدير لنقله")
+    if order.waiter_id == user_id:
+        return order
+
+    order.waiter_id = user_id
+    db.commit()
+    db.refresh(order)
+    return order
+
+
 def merge_orders(db: Session, source_id: int, target_id: int, merged_by: int) -> DiningOrder:
     """Merge two live dine-in orders without corrupting totals or KDS ownership."""
     from app.modules.core import policy_engine  # noqa: PLC0415

@@ -14,6 +14,7 @@ import ShiftPanel from '../components/ShiftPanel.vue'
 import GuestAlertsBell from '../components/GuestAlertsBell.vue'
 import OperatorSwitchModal from '../components/OperatorSwitchModal.vue'
 import LanguageSwitcher from '../components/LanguageSwitcher.vue'
+import PWAInstallButton from '../components/PWAInstallButton.vue'
 import { ThemeToggle } from '@resort-os/ui'
 
 const router = useRouter()
@@ -79,8 +80,8 @@ function logout() {
        locale controller) — no per-component dir override. -->
   <div class="field-shell flex h-dvh flex-col overflow-hidden">
     <!-- ── Header ── -->
-    <header class="flex-shrink-0 border-b border-stone-200 bg-white shadow-elevation-2 dark:border-gray-700 dark:bg-[#252D3A]">
-      <div class="flex min-h-16 items-center justify-between gap-2 px-3 py-2 sm:px-4">
+    <header class="field-shell-header flex-shrink-0 border-b border-stone-200 bg-white shadow-elevation-2 dark:border-gray-700 dark:bg-[#252D3A]">
+      <div class="field-shell-header__top flex min-h-14 items-center justify-between gap-2 px-3 py-1.5 sm:px-4">
 
         <!-- Logo + title -->
         <div class="flex min-w-0 items-center gap-3">
@@ -97,6 +98,9 @@ function logout() {
 
         <!-- Actions -->
         <div class="relative flex min-w-0 items-center gap-1 sm:gap-2">
+          <!-- يظهر فقط لما Chromium يعلن إن التثبيت متاح؛ يختفي داخل PWA. -->
+          <PWAInstallButton />
+
           <!-- Shift panel — كاشير+ فقط -->
           <ShiftPanel v-if="auth.hasRole('cashier')" />
 
@@ -188,7 +192,7 @@ function logout() {
           v-for="item in navItems"
           :key="item.path"
           :to="item.path"
-          class="flex min-h-11 min-w-[96px] flex-1 items-center justify-center gap-2 px-3 py-2.5 text-sm font-semibold transition-colors"
+          class="flex min-h-12 min-w-[96px] flex-1 items-center justify-center gap-2 px-3 py-2.5 text-sm font-semibold transition-colors active:scale-[0.99]"
           :class="route.path === item.path
             ? 'bg-gold-DEFAULT text-white'
             : 'text-gray-600 hover:bg-stone-100 hover:text-gray-900 dark:text-gray-300 dark:hover:bg-[#2E3748] dark:hover:text-white'"
@@ -248,6 +252,16 @@ function logout() {
   --pos-accent-bg: rgb(201 150 60 / 12%);
   --pos-success: #047857;
   --pos-danger: #dc2626;
+}
+
+.field-shell-header {
+  padding-top: env(safe-area-inset-top);
+}
+
+.field-shell button,
+.field-shell a {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .dark .field-shell {

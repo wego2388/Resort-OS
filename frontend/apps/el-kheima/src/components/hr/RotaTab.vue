@@ -373,7 +373,7 @@ onMounted(async () => {
               </div>
               <div class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ assignmentLabel(sw.from_assignment_id) }}</div>
               <div class="text-xs text-gray-500 dark:text-gray-400">{{ assignmentLabel(sw.to_assignment_id) }}</div>
-              <div v-if="sw.reason" class="text-xs text-gray-400 dark:text-gray-500 mt-1">📝 {{ sw.reason }}</div>
+              <div v-if="sw.reason" class="text-xs text-gray-500 dark:text-gray-400 mt-1">📝 {{ sw.reason }}</div>
             </div>
             <AppButton size="sm" variant="primary" @click="approveSwap(sw.id)">{{ t('backoffice.hr.rota.approve') }}</AppButton>
           </div>
@@ -409,7 +409,7 @@ onMounted(async () => {
         <div>
           <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">{{ t('backoffice.hr.rota.weekPatternLabel') }}</label>
           <textarea v-model="templateForm.week_pattern_json" rows="6" class="w-full font-mono text-xs border border-stone-200 dark:border-border rounded-xl px-3 py-2" />
-          <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ t('backoffice.hr.rota.weekPatternHint') }}</p>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ t('backoffice.hr.rota.weekPatternHint') }}</p>
         </div>
         <label class="flex items-center gap-2 text-sm">
           <input v-model="templateForm.is_active" type="checkbox" class="w-4 h-4" /> {{ t('backoffice.hr.rota.active') }}
@@ -438,7 +438,7 @@ onMounted(async () => {
           <option v-for="a in assignments" :key="a.id" :value="a.id">{{ assignmentLabel(a.id) }}</option>
         </select>
         <textarea v-model="swapForm.reason" rows="2" :placeholder="t('backoffice.hr.rota.reasonPlaceholder')" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
-        <p class="text-xs text-gray-400 dark:text-gray-500">{{ t('backoffice.hr.rota.swapAssignmentsHint') }}</p>
+        <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('backoffice.hr.rota.swapAssignmentsHint') }}</p>
         <AppButton class="w-full" :loading="savingSwap"
           :disabled="!swapForm.requester_id || !swapForm.target_employee_id || !swapForm.from_assignment_id || !swapForm.to_assignment_id"
           @click="saveSwap"

@@ -151,12 +151,16 @@ def get_test_db() -> Generator[Session, None, None]:
 # الاتنين (كود التطبيق + التستات اللي بتستخدم فيكستشر fake_redis مباشرة)
 # بيشتغلوا على نفس الـ backing store الوهمي، مش حاجتين منفصلتين.
 import redis as _redis_module  # noqa: E402
+from redis import asyncio as _async_redis_module  # noqa: E402
 
 _shared_fake_redis_server = fakeredis.FakeServer()
 _shared_fake_redis_client = fakeredis.FakeRedis(
     server=_shared_fake_redis_server, decode_responses=True
 )
 _redis_module.from_url = lambda *_args, **_kwargs: _shared_fake_redis_client
+_async_redis_module.from_url = lambda *_args, **_kwargs: fakeredis.FakeAsyncRedis(
+    server=_shared_fake_redis_server, decode_responses=True,
+)
 
 
 @pytest.fixture(scope="session")

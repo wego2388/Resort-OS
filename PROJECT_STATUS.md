@@ -1,6 +1,39 @@
 # حالة المشروع الحالية — El Kheima Beach Resort OS
 
-**آخر تحديث:** 2026-09-07 — **تقسيم كل الملفات الكبيرة المتبقية (Backend
+**آخر تحديث:** 2026-09-11 — **Unified Dining POS صار Tablet-first PWA
+للكاشير والويتر، مع مسار QR حي موزع بين workers. منفّذ ومختبَر محليًا فقط؛
+لا commit/push/deploy.** الـmanifest الإنتاجي الآن `standalone` ويبدأ من
+`/pos/dining`، بأيقونات El Kheima عادية وmaskable وApple، launch colors،
+install prompt، و`orientation:any` عمدًا لدعم landscape للكاشير وportrait
+للويتر. الواجهة اختُبرت على Lenovo Tab One بدقة 1340×800، وعلى viewport
+Android منطقي 894×533 وportrait 533×894؛ الأهداف اللمسية ≥44px، شريط
+الأوامر مضغوط، التصنيفات 56px، وكارت السلة المحمول 60px مع safe-area.
+
+مسار طلب الضيف صار يحمل `source=guest_qr` آمنًا من الـmodel/schema حتى
+الطلبات والطاولات، ويصدر حدث `guest_order_created` بلا session token أو
+public reference. الواجهة تعرض شارة/لونًا/بانرًا حيًا، وتشغل النغمة
+والاهتزاز، وتفتح التفاصيل بنقرة. idempotency replay لا يعيد الجرس. فجوة
+إنتاجية حقيقية اتصلحت: Docker يشغل Uvicorn بـ4 workers بينما المدير القديم
+كان process-local؛ `DistributedWebSocketManager` الجديد يستخدم Redis
+pub/sub لتوزيع Dining events لكل workers مع local fallback وإعادة اتصال.
+
+احتكاك الأدوار اتصلح بدون شاشة ثانية: `GET /dining/orders` أصبح waiter+
+مع branch isolation صريح، النادل يستطيع إضافة صنف للطلب المفتوح، وطلب QR
+غير المسند يمكن أن يتولاه نادل بنفسه عبر `/claim` (row lock، idempotent،
+ويرفض أخذ طلب نادل آخر)، مع waiter name وبث تحديث لباقي الأجهزة. الدفع
+وتقسيم التحصيل ظلا cashier-only؛ زر تقسيم التحصيل يفتح الوضع المقسّم مباشرة.
+لم يتغير معنى التقسيم إلى فصل أصناف/شيكات لأن ذلك قرار مالي/تشغيلي مطلوب
+من Mohamed. تحسينات REL-20 محفوظة بلا رجوع (المنيو قبل الطاولة، تأكيد حذف
+السلة، التخزين المحلي، الكروت الموحّدة).
+
+التحقق: `pytest tests/ -q` على **3017 tests collected** وصل 100% بلا فشل؛
+Ruff نظيف على كود الخلفية المتغير؛ type-check وi18n (6675 مفتاحًا لكل لغة)
+نجحا؛ 104 Vitest نجحوا عند استثناء حارس تباين قديم غير متعلق (`RotaTab.vue`
+موجود كما هو في base)، و14 Playwright mock E2E نجحوا؛ production build نجح
+وولّد `sw.js` وmanifest. التفاصيل:
+`docs/agent-workflow/handoffs/2026-09-11_unified-pos-tablet-pwa_codex-to-claude.md`.
+
+**السابق:** 2026-09-07 — **تقسيم كل الملفات الكبيرة المتبقية (Backend
 + Frontend) لنمط façade/private-submodule، زائد جولة تدقيق ذاتي كشفت
 وصلّحت 2 باج حقيقيين.** Backend: `services.py` الكبيرة في owner/finance/
 dining/core (2026-09-04..06) وأخيرًا timeshare (2270→189 سطر، 13 ملف
