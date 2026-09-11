@@ -69,87 +69,93 @@
 
 ---
 
-## 3. البنية المستهدفة لمشروع `timeshare-os`
+## 3. البنية المستهدفة — قرار محمد النهائي (2026-09-11): داخل `wego-platform`، مش مستودع Python جديد
 
-مشروع مستقل بالكامل، بنفس قناعات `resort-os` المعمارية (نفس الدستور: `crud→services→router`، Pydantic v2، SQLAlchemy 2.0، Vue 3 + Pinia لاحقًا):
+⚠️ **تعديل على القرار الأصلي:** أول نسخة من الخطة دي اقترحت مستودع Python/FastAPI
+مستقل جديد (`~/projects/timeshare-os`، راجع §4 القديم تحت) بنفس معمارية `resort-os`
+تمامًا. محمد راجع القرار وحدّد الاتجاه الصح صراحةً:
+
+> "خليه يعمل المشروع مجاور شرم تو جو ويستغل خواص الموبايل ويكون مشروع مستقل مثل الباقي"
+
+يعني: **التيم شير منتج جديد داخل `/home/wego/wego-platform`** (مش مستودع منفصل بره
+المنظومة دي) — بنفس نمط `Wego Divers`/`Sharm Divers Club` و`Wego Travel Marketplace`/
+`Sharm To Go` الموجودين فعلاً هناك، وباستخدام قدرات الموبايل الحقيقية (KMP/Compose
+Multiplatform) اللي المنصة دي مبنية عليها أصلاً — مش تطبيق ويب متنكّر كموبايل.
+
+### 3.1 نموذج التركيب في `wego-platform` (من `README.md`/`ENGINEERING_CONSTITUTION.md`)
 
 ```
-~/projects/timeshare-os/
-├── backend/
-│   ├── app/
-│   │   ├── core/
-│   │   │   ├── kernel/          ← منقول بالكامل من resort-os (auth/security/db/cache/
-│   │   │   │                       whatsapp/errors/health/logging/middleware/sentry)
-│   │   │   ├── config.py, database.py, deps.py, encryption.py, rate_limit.py
-│   │   ├── modules/
-│   │   │   ├── core/             ← Branch/User-adjacent فقط (models.py منقول، بدون
-│   │   │   │                        CRM/HR/Inventory وغيره من resort-os)
-│   │   │   ├── finance/          ← جديد، مصغّر: Account/JournalEntry/JournalLine/
-│   │   │   │                        CostCenter + post_simple_revenue_journal فقط —
-│   │   │   │                        دفتر حسابات خاص بمشروع التيم شير وحده
-│   │   │   └── timeshare/        ← منقول بالكامل (models/schemas/crud/services/api)
-│   │   ├── main.py, celery_app.py, seed.py
-│   │   └── resort_os/            ← أي pure-domain helpers مشتركة (timezone_utils، إلخ)
-│   ├── alembic/
-│   └── requirements.txt
-├── frontend/
-│   └── apps/timeshare-admin/     ← لوحة موظفي التيم شير (منقولة من TimeshareView.vue
-│                                     تبويباتها + TimeshareUnitPicker.vue)
-│   └── (بوابة المالك العامة + لاحقًا: تطبيق الموبايل)
+Wego Product (products/<product>/) + Client Configuration (clients/<client-id>/)
+                    = Isolated Client Deployment
 ```
 
-**قرارات تصميم موثّقة:**
-- `core/kernel/` يُنسَخ لا يُشارَك — نفس فلسفة استقلال `resort-os` عن `wego_core` (راجع `CLAUDE.md §14`): كل مشروع يملك بنيته التحتية، صفر اعتماد بيني وقت التشغيل.
-- دفتر حسابات مستقل تمامًا (Account/JournalEntry/JournalLine خاصين بـ `timeshare-os`) — **مش اتصال بقاعدة بيانات `resort-os` من بعيد**. هذا هو التنفيذ الحرفي لمتطلب محمد الثالث.
-- قاعدة بيانات Postgres منفصلة تمامًا (اسم جديد، مش schema جوه نفس قاعدة `resort-os`).
+| الطبقة | المسار | الدور |
+|---|---|---|
+| قدرات مشتركة بين كل المنتجات | `platform/` (kernel/identity/security/events) | Kotlin/Spring، بنية تحتية عامة فقط — بدون منطق عمل صناعي |
+| **المنتج الجديد** | `products/timeshare/` (مقترح) | Kotlin/Spring، Modular Monolith (`domain`/`application`/`infrastructure`/`api`)، PostgreSQL+Flyway+jOOQ، `BigDecimal` للأموال، عقد OpenAPI |
+| **إعداد عميل الخيمة** | `clients/el-kheima-timeshare/` (مقترح) | `client.manifest.json` بيشاور على `product.id = "wego-timeshare"`، توقيت القاهرة، عملة EGP، `deploymentIsolation: ISOLATED_INSTANCE` — بنفس نمط `clients/sharm-to-go/client.manifest.json` بالظبط |
+| واجهة الإدارة (موظفي التيم شير) | `web/apps/el-kheima-timeshare-erp/` (مقترح، Nuxt) | نفس نمط `sharm-to-go-erp` — لوحة الموظفين/العقود/الأقساط |
+| **تطبيق موبايل حقيقي لمالكي الملكية الجزئية** | امتداد لـ `mobile/apps/customer` (KMP) + `mobile/apps/customer-android` | زيارات، أسابيع، خدمة عملاء، تسجيل دخول (OTP/بيومتري)، إشعارات push حقيقية — مش نسخة من بوابة الويب الحالية `TimeshareOwnerPortalView.vue`، بناء أصلي يستغل قدرات الجهاز |
+| (اختياري) واجهة موبايل لموظفي التيم شير | `mobile/apps/ops` | لو فيه حاجة تستحق تطبيق موبايل للموظفين (مثلاً تأكيد استلام وحدة أثناء الجولة) — قرار لاحق بعد ما النواة تثبت |
+
+### 3.2 قواعد إلزامية من `docs/ENGINEERING_CONSTITUTION.md` (بند 1، 3، 4، 6) — لـ Codex
+
+- منطق التيم شير كله في `products/timeshare/` — **ممنوع** يتحط جوه `platform/` (ده للقدرات العامة بس) أو يتفرّع خصيصى لعميل الخيمة جوه المنتج نفسه (التخصيص بيبقى في `clients/el-kheima-timeshare/` بس، عبر إعداد/نقاط امتداد صريحة، مش فرع كود).
+- `domain` layer نضيف من Spring/HTTP/jOOQ generated records — نفس القاعدة المطبّقة في `products/divers`.
+- الأموال `BigDecimal`/`NUMERIC` دايمًا — مطابق تمامًا لقاعدة `Decimal` في `resort-os`، نفس المبدأ بلغة تانية.
+- Flyway هو مسار الـ migration الوحيد (مش Alembic — ده كان افتراض غلط في النسخة الأولى من الخطة، مبني على افتراض إن المشروع هيكون Python).
+- عقد OpenAPI إصدار (versioned) بين الـ backend والعميلين (web + mobile) — مطابق لبند 6 من الدستور.
 
 ---
 
-## 4. الحالة الحالية للـ scaffold (منجز بالفعل — نقطة بداية Codex)
+## 4. حالة الـ scaffold — تصحيح المسار
 
-تم فعليًا (commit `9eb0e46` في `~/projects/timeshare-os`، git مستقل، **لم يُلمس أي شيء في `resort-os`**):
-- إنشاء المستودع + `.gitignore`
-- نسخ `app/core/kernel/` كامل من `resort-os`
-- نسخ `app/modules/timeshare/` كامل (models/schemas/crud/services/_services/api)
-- نسخ `app/modules/core/models.py` فقط (Branch وما يتبعه — بدون crud/services/schemas الخاصة بـ resort-os)
-- نسخ `app/resort_os/` (pure helpers، منها `timezone_utils` و`image_processing` — الأخير غير مستخدم من التيم شير، يمكن حذفه)
+**الـ scaffold القديم في `~/projects/timeshare-os` (commit `9eb0e46`, Python/FastAPI) أصبح
+متجاوَزًا (superseded) بقرار محمد في §3 — سيبته موجود كمرجع فقط، لا تُكمل عليه.**
+كان فيه: نسخة من `resort-os/backend/app/core/kernel`، موديول `timeshare` كامل، و
+`modules/core/models.py` — مفيد كمرجع لمنطق العمل الأصلي (قواعد الأسابيع، حسابات
+الصيانة، تدفق OTP بوابة المالك) وقت بناء النسخة الحقيقية جوه `wego-platform`، لكن
+مش نقطة بداية تنفيذية بعد النهاردة.
 
-**لم يتم بعد (أول مهام Codex):** ربط كل ده ببعضه (imports مكسورة حاليًا)، بناء دفتر الحسابات المصغّر، قاعدة بيانات فعلية، أول migration، تشغيل حقيقي للسيرفر.
+**نقطة البداية الحقيقية لـ Codex الآن:** `/home/wego/wego-platform`، بمراجعة
+`docs/ENGINEERING_CONSTITUTION.md`، `docs/architecture/BOUNDARIES.md`، وبنية
+`products/divers/` و`clients/sharm-to-go/` كمرجع نمطي مباشر قبل إنشاء أي ملف.
 
 ---
 
 ## 5. خطة التنفيذ بالمراحل
 
-كل مرحلة **مستقلة وقابلة للتراجع** ومنتهية ببوابة تحقق واضحة. لا تنتقل لمرحلة قبل ما اللي قبلها يعدي بواباته.
+كل مرحلة **مستقلة وقابلة للتراجع** ومنتهية ببوابة تحقق واضحة. لا تنتقل لمرحلة قبل ما اللي قبلها يعدي بواباته. المراحل هنا موصوفة على مستوى الهدف/الـ DoD — التفاصيل الحرفية (أسماء ملفات jOOQ، إعداد Flyway، إلخ) تتبع قواعد `wego-platform` نفسها زي أي منتج تاني فيه (`products/divers` مرجع مباشر)، مش تفاصيل Python المذكورة في مسودة الخطة الأولى (اتشالت — راجع §4).
 
-### المرحلة 1 — إصلاح الاستيرادات المكسورة + تشغيل أولي
-**الهدف:** `timeshare-os/backend` يشتغل كسيرفر FastAPI فاضي (بدون finance حقيقي بعد) ضد قاعدة بيانات جديدة.
+### المرحلة 1 — سقالة المنتج الجديد `products/timeshare/`
+**الهدف:** موديول Kotlin/Spring فاضي (Modular Monolith، `domain`/`application`/`infrastructure`/`api`) بيتبني وبيمرّ بالـ quality gates الأساسية، ومسجّل في `foundry/catalog/modules.json`.
 
-- تنقية `app/core/deps.py` المنسوخ: يفضل بس الأدوار ذات الصلة (`timeshare_admin`, `timeshare_agent`, `super_admin` كحد أدنى للـ bootstrap) — احذف مراجع الأدوار التانية (`cashier`, `waiter`, إلخ) من `ROLE_LEVELS`.
-- `app/main.py` مصغّر: `build_auth_router()` + `build_health_router()` + `timeshare.api.router` بس (بدون الحلقة اللي بتحاول تسجّل 16 موديول).
-- `app/modules/core/`: أضف `schemas.py` (بس `PaginatedResponse` وما يحتاجه `timeshare` فعليًا — راجع `timeshare/api/router.py:91`) و`services.py` مصغّر (بس الدوال اللي `timeshare/api/router.py` بينادها فعليًا من `core_services`، مثل `provision_timeshare_agent`-adjacent).
-- قاعدة بيانات Postgres جديدة (`timeshare_os`، docker أو container منفصل) + `alembic init` + migration أولى (autogenerate من الموديلات المنقولة).
-- **بوابة التحقق:** `uvicorn app.main:app` يشتغل، `/health` يرجع 200، `alembic upgrade head` ينجح بدون أخطاء.
+- أنشئ `products/timeshare/` بنفس بنية `products/divers/` (package `com.wego.timeshare`).
+- `platform/kernel/identity` + `platform/kernel/security` للمصادقة/الصلاحيات — **زي أي منتج تاني، مش نسخة جديدة**.
+- أنشئ `clients/el-kheima-timeshare/client.manifest.json` (على نمط `clients/sharm-to-go/client.manifest.json` بالظبط: `product.id: "wego-timeshare"`, `timezone: Africa/Cairo`, `currency: EGP`, `deploymentIsolation: ISOLATED_INSTANCE`).
+- **بوابة التحقق:** أوامر البناء/الفحص القياسية للمنتج (زي `:products:divers:check` بالظبط بس لـ timeshare) تعدي، وFoundry manifest validation ينجح.
 
-### المرحلة 2 — دفتر الحسابات المصغّر الخاص بالمشروع
-**الهدف:** التيم شير يرحّل قيوده في حساباته هو، صفر اتصال بـ `resort-os`.
+### المرحلة 2 — منطق العمل الأساسي (Domain) — منقول من `resort-os` كمرجع منطقي، مبني من الصفر بـ Kotlin
+**الهدف:** ترجمة قواعد العمل الحقيقية الموجودة فعليًا في `resort-os/backend/app/modules/timeshare/` (مش إعادة اختراعها) إلى `domain` layer نضيف.
 
-- `app/modules/finance/models.py` جديد: `Account`, `JournalEntry`, `JournalLine`, `CostCenter` فقط (منقولة/مبسّطة من `resort-os/backend/app/modules/finance/models.py:314-458` و`447-458`) — **بدون** `Payment`/`CashierShift`/`Folio`/`Check`/`BankAccount`/`AccountingPeriod` وغيرها (مش محتاجينهم).
-- `app/modules/finance/_services/posting.py`: انسخ `post_simple_revenue_journal` (من `resort-os/backend/app/modules/finance/_services/posting.py:67` فصاعدًا) + `_exceptions.FinancialConfigurationError` + الجزء المحتاج من `cost_centers.py` (`ensure_default_cost_centers`, `DEFAULT_COST_CENTERS` — أو تبسيطه لمركز تكلفة واحد `TS` بس) + `exchange_rates.convert_to_egp` (أو تبسيطه لو كل عمليات التيم شير بالجنيه فقط — قرار يحتاج تأكيد من محمد، راجع §7).
-- Seed أولي لدليل حسابات صغير: 4600، 4650، + حسابات نقدية/بنك حسب طرق الدفع الفعلية المستخدمة في `contracts.py`/`installments.py`/`maintenance.py` (`_PAYMENT_METHOD_DEBIT_ACCOUNT` map — انسخها كما هي).
-- **بوابة التحقق:** استدعاء `post_simple_revenue_journal` حي (من تست أو سكريبت) ينشئ قيد متوازن فعلي في قاعدة بيانات `timeshare-os` الجديدة.
+- العقود، الأقساط، الوحدات (`TimeshareUnit`/`TimeshareUnitPair` — **افصلهم عن أي مفهوم غرفة فندق من الأساس**، مطابقةً لقرار العزل الموجود فعلاً في `resort-os`، راجع §2.1)، الزيارات.
+- **دفتر حسابات خاص بالمنتج نفسه**: Account/JournalEntry/JournalLine داخل `products/timeshare/` (أو جدول عام جوه `platform/` لو فيه بالفعل مفهوم محاسبي مشترك بين منتجات `wego-platform` — Codex أدرى ببنية `platform/` الحالية من هذه الخطة؛ المهم: **صفر اتصال بقاعدة بيانات `resort-os`**).
+- Flyway migrations لجداول المنتج الجديد.
+- **بوابة التحقق:** إنشاء عقد → تحصيل قسط → قيد محاسبي متوازن حقيقي في قاعدة بيانات `timeshare`'s الخاصة بيها — بتست تكامل حقيقي (PostgreSQL فعلي، مش mock)، بنفس روح بند 8 من `ENGINEERING_CONSTITUTION.md`.
 
-### المرحلة 3 — اختبارات + تحقق شامل
-- انقل ملفات التست ذات الصلة بالتيم شير من `resort-os/backend/tests/` (ابحث بـ `grep -rl timeshare tests/`) وعدّلها لتشتغل ضد المشروع الجديد.
-- `pytest tests/ -v` أخضر 100% في `timeshare-os`.
-- تدفق حي كامل: تسجيل دخول `timeshare_admin` → إنشاء عقد → تحصيل قسط → التأكد من القيد المحاسبي في `timeshare-os`'s DB → لا أي أثر في `resort-os`'s DB.
+### المرحلة 3 — عقد الـ API (OpenAPI) + واجهة الإدارة (Web)
+- عقد OpenAPI موثَّق ومُصدَّر (versioned) — بند 6 من الدستور.
+- `web/apps/el-kheima-timeshare-erp/` (Nuxt، على نمط `sharm-to-go-erp`): لوحة موظفي التيم شير — عقود/أقساط/وحدات/زيارات، منقولة منطقيًا من `TimeshareView.vue` وتبويباتها الحالية في `resort-os` (مرجع UX بس، مش كود يُنسخ حرفيًا).
 
-### المرحلة 4 — الفرونت إند
-- انقل `frontend/apps/el-kheima/src/views/admin/TimeshareView.vue` وتبويباتها، `TimeshareUnitPicker.vue`، `views/public/TimeshareOwnerPortalView.vue` إلى تطبيق Vue مستقل جديد جوه `timeshare-os/frontend/`.
-- أعد استخدام `@resort-os/ui`/`@resort-os/core` كـ **مرجع نمط بصري بس** (انسخ المكوّنات المحتاجة، متعملش دependency حيّة بين المشروعين — نفس فلسفة استقلال الـ backend).
+### المرحلة 4 — تطبيق الموبايل الحقيقي لمالكي الملكية الجزئية
+**الهدف الصريح من محمد:** "يستغل خواص الموبايل" — يعني مش بوابة ويب ملفوفة، تطبيق حقيقي.
 
-### المرحلة 5 — إكمال نواقص `TIMESHARE-01` (داخل المشروع الجديد)
-- نفّذ الباقي من `TIMESHARE-01_FULL_PLAN_AR.md` (قواعد مواسم الذروة، جدول `timeshare_peak_seasons`، ملف العميل الكامل، إلخ) — **هنا، مش جوه resort-os**.
+- امتداد `mobile/apps/customer` (KMP) بتجربة عميل التيم شير: تسجيل دخول (OTP اللي موجود فعلاً في `resort-os/timeshare/_services/owner_portal.py` كمرجع منطقي، أو بيومتري لو متاح)، عرض الزيارات/الأسابيع المستحقة، طلب زيارة، تذاكر خدمة عملاء، **إشعارات push حقيقية** (تأكيد/رفض الزيارة، رد على تذكرة دعم) — بدائل حقيقية لواتساب OTP الحالي في `resort-os` (اللي كان أفضل بديل متاح وقتها لمنتج مش عنده تطبيق موبايل).
+- تأكد من `mobile/apps/customer-android` بيبني (`./gradlew :mobile:apps:customer-android:assembleDebug`) وتجربة iOS بتتحقق على الأقل بالـ klib compile (`compileKotlinIosSimulatorArm64`) زي باقي المنتجات.
+- قرار مؤجَّل بعد ما النواة تثبت: هل موظفي التيم شير محتاجين `mobile/apps/ops` كمان، ولا واجهة الويب (المرحلة 3) كافية لهم؟
+
+### المرحلة 5 — إكمال نواقص `TIMESHARE-01` (داخل `products/timeshare/` الجديد)
+- نفّذ الباقي من `TIMESHARE-01_FULL_PLAN_AR.md` (قواعد مواسم الذروة، جدول المواسم، ملف العميل الكامل، إلخ) — **هنا، مش جوه resort-os**، وبقواعد `wego-platform` (Flyway/jOOQ) مش الوصف القديم بلغة Alembic/SQLAlchemy الموجود في الملف الأصلي (المنطق التجاري صحيح ومرجعي، التفاصيل التقنية فيه لمشروع resort-os القديم بس).
 
 ### المرحلة 6 — القطع النهائي من `resort-os` (آخر خطوة، بعد إثبات المشروع الجديد شغال 100%)
 ⚠️ **لا تنفّذ هذه المرحلة إلا بعد إثبات حي كامل للمراحل 1-4 وموافقة صريحة من محمد.**
@@ -165,27 +171,27 @@
 
 ## 6. قواعد إلزامية أثناء التنفيذ (لـ Codex)
 
-- **اتبع نفس دستور `resort-os` بالكامل** (`CLAUDE.md`) في المشروع الجديد — نفس طبقات crud/services/router، نفس قواعد الأموال (`Decimal` لا `float`)، نفس معايير الاختبار.
-- **مرحلة 1-5 لا تلمس `resort-os` إطلاقًا** — كل الشغل في `~/projects/timeshare-os` فقط، حتى المرحلة 6.
-- كل مرحلة = commit مستقل + بوابة تحقق فعلية (مش افتراض) قبل الانتقال للي بعدها — نفس فلسفة "دفعات صغيرة آمنة" (`CLAUDE.md §7`).
-- لو ظهر ترابط حقيقي إضافي متوقّعش موجود جوه أي دالة بتتنقل (مثلاً استيراد من موديول resort-os تاني غير المذكورين في §2)، **وثّقه واسأل قبل ما تخترع حل** — مايتفترضش حل تلقائي لترابط جديد غير موثّق هنا.
-- بيانات حقيقية للعملاء (لو ظهرت لاحقًا) = PII، لازم `EncryptedString` بنفس نمط `resort-os` (`customer_national_id` بالفعل مُشفّر في الموديل المنقول — حافظ عليه).
+- **اتبع `docs/ENGINEERING_CONSTITUTION.md` و`docs/architecture/BOUNDARIES.md` بالكامل** في `wego-platform` — نفس مستوى الالتزام اللي `resort-os` عنده بـ`CLAUDE.md`.
+- **مرحلة 1-5 لا تلمس `resort-os` إطلاقًا** — كل الشغل الفعلي في `wego-platform`، حتى المرحلة 6.
+- كل مرحلة = execution packet مستقل (بند 2 من الدستور) + بوابة تحقق فعلية (مش افتراض) قبل الانتقال للي بعدها.
+- لو ظهر ترابط حقيقي إضافي متوقّعش موجود جوه أي منطق بيتنقل من `resort-os` كمرجع (مثلاً اعتماد على موديول resort-os تاني غير المذكورين في §2)، **وثّقه واسأل قبل ما تخترع حل**.
+- بيانات حقيقية للعملاء (لو ظهرت لاحقًا) = PII، تصنيف وتشفير حسب بند 5 من `ENGINEERING_CONSTITUTION.md` — `customer_national_id` كان مُشفّر (`EncryptedString`) في `resort-os` الأصلي، حافظ على نفس مستوى الحماية.
+- مراجعة عدائية مستقلة إلزامية (بند 2) على: المصادقة/الصلاحيات، الترحيل المحاسبي، عزل بيانات العميل (`clients/el-kheima-timeshare` مقابل أي عميل تاني مستقبلي على نفس المنتج) — قبل أي commit.
 
 ---
 
 ## 7. قرارات مفتوحة لمحمد (تأكيد بس، مش عائق للبدء)
 
-الافتراضات التالية موضوعة كـ defaults معقولة ومُنفَّذة جزئيًا بالفعل (المسمى والمكان) — لو عايز تغييرها قول:
-
-1. **اسم/مكان المشروع:** `~/projects/timeshare-os` (تم إنشاؤه بالفعل). لو عايز اسم تجاري مختلف (زي "El Kheima Owners" أو غيره) قوله وهيتغير بسهولة (لسه بداية).
-2. **العملة:** هل عمليات التيم شير كلها بالجنيه المصري فقط؟ لو أيوه، دفتر الحسابات المصغّر (المرحلة 2) ممكن يتبسّط بحذف تحويل العملة (`convert_to_egp`) تمامًا بدل نسخه.
-3. **تطبيق الموبايل (المرحلة 5+):** ستاك التطبيق — Flutter (زي WegoDivers وWatersportsOS الحاليين في نفس البيئة) ولا حاجة تانية؟
+1. **اسم المنتج/العميل:** `products/timeshare` + `clients/el-kheima-timeshare` (مقترح، بنفس نمط `wego-travel-marketplace`/`sharm-to-go`). لو عايز أسماء تجارية مختلفة قولها.
+2. **العملة:** هل عمليات التيم شير كلها بالجنيه المصري فقط؟ لو أيوه، منطق تحويل العملة (`convert_to_egp` المرجعي من `resort-os`) ممكن يتحذف تمامًا بدل ما يتنقل.
+3. **الموبايل للموظفين:** هل موظفي التيم شير محتاجين تطبيق موبايل خاص بيهم (`mobile/apps/ops`) كمان، ولا واجهة الويب (المرحلة 3) كافية ليهم؟ (سؤال المستخدم النهائي = تطبيق الموبايل اتحدد إنه لمالكي الملكية الجزئية أولاً — راجع §5 المرحلة 4).
 
 ---
 
 ## 8. مؤشر النجاح النهائي (Definition of Done للخطة كاملة)
 
-- [ ] `timeshare-os` backend + frontend يشتغلوا مستقلين بالكامل، بقاعدة بياناتهم وحساباتهم الخاصة.
+- [ ] `products/timeshare` + `clients/el-kheima-timeshare` + web ERP + تطبيق الموبايل يشتغلوا مستقلين بالكامل، بقاعدة بياناتهم وحساباتهم الخاصة، داخل `wego-platform`.
 - [ ] `resort-os` بعد المرحلة 6: صفر كود/جدول نشط خاص بالتيم شير، `pytest` أخضر 100%، الحجز/PMS يعمل بلا أي تغيير سلوكي ملحوظ.
 - [ ] لا أي قيد محاسبي جديد لعقود/أقساط/صيانة ملكية جزئية يظهر في دفتر يومية `resort-os` من تاريخ القطع فصاعدًا.
+- [ ] APK حقيقي لتطبيق الموبايل بيبني (`assembleDebug` على الأقل) ومالك ملكية جزئية يقدر فعليًا يسجّل دخول ويشوف زياراته منه.
 - [ ] تطبيق موبايل التيم شير (زيارات/أسابيع/خدمة عملاء) — مرحلة لاحقة منفصلة، بعد ثبات الـ backend الجديد.

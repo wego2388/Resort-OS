@@ -73,7 +73,7 @@ CODEX-REVIEW-01 فوق) — بعدها UAT-01 وGo/No-Go النهائي
 | OPS-01 — burn-in and alerting | BASELINE COMPLETE | مراقبة مستمرة + إرسال خارجي | اختيار قناة التنبيه |
 | UAT-01 — operational acceptance | PENDING | جهاز/دور/لغة/شبكة/مال | ممثلو التشغيل والمالية |
 | DATA-02 — approved real master data | PARTIAL — PMS ROOMS COMPLETE | الغرف الحقيقية منشورة؛ باقي master data ينتظر اعتماد العمليات | المالك والتشغيل لباقي البيانات |
-| TIMESHARE-EXTRACTION-01 — فصل موديول الملكية الجزئية لمشروع مستقل (`~/projects/timeshare-os`) — تفويض مباشر من Mohamed خارج دورة Codex، **قائد التنفيذ المكلَّف صراحة: Codex** | PENDING — Codex | خطة كاملة بالمراحل في `docs/agent-workflow/TIMESHARE-EXTRACTION-01_STANDALONE_APP_PLAN_AR.md`؛ scaffold أولي منجز (git commit `9eb0e46` في المشروع الجديد — core/kernel + timeshare module منقولين، resort-os لم يُلمس)؛ العميل الحالي لا يستخدم التيم شير فعليًا فالمخاطرة منخفضة | لا يوجد — البدء فورًا من المرحلة 1 في الخطة |
+| TIMESHARE-EXTRACTION-01 — فصل موديول الملكية الجزئية لمنتج مستقل داخل `wego-platform` (مش resort-os) — تفويض مباشر من Mohamed خارج دورة Codex، **قائد التنفيذ المكلَّف صراحة: Codex** | PENDING — Codex | خطة كاملة بالمراحل في `docs/agent-workflow/TIMESHARE-EXTRACTION-01_STANDALONE_APP_PLAN_AR.md`؛ الهدف: `products/timeshare` + `clients/el-kheima-timeshare` + web ERP + تطبيق موبايل حقيقي (KMP) لمالكي الملكية الجزئية في `/home/wego/wego-platform`، بجوار Sharm To Go/Divers؛ resort-os لم يُلمس؛ العميل الحالي لا يستخدم التيم شير فعليًا فالمخاطرة منخفضة | لا يوجد — البدء فورًا من المرحلة 1 في الخطة، جوه `wego-platform` |
 
 ## ما اكتمل
 
