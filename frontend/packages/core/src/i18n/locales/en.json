@@ -4910,7 +4910,70 @@
         "attendance": "Attendance",
         "payroll": "Payroll",
         "leaves": "Leaves",
+        "rota": "Rota",
         "leaderboard": "Leaderboard"
+      },
+      "rota": {
+        "tabWeek": "Week",
+        "tabTemplates": "Templates",
+        "tabSwaps": "Swap Requests",
+        "newAssignment": "New Assignment",
+        "noAssignments": "No shifts assigned this week",
+        "selectEmployee": "Select employee",
+        "selectShift": "Select shift",
+        "notesPlaceholder": "Notes (optional)",
+        "save": "Save",
+        "column": {
+          "date": "Date",
+          "employee": "Employee",
+          "shift": "Shift",
+          "status": "Status",
+          "notes": "Notes"
+        },
+        "assignmentStatus": {
+          "scheduled": "Scheduled",
+          "confirmed": "Confirmed",
+          "swapped": "Swapped",
+          "absent": "Absent"
+        },
+        "templatesHint": "Weekly rota templates per department — how many staff are needed per shift/day",
+        "newTemplate": "New Template",
+        "editTemplate": "Edit Template",
+        "noTemplates": "No templates yet",
+        "active": "Active",
+        "inactive": "Inactive",
+        "edit": "Edit",
+        "selectDepartment": "Select department",
+        "templateNamePlaceholder": "Template name",
+        "weekPatternLabel": "Week pattern (JSON)",
+        "weekPatternHint": "JSON object: day (sat/sun/mon/...) → shift name → staff count needed",
+        "invalidWeekPatternJson": "Invalid JSON",
+        "swapsHint": "Pending shift-swap requests waiting on your approval",
+        "newSwapRequest": "New Swap Request",
+        "noPendingSwaps": "No pending swap requests",
+        "approve": "Approve",
+        "approveSwapTitle": "Approve shift swap",
+        "approveSwapMessage": "The two employees will be swapped between the shifts. Continue?",
+        "selectRequester": "Select requesting employee",
+        "selectTarget": "Select other employee",
+        "selectFromAssignment": "Requester's shift",
+        "selectToAssignment": "Shift to swap with",
+        "reasonPlaceholder": "Reason (optional)",
+        "swapAssignmentsHint": "Shifts shown here are from the week selected in the \"Week\" tab only",
+        "msg": {
+          "loadReferenceError": "Couldn't load employees/departments/shifts",
+          "loadWeekError": "Couldn't load this week's rota",
+          "assignmentSaved": "Shift assigned",
+          "assignmentSaveError": "Couldn't save the assignment",
+          "loadTemplatesError": "Couldn't load templates",
+          "templateSaved": "Template saved",
+          "templateSaveError": "Couldn't save the template",
+          "loadSwapsError": "Couldn't load swap requests",
+          "swapApproved": "Swap approved",
+          "swapApproveError": "Couldn't approve the swap",
+          "swapRequested": "Swap request sent",
+          "swapRequestError": "Couldn't send the swap request"
+        }
       },
       "status": {
         "active": "Active",
@@ -6782,6 +6845,7 @@
       "manualAdjustment": "Manual adjustment",
       "recordReceipt": "Record stock receipt",
       "supplierPayables": "Supplier payables",
+      "printBarcodeLabels": "Print barcode labels",
       "payables": {
         "orderNumber": "Order #",
         "supplier": "Supplier",
@@ -6901,7 +6965,8 @@
         "supplierAdded": "Supplier added",
         "saveSupplierError": "Couldn't save the supplier",
         "supplierStatusError": "Couldn't update the supplier status",
-        "loadProductsError": "Couldn't load products — try again"
+        "loadProductsError": "Couldn't load products — try again",
+        "barcodeLabelsError": "Couldn't generate barcode labels — try again"
       }
     },
     "maintenance": {

@@ -1331,6 +1331,21 @@ def create_swap_request(data: ShiftSwapRequestCreate, db: DbDep, user=Depends(ge
     return ShiftSwapRequestRead.model_validate(swap)
 
 
+@router.get("/hr/rota/swap-requests", response_model=list[ShiftSwapRequestRead])
+def list_swap_requests(
+    db: DbDep, user=Depends(get_hr_reader_user),
+    branch_id: int = Query(...), status: Optional[str] = Query(None),
+):
+    """كانت مفقودة تمامًا — مفيش طريقة كانت موجودة تشوف بيها طلبات التبديل
+    المعلّقة عشان توافق عليها، رغم إن create + approve موجودين من زمان."""
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "عرض طلبات تبديل الورديات")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+    swaps = crud.list_swap_requests(db, branch_id, status)
+    return [ShiftSwapRequestRead.model_validate(s) for s in swaps]
+
+
 @router.patch("/hr/rota/swap-requests/{swap_id}/approve",
               response_model=ShiftSwapRequestRead)
 def approve_swap_request(swap_id: int, db: DbDep, user=Depends(get_hr_reader_user)):

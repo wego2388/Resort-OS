@@ -4910,7 +4910,70 @@
         "attendance": "الحضور",
         "payroll": "الرواتب",
         "leaves": "الإجازات",
+        "rota": "جدول الورديات",
         "leaderboard": "لوحة الأداء"
+      },
+      "rota": {
+        "tabWeek": "الأسبوع",
+        "tabTemplates": "القوالب",
+        "tabSwaps": "طلبات التبديل",
+        "newAssignment": "تعيين وردية جديدة",
+        "noAssignments": "لا توجد ورديات معيّنة في هذا الأسبوع",
+        "selectEmployee": "اختر الموظف",
+        "selectShift": "اختر الوردية",
+        "notesPlaceholder": "ملاحظات (اختياري)",
+        "save": "حفظ",
+        "column": {
+          "date": "التاريخ",
+          "employee": "الموظف",
+          "shift": "الوردية",
+          "status": "الحالة",
+          "notes": "ملاحظات"
+        },
+        "assignmentStatus": {
+          "scheduled": "مجدولة",
+          "confirmed": "مؤكّدة",
+          "swapped": "تم التبديل",
+          "absent": "غياب"
+        },
+        "templatesHint": "قوالب الجدول الأسبوعي لكل قسم — تحدّد عدد الموظفين المطلوبين لكل وردية/يوم",
+        "newTemplate": "قالب جديد",
+        "editTemplate": "تعديل القالب",
+        "noTemplates": "لا توجد قوالب بعد",
+        "active": "مفعّل",
+        "inactive": "غير مفعّل",
+        "edit": "تعديل",
+        "selectDepartment": "اختر القسم",
+        "templateNamePlaceholder": "اسم القالب",
+        "weekPatternLabel": "نمط الأسبوع (JSON)",
+        "weekPatternHint": "JSON: اليوم (sat/sun/mon/...) ← اسم الوردية ← عدد الموظفين المطلوب",
+        "invalidWeekPatternJson": "صيغة JSON غير صحيحة",
+        "swapsHint": "طلبات تبديل الورديات المعلّقة اللي محتاجة موافقتك",
+        "newSwapRequest": "طلب تبديل جديد",
+        "noPendingSwaps": "لا توجد طلبات تبديل معلّقة",
+        "approve": "موافقة",
+        "approveSwapTitle": "الموافقة على تبديل الوردية",
+        "approveSwapMessage": "هيتم تبديل الموظفين بين الورديتين. متابعة؟",
+        "selectRequester": "اختر الموظف الطالب",
+        "selectTarget": "اختر الموظف الآخر",
+        "selectFromAssignment": "وردية الطالب",
+        "selectToAssignment": "الوردية المطلوب التبديل معها",
+        "reasonPlaceholder": "سبب الطلب (اختياري)",
+        "swapAssignmentsHint": "الورديات المعروضة هنا من الأسبوع المختار في تبويب \"الأسبوع\" فقط",
+        "msg": {
+          "loadReferenceError": "تعذّر تحميل بيانات الموظفين/الأقسام/الورديات",
+          "loadWeekError": "تعذّر تحميل ورديات الأسبوع",
+          "assignmentSaved": "تم تعيين الوردية",
+          "assignmentSaveError": "تعذّر حفظ التعيين",
+          "loadTemplatesError": "تعذّر تحميل القوالب",
+          "templateSaved": "تم حفظ القالب",
+          "templateSaveError": "تعذّر حفظ القالب",
+          "loadSwapsError": "تعذّر تحميل طلبات التبديل",
+          "swapApproved": "تمت الموافقة على التبديل",
+          "swapApproveError": "تعذّرت الموافقة على التبديل",
+          "swapRequested": "تم إرسال طلب التبديل",
+          "swapRequestError": "تعذّر إرسال طلب التبديل"
+        }
       },
       "status": {
         "active": "نشط",
@@ -6782,6 +6845,7 @@
       "manualAdjustment": "تعديل يدوي",
       "recordReceipt": "تسجيل استلام بضاعة",
       "supplierPayables": "مستحقات الموردين",
+      "printBarcodeLabels": "طباعة ملصقات الباركود",
       "payables": {
         "orderNumber": "رقم الأمر",
         "supplier": "المورد",
@@ -6901,7 +6965,8 @@
         "supplierAdded": "تم إضافة المورد",
         "saveSupplierError": "تعذّر حفظ المورد",
         "supplierStatusError": "تعذّر تحديث حالة المورد",
-        "loadProductsError": "تعذّر تحميل الأصناف — حاول تاني"
+        "loadProductsError": "تعذّر تحميل الأصناف — حاول تاني",
+        "barcodeLabelsError": "تعذّر توليد ملصقات الباركود — حاول تاني"
       }
     },
     "maintenance": {

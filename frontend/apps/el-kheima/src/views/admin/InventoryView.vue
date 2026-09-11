@@ -42,6 +42,56 @@ const loading = ref(false)
 const search = ref('')
 const showLowStock = ref(false)
 
+// طباعة ملصقات الباركود (2026-09-11) — GET /inventory/products/barcode-labels
+// موجود في الباك إند من زمان بدون أي شاشة تستخدمه. الـendpoint نفسه محتاج
+// get_manager_user (level ≥ 60)، لكن الشاشة دي متاحة لـsupervisor برضو
+// (راجع router — requiredRoles يشمل supervisor)، فلازم نخفي الإجراء ده عن
+// أي حد تحت مستوى مدير هنا صراحةً — وإلا زرار مفعّل هيرجّع 403 مضلّل.
+const canPrintBarcodes = computed(() => auth.roleLevel >= 60)
+const selectedProductIds = ref<Set<number>>(new Set())
+const printingBarcodes = ref(false)
+
+function toggleProductSelection(id: number) {
+  const next = new Set(selectedProductIds.value)
+  if (next.has(id)) next.delete(id); else next.add(id)
+  selectedProductIds.value = next
+}
+
+const allFilteredSelected = computed(() => {
+  const list = filtered()
+  return list.length > 0 && list.every(p => selectedProductIds.value.has(p.id))
+})
+
+function toggleSelectAllFiltered() {
+  const list = filtered()
+  if (allFilteredSelected.value) {
+    const next = new Set(selectedProductIds.value)
+    for (const p of list) next.delete(p.id)
+    selectedProductIds.value = next
+  } else {
+    selectedProductIds.value = new Set([...selectedProductIds.value, ...list.map(p => p.id)])
+  }
+}
+
+async function printBarcodeLabels() {
+  if (selectedProductIds.value.size === 0 || branchId.value == null) return
+  printingBarcodes.value = true
+  try {
+    const { data } = await api.get('/api/v1/inventory/products/barcode-labels', {
+      params: {
+        branch_id: branchId.value,
+        product_ids: [...selectedProductIds.value].join(','),
+      },
+      responseType: 'blob',
+    })
+    const url = URL.createObjectURL(data)
+    const a = document.createElement('a'); a.href = url; a.download = 'barcode-labels.pdf'; a.click()
+    setTimeout(() => URL.revokeObjectURL(url), 5000)
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail ?? t('backoffice.inventory.msg.barcodeLabelsError'))
+  } finally { printingBarcodes.value = false }
+}
+
 // ── #6: إضافة/تعديل منتج ────────────────────────────────────────────────
 const productModal = ref(false)
 const editingProduct = ref<Product | null>(null)
@@ -429,6 +479,11 @@ onMounted(() => { fetchCategories(); fetchWarehouses(); fetchSuppliers(); fetchP
         <AppButton variant="secondary" size="sm" @click="openAdjustStock">⚖️ {{ t('backoffice.inventory.manualAdjustment') }}</AppButton>
         <AppButton variant="secondary" size="sm" @click="openReceivePO">📦 {{ t('backoffice.inventory.recordReceipt') }}</AppButton>
         <AppButton variant="secondary" size="sm" @click="openPayablesModal">💳 {{ t('backoffice.inventory.supplierPayables') }}</AppButton>
+        <AppButton
+          v-if="canPrintBarcodes" variant="secondary" size="sm"
+          :disabled="selectedProductIds.size === 0" :loading="printingBarcodes"
+          @click="printBarcodeLabels"
+        >🏷️ {{ t('backoffice.inventory.printBarcodeLabels') }}{{ selectedProductIds.size ? ` (${selectedProductIds.size})` : '' }}</AppButton>
         <AppButton size="sm" @click="openCreateProduct">+ {{ t('backoffice.inventory.newProduct') }}</AppButton>
         <AppButton variant="secondary" size="sm" @click="fetchProducts">🔄</AppButton>
       </div>
@@ -447,6 +502,9 @@ onMounted(() => { fetchCategories(); fetchWarehouses(); fetchSuppliers(); fetchP
         <table class="w-full min-w-[960px]">
           <thead class="bg-stone-50 dark:bg-gray-800/60">
             <tr>
+              <th v-if="canPrintBarcodes" class="px-4 py-3 w-10">
+                <input type="checkbox" class="w-4 h-4" :checked="allFilteredSelected" @change="toggleSelectAllFiltered" />
+              </th>
               <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.inventory.column.product') }}</th>
               <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">SKU</th>
               <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.inventory.column.category') }}</th>
@@ -459,6 +517,9 @@ onMounted(() => { fetchCategories(); fetchWarehouses(); fetchSuppliers(); fetchP
           </thead>
           <tbody>
             <tr v-for="p in filtered()" :key="p.id" class="border-t border-stone-100 dark:border-border/50 hover:bg-stone-50 dark:bg-gray-800/60">
+              <td v-if="canPrintBarcodes" class="px-4 py-3">
+                <input type="checkbox" class="w-4 h-4" :checked="selectedProductIds.has(p.id)" @change="toggleProductSelection(p.id)" />
+              </td>
               <td class="px-4 py-3 font-medium text-gray-900 dark:text-gray-100 text-sm">{{ p.name }}</td>
               <td class="px-4 py-3 font-mono text-xs text-gray-500 dark:text-gray-400">{{ p.sku }}</td>
               <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">{{ categoryLabel(p) }}</td>
@@ -479,7 +540,7 @@ onMounted(() => { fetchCategories(); fetchWarehouses(); fetchSuppliers(); fetchP
               </td>
             </tr>
             <tr v-if="filtered().length === 0">
-              <td colspan="8" class="px-4 py-8">
+              <td :colspan="canPrintBarcodes ? 9 : 8" class="px-4 py-8">
                 <EmptyState icon="📦" :title="t('backoffice.inventory.noProducts')" :subtitle="t('backoffice.inventory.noProductsHint')" />
               </td>
             </tr>

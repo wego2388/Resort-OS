@@ -503,6 +503,53 @@ class TestHRRotaAndShiftSwap:
         )
         assert resp.status_code == 404
 
+    def test_list_swap_requests_returns_pending_and_filters_by_status(
+        self, client: TestClient, db, manager_headers,
+    ):
+        """كان مفيش أي GET يشوف الطلبات المعلّقة عشان توافق عليها — POST +
+        PATCH .../approve موجودين، بدون قائمة خالص."""
+        branch = make_branch_committed(db)
+        headers = role_headers_for_branch(db, branch)
+        requester = make_employee_committed(db, branch)
+        target = make_employee_committed(db, branch)
+        shift = make_shift_committed(db, branch)
+        d1, d2 = date.today(), date.today() + timedelta(days=1)
+        a1 = client.post(
+            "/api/v1/hr/rota/assignments",
+            json={"branch_id": branch.id, "employee_id": requester.id, "shift_id": shift.id,
+                  "assigned_date": str(d1)},
+            headers=headers,
+        ).json()
+        a2 = client.post(
+            "/api/v1/hr/rota/assignments",
+            json={"branch_id": branch.id, "employee_id": target.id, "shift_id": shift.id,
+                  "assigned_date": str(d2)},
+            headers=headers,
+        ).json()
+        swap = client.post(
+            "/api/v1/hr/rota/swap-requests",
+            json={"branch_id": branch.id, "requester_id": requester.id, "target_employee_id": target.id,
+                  "from_assignment_id": a1["id"], "to_assignment_id": a2["id"]},
+            headers=headers,
+        ).json()
+
+        list_resp = client.get(
+            "/api/v1/hr/rota/swap-requests",
+            params={"branch_id": branch.id, "status": "pending"},
+            headers=headers,
+        )
+        assert list_resp.status_code == 200, list_resp.text
+        assert any(s["id"] == swap["id"] for s in list_resp.json())
+
+        client.patch(f"/api/v1/hr/rota/swap-requests/{swap['id']}/approve", headers=headers)
+
+        still_pending = client.get(
+            "/api/v1/hr/rota/swap-requests",
+            params={"branch_id": branch.id, "status": "pending"},
+            headers=headers,
+        ).json()
+        assert swap["id"] not in [s["id"] for s in still_pending]
+
 
 class TestEmployeeCrudHttp:
     """GET/POST/PATCH /hr/employees — إنشاء/عرض/تعديل حقيقي عبر HTTP، مش

@@ -7,17 +7,19 @@ import AttendanceTab from '../../components/hr/AttendanceTab.vue'
 import PayrollTab from '../../components/hr/PayrollTab.vue'
 import LeavesTab from '../../components/hr/LeavesTab.vue'
 import LeaderboardTab from '../../components/hr/LeaderboardTab.vue'
+import RotaTab from '../../components/hr/RotaTab.vue'
 
 const { t } = useI18n()
 const auth = useAuthStore()
 const branchId = computed(() => auth.branchId)
-const tab = ref<'employees' | 'attendance' | 'payroll' | 'leaves' | 'leaderboard'>('employees')
+const tab = ref<'employees' | 'attendance' | 'payroll' | 'leaves' | 'leaderboard' | 'rota'>('employees')
 
 const tabsList = computed<{ val: typeof tab.value; label: string }[]>(() => [
   { val: 'employees', label: t('backoffice.hr.tabs.employees') },
   { val: 'attendance', label: t('backoffice.hr.tabs.attendance') },
   { val: 'payroll', label: t('backoffice.hr.tabs.payroll') },
   { val: 'leaves', label: t('backoffice.hr.tabs.leaves') },
+  { val: 'rota', label: `🗓️ ${t('backoffice.hr.tabs.rota')}` },
   { val: 'leaderboard', label: `🏆 ${t('backoffice.hr.tabs.leaderboard')}` },
 ])
 </script>
@@ -50,6 +52,9 @@ const tabsList = computed<{ val: typeof tab.value; label: string }[]>(() => [
 
     <!-- Attendance Tab -->
     <AttendanceTab v-if="tab === 'attendance'" :branch-id="branchId" />
+
+    <!-- Rota Tab -->
+    <RotaTab v-if="tab === 'rota'" :branch-id="branchId" />
 
     <!-- Leaderboard Tab -->
     <LeaderboardTab v-if="tab === 'leaderboard'" :branch-id="branchId" />

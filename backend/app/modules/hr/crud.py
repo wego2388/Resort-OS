@@ -851,6 +851,17 @@ def get_swap_request(db: Session, swap_id: int) -> Optional[ShiftSwapRequest]:
     return db.query(ShiftSwapRequest).filter(ShiftSwapRequest.id == swap_id).first()
 
 
+def list_swap_requests(
+    db: Session, branch_id: int, status: Optional[str] = None,
+) -> list[ShiftSwapRequest]:
+    """كان مفيش أي طريقة تشوف طلبات التبديل المعلّقة عشان توافق عليها —
+    POST + PATCH .../approve موجودين من الأول، بدون GET للقائمة خالص."""
+    q = db.query(ShiftSwapRequest).filter(ShiftSwapRequest.branch_id == branch_id)
+    if status:
+        q = q.filter(ShiftSwapRequest.status == status)
+    return q.order_by(ShiftSwapRequest.id.desc()).all()
+
+
 def approve_swap(
     db: Session, swap_request: ShiftSwapRequest, approver_id: int
 ) -> ShiftSwapRequest:
