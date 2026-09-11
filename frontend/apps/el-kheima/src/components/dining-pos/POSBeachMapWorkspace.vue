@@ -6,7 +6,13 @@
  * - هنا: الضغط على موقع = فتح طلب أكل (DiningOrder)، مش تذكرة شاطئ.
  * - موقع "occupied" (دخل كاشير الشاطئ ضيف) يظهر مشغول باسم الضيف
  *   والكاشير يقدر يفتح عليه طلب دايننج مباشرة.
- * - موقع "available" يقدر الكاشير يفتح عليه طلب بدون رسوم شاطئ.
+ * - موقع "available": ممنوع تعمّدًا (2026-09-11، طلب Mohamed) — كان قبل
+ *   كده مسموح تفتح طلب أكل على موقع لسه مالوش تشيك-إن، يعني ضيف يقعد ياكل
+ *   من غير ما يكون داخل رسميًا في نظام الشاطئ (بدون تذكرة دخول)، وكاشير
+ *   الشاطئ لسه شايفه فاضي فيقدر يسجّل ضيف تاني عليه — تعارض حجز حقيقي +
+ *   تسريب إيراد. كاشير الشاطئ بقى المسؤول الوحيد عن شغل الموقع (تشيك-إن
+ *   حقيقي)، ودايننج بيتابع بس طلب على موقع مشغول بالفعل — راجع نفس القيد
+ *   على الباك إند في dining._services.orders.create_order.
  * - موقع له طلب دايننج نشط: يظهر "🍽️ طلب جاري" بجانب اسم الضيف.
  */
 import { computed, onMounted, onUnmounted, ref } from 'vue'
@@ -72,7 +78,8 @@ function locationStatusClass(loc: BeachLocation): string {
   if (loc.status === 'out_of_service') return 'bg-gray-100 dark:bg-gray-800 border-gray-300 text-gray-400 cursor-not-allowed'
   if (diningActive) return 'bg-amber-100 dark:bg-amber-900/40 border-amber-500 text-amber-900 dark:text-amber-200 hover:border-amber-600'
   if (loc.status === 'occupied') return 'bg-blue-100 dark:bg-blue-900/40 border-blue-500 text-blue-900 dark:text-blue-200 hover:border-blue-600'
-  return 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-400 text-emerald-900 dark:text-emerald-200 hover:border-emerald-600 hover:bg-emerald-100'
+  // "available" — مقفول عمدًا (راجع تعليق أعلى الملف)، مش قابل للضغط زي out_of_service بصريًا.
+  return 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-300 text-emerald-800 dark:text-emerald-300 cursor-not-allowed opacity-80'
 }
 
 function onLocationClick(loc: BeachLocation) {
@@ -82,6 +89,9 @@ function onLocationClick(loc: BeachLocation) {
     emit('openOrder', diningOrder.id)
     return
   }
+  // موقع "available": ممنوع فتح طلب عليه — لازم كاشير الشاطئ يسجّل دخول
+  // الضيف الأول (نفس القيد المفروض في الباك إند)، راجع تعليق أعلى الملف.
+  if (loc.status !== 'occupied') return
   emit('startOrder', loc)
 }
 

@@ -42,6 +42,9 @@ interface BeachLocation {
   towels_given: number
   checked_in_at: string | null
   checked_in_by: number | null
+  // 2026-09-11: طلب دايننج لسه مفتوح على الموقع ده — لازم يتحصّل/يتلغي قبل
+  // الـcheckout (راجع نفس القيد في beach.services.checkout_location).
+  has_active_dining_order: boolean
 }
 
 const TYPE_LABELS = computed<Record<string, string>>(() => ({
@@ -342,6 +345,12 @@ onMounted(fetchLocations)
               statusColor(loc),
             ]"
           >
+            <span
+              v-if="loc.has_active_dining_order"
+              class="absolute -end-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-amber-500 text-[11px] shadow-sm"
+              :title="t('backoffice.beachMap.hasDiningOrderHint')"
+              aria-hidden="true"
+            >🍽️</span>
             <span class="text-xl leading-none">{{ typeIcon(loc.location_type) }}</span>
             <span class="text-base leading-none">{{ loc.number }}</span>
             <span class="text-[10px] font-medium">{{ statusLabel(loc.status) }}</span>
@@ -398,6 +407,9 @@ onMounted(fetchLocations)
         <p><span class="text-gray-500">{{ t('backoffice.beachMap.guestsCountLabel') }}</span> {{ detailTarget.guests_count }}</p>
         <p><span class="text-gray-500">{{ t('backoffice.beachMap.towelsLabel') }}</span> {{ detailTarget.towels_given }}</p>
         <p v-if="detailTarget.checked_in_at"><span class="text-gray-500">{{ t('backoffice.beachMap.checkInTimeLabel') }}</span> {{ fmtTimeFn(parseApiTimestamp(detailTarget.checked_in_at)) }}</p>
+        <p v-if="detailTarget.has_active_dining_order" class="rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 px-3 py-2 text-amber-900 dark:text-amber-200 text-xs font-semibold">
+          🍽️ {{ t('backoffice.beachMap.hasDiningOrderHint') }}
+        </p>
       </div>
       <template #footer>
         <button

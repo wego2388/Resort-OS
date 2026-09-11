@@ -55,6 +55,8 @@ export interface CartLine {
   variantLabel: string | null
   name: string
   nameAr: string | null
+  // 2026-09-11: استمرارية بصرية مع صورة الصنف في شبكة المنيو/مودال الإضافات
+  imageUrl: string | null
   unitPrice: number
   quantity: number
   notes: string

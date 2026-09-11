@@ -15,7 +15,7 @@ import GuestAlertsBell from '../components/GuestAlertsBell.vue'
 import OperatorSwitchModal from '../components/OperatorSwitchModal.vue'
 import LanguageSwitcher from '../components/LanguageSwitcher.vue'
 import PWAInstallButton from '../components/PWAInstallButton.vue'
-import { ThemeToggle } from '@resort-os/ui'
+import { AppBadge, ThemeToggle } from '@resort-os/ui'
 
 const router = useRouter()
 const route = useRoute()
@@ -45,6 +45,24 @@ onUnmounted(() => { if (clockInterval) clearInterval(clockInterval) })
 
 // DINING_CUTOVER_PLAN.md Batch 4 — role-based بدل path-based
 const isWaiter = computed(() => auth.role === 'waiter')
+
+// 2026-09-11، طلب Mohamed صراحةً: نفس الشاشة (UnifiedPOSView) بتخدم الكاشير
+// والنادل مع بعض على نفس الجهاز أحيانًا — لازم هوية بصرية واضحة تفرّق
+// بينهم من أول لحظة، مش بس صلاحيات صامتة تحت السطح. أخضر = نادل (خدمة/تنقل
+// بين الطاولات)، أزرق = كاشير+ (تحصيل/مسؤولية مالية) — نفس تقسيم isWaiter
+// الموجود بالفعل فوق، من غير درجة تالتة جديدة.
+const roleTheme = computed(() => isWaiter.value
+  ? {
+      label: t('backoffice.permissions.roles.waiter'),
+      badgeVariant: 'success' as const,
+      headerBorderClass: 'border-emerald-500 dark:border-emerald-400',
+    }
+  : {
+      label: t(`backoffice.permissions.roles.${auth.role}`),
+      badgeVariant: 'info' as const,
+      headerBorderClass: 'border-blue-500 dark:border-blue-400',
+    },
+)
 
 // 2026-08-11: باج UX حقيقي رفعه Mohamed (سكرين شوت من /pos/dining) — سكرول
 // المنيو كان بيسحب الصفحة كلها معاه (بما فيها سلة/إتمام البيع)، لأن الشل هنا
@@ -80,7 +98,7 @@ function logout() {
        locale controller) — no per-component dir override. -->
   <div class="field-shell flex h-dvh flex-col overflow-hidden">
     <!-- ── Header ── -->
-    <header class="field-shell-header flex-shrink-0 border-b border-stone-200 bg-white shadow-elevation-2 dark:border-gray-700 dark:bg-[#252D3A]">
+    <header class="field-shell-header flex-shrink-0 border-b-[3px] bg-white shadow-elevation-2 dark:bg-[#252D3A] transition-colors" :class="roleTheme.headerBorderClass">
       <div class="field-shell-header__top flex min-h-14 items-center justify-between gap-2 px-3 py-1.5 sm:px-4">
 
         <!-- Logo + title -->
@@ -89,8 +107,11 @@ function logout() {
             <span class="text-white text-xs font-black">{{ isWaiter ? '🧑🍳' : 'POS' }}</span>
           </div>
           <div class="hidden min-w-0 sm:block">
-            <div class="text-sm font-bold leading-tight text-gray-900 dark:text-gray-50">
-              {{ isWaiter ? t('backoffice.layout.orderTaker') : t('backoffice.layout.pos') }}
+            <div class="flex items-center gap-2">
+              <span class="text-sm font-bold leading-tight text-gray-900 dark:text-gray-50">
+                {{ isWaiter ? t('backoffice.layout.orderTaker') : t('backoffice.layout.pos') }}
+              </span>
+              <AppBadge :variant="roleTheme.badgeVariant" size="sm">{{ roleTheme.label }}</AppBadge>
             </div>
             <div class="text-xs leading-tight text-gray-500 dark:text-gray-400">{{ branchName }}</div>
           </div>
@@ -130,7 +151,7 @@ function logout() {
             class="hidden min-h-11 flex-col items-end justify-center rounded-xl px-2 transition-colors hover:bg-stone-100 dark:hover:bg-[#2E3748] sm:flex"
           >
             <span class="text-sm font-medium text-gray-900 dark:text-gray-50">{{ auth.user?.full_name }}</span>
-            <span class="text-xs text-amber-700 dark:text-amber-300">{{ auth.role }}</span>
+            <span class="text-xs text-amber-700 dark:text-amber-300">{{ roleTheme.label }}</span>
           </button>
 
           <div class="hidden items-center gap-1 sm:flex sm:gap-2">
@@ -166,7 +187,7 @@ function logout() {
               @click="mobileMenuOpen = false; showOperatorSwitch = true"
             >
               <span class="max-w-full truncate text-sm font-bold text-gray-900 dark:text-gray-50">{{ auth.user?.full_name }}</span>
-              <span class="text-xs text-amber-700 dark:text-amber-300">{{ auth.role }}</span>
+              <span class="text-xs text-amber-700 dark:text-amber-300">{{ roleTheme.label }}</span>
             </button>
             <div class="mt-1 flex min-h-11 items-center justify-between rounded-xl px-2 hover:bg-stone-100 dark:hover:bg-[#2E3748]">
               <LanguageSwitcher variant="full" />

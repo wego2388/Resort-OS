@@ -3984,6 +3984,7 @@
       "selectOutlet": "Select outlet",
       "activeOrdersTitle": "Active orders",
       "searchPlaceholder": "🔍 Search items... (/)",
+      "searchingAllCategories": "Showing results from all categories",
       "hotkeysHint": "⌨️ /  — focus search · Enter — send order · Esc — close/clear",
       "wsStatus": {
         "connected": "Live updates — connected",
@@ -4377,7 +4378,7 @@
       "frequentItems": "Frequently ordered",
       "beachMap": {
         "title": "Beach Umbrella Map",
-        "hint": "Tap an available spot to start a dining order for it",
+        "hint": "Tap a spot the beach cashier already checked a guest into, to start a dining order",
         "refresh": "Refresh",
         "available": "Available",
         "occupiedByBeach": "Occupied (beach check-in)",
@@ -4387,7 +4388,7 @@
         "loadError": "Failed to load the beach map",
         "empty": "No beach locations added for this branch",
         "emptyHint": "Ask a manager to add beach locations from the admin screen first",
-        "tap": "Tap to start order",
+        "tap": "Needs a beach check-in first",
         "oos": "Disabled"
       },
       "hotel": {
@@ -5600,6 +5601,7 @@
       "available": "Available",
       "occupied": "Occupied",
       "outOfService": "Out of service",
+      "hasDiningOrderHint": "This spot has an open dining order — it must be paid or cancelled before checkout",
       "noLocations": "No beach locations added for this branch",
       "noLocationsManagerHint": "Tap 'Add locations' above to get started",
       "noLocationsStaffHint": "Ask a manager to add beach locations first",

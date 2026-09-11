@@ -16,7 +16,7 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useStaffFormat } from '@resort-os/core/i18n/staff'
-import { AppModal, AppButton, AppBadge, AppTextarea } from '@resort-os/ui'
+import { AppModal, AppButton, AppBadge, AppIcon, AppTextarea } from '@resort-os/ui'
 
 interface DiningExtra {
   id: number; name: string; name_ar: string | null
@@ -146,6 +146,19 @@ function confirm() {
 <template>
   <AppModal :open="!!item" :title="item ? localizedName(item) : ''" size="md" :close-label="t('backoffice.pos.close')" @close="emit('close')">
     <div v-if="item" class="space-y-5">
+
+      <!-- صورة الصنف — استمرارية بصرية مع كارت المنيو اللي فتح منه المودال ده -->
+      <div class="relative h-32 w-full -mt-1 rounded-2xl overflow-hidden bg-gradient-to-br from-stone-100 to-stone-200 dark:from-gray-800 dark:to-gray-900">
+        <img
+          v-if="item.image_url"
+          :src="item.image_url"
+          :alt="localizedName(item)"
+          class="h-full w-full object-cover"
+        />
+        <div v-else class="h-full w-full flex items-center justify-center">
+          <AppIcon name="photo" class="text-stone-300 dark:text-gray-700" />
+        </div>
+      </div>
 
       <!-- ── الحجم/النوع (Variant) ── -->
       <div v-if="availableVariants.length > 0">

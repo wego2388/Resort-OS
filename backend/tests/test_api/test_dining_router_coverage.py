@@ -551,8 +551,13 @@ def _b2b_contract(db, branch):
     db.add(c); db.commit(); return c
 
 
-def _beach_location(db, branch, loc_type="umbrella", number=None):
-    """ينشئ موقع شاطئ (شمسية) للفرع المعطى."""
+def _beach_location(db, branch, loc_type="umbrella", number=None, status="occupied"):
+    """ينشئ موقع شاطئ (شمسية) للفرع المعطى.
+
+    2026-09-11: الافتراضي بقى "occupied" (مش "available") — طلب دايننج على
+    موقع شاطئ بقى مرفوض إلا لو الموقع مسجّل عليه تشيك-إن فعلي (راجع
+    dining._services.orders.create_order وTestBeachLocationRequiresCheckin
+    تحت)، فمعظم تستات "نجاح إنشاء الطلب" محتاجة موقع مشغول بالفعل."""
     from app.modules.beach.models import BeachLocation
     loc = BeachLocation(
         branch_id=branch.id,
@@ -560,7 +565,7 @@ def _beach_location(db, branch, loc_type="umbrella", number=None):
         number=number or f"U-{uuid.uuid4().hex[:12]}",
         grid_row=1,
         grid_col=1,
-        status="available",
+        status=status,
     )
     db.add(loc); db.commit(); return loc
 
@@ -791,3 +796,147 @@ class TestBeachLocationFeature:
         body = r.json()
         assert body["b2b_contract_id"] == contract.id
         assert body["beach_location_id"] == loc.id
+
+
+class TestBeachLocationRequiresCheckin:
+    """2026-09-11، طلب Mohamed صراحةً: كاشير الدايننج كان يقدر يفتح طلب أكل
+    على شمسية/برجولة لسه "فاضية" (بلا تشيك-إن حقيقي من كاشير الشاطئ) — يعني
+    ضيف يقعد ياكل من غير تذكرة دخول، وكاشير الشاطئ لسه شايف الموقع فاضي
+    فيقدر يسجّل ضيف تاني عليه في نفس الوقت. اتصلح: الموقع لازم "occupied"
+    (تشيك-إن فعلي) قبل أي طلب دايننج عليه."""
+
+    def test_rejects_order_on_available_location(self, client, db):
+        br = _branch(db)
+        _finance_accounts(db, br)
+        o = _outlet(db, br)
+        item = _item(db, br, o)
+        hdrs = _linked(db, br, role="waiter")
+        loc = _beach_location(db, br, status="available")
+
+        r = client.post(f"/api/v1/dining/outlets/{o.id}/orders",
+                        json={
+                            "outlet_id": o.id,
+                            "order_type": "dine_in",
+                            "guests_count": 2,
+                            "beach_location_id": loc.id,
+                            "items": [{"item_id": item.id, "quantity": 1,
+                                       "extra_ids": [], "extra_texts": {}}],
+                        }, headers=hdrs)
+        assert r.status_code == 400
+        assert "دخول" in r.json()["detail"]
+
+    def test_rejects_order_on_out_of_service_location(self, client, db):
+        br = _branch(db)
+        _finance_accounts(db, br)
+        o = _outlet(db, br)
+        item = _item(db, br, o)
+        hdrs = _linked(db, br, role="waiter")
+        loc = _beach_location(db, br, status="out_of_service")
+
+        r = client.post(f"/api/v1/dining/outlets/{o.id}/orders",
+                        json={
+                            "outlet_id": o.id, "order_type": "dine_in", "guests_count": 1,
+                            "beach_location_id": loc.id,
+                            "items": [{"item_id": item.id, "quantity": 1,
+                                       "extra_ids": [], "extra_texts": {}}],
+                        }, headers=hdrs)
+        assert r.status_code == 400
+
+    def test_allows_order_once_beach_cashier_checks_guest_in(self, client, db):
+        """نفس الموقع اللي رفضناه فاضي — بمجرد ما كاشير الشاطئ يسجّل دخول
+        ضيف عليه فعليًا (occupied)، الدايننج يقدر يفتح طلب عليه عادي."""
+        br = _branch(db)
+        _finance_accounts(db, br)
+        o = _outlet(db, br)
+        item = _item(db, br, o)
+        hdrs = _linked(db, br, role="waiter")
+        loc = _beach_location(db, br, status="available")
+
+        rejected = client.post(f"/api/v1/dining/outlets/{o.id}/orders",
+                               json={"outlet_id": o.id, "order_type": "dine_in", "guests_count": 1,
+                                     "beach_location_id": loc.id,
+                                     "items": [{"item_id": item.id, "quantity": 1,
+                                                "extra_ids": [], "extra_texts": {}}]},
+                               headers=hdrs)
+        assert rejected.status_code == 400
+
+        loc.status = "occupied"
+        db.commit()
+
+        accepted = client.post(f"/api/v1/dining/outlets/{o.id}/orders",
+                               json={"outlet_id": o.id, "order_type": "dine_in", "guests_count": 1,
+                                     "beach_location_id": loc.id,
+                                     "items": [{"item_id": item.id, "quantity": 1,
+                                                "extra_ids": [], "extra_texts": {}}]},
+                               headers=hdrs)
+        assert accepted.status_code == 201
+        assert accepted.json()["beach_location_id"] == loc.id
+
+
+def _fake_jpeg_bytes(width=1600, height=1200) -> bytes:
+    """صورة JPEG حقيقية (مش تخمين bytes) — تحاكي صورة كاميرا كبيرة فعلية
+    عشان نتأكد إن الضغط/التصغير شغال حقيقي، مش بس النوع المسموح."""
+    import io
+    from PIL import Image
+    buffer = io.BytesIO()
+    Image.new("RGB", (width, height), color=(200, 120, 60)).save(buffer, format="JPEG", quality=95)
+    return buffer.getvalue()
+
+
+class TestItemImageUpload:
+    """2026-09-11: رفع صورة صنف كان بيتخزّن زي ما هو (لحد 2 ميجا) من غير أي
+    ضغط/تصغير — الكاشير بيحمّل الصورة كاملة عشان يعرضها في مربع 44-96px.
+    اتصلح: أي صورة مقبولة بتتصغّر لأقصى 800px وتتضغط JPEG وقت الرفع."""
+
+    def test_upload_compresses_and_resizes_large_image(self, client, db, manager_headers):
+        branch = _branch(db)
+        outlet = _outlet(db, branch)
+        item = _item(db, branch, outlet)
+        large = _fake_jpeg_bytes(1600, 1200)
+
+        resp = client.post(
+            f"/api/v1/dining/items/{item.id}/image",
+            files={"file": ("photo.jpg", large, "image/jpeg")},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["image_url"].endswith(".jpg")
+
+        import os
+        from PIL import Image
+        import app.modules.dining.api.router as dining_router
+        # نفس منطق بناء المسار الموجود في الراوتر نفسه بالظبط
+        uploads_dir = os.path.join(os.path.dirname(dining_router.__file__), "..", "..", "..", "..", "uploads", "menu_items")
+        filename = body["image_url"].rsplit("/", 1)[-1]
+        filepath = os.path.join(uploads_dir, filename)
+        assert os.path.exists(filepath), filepath
+        with Image.open(filepath) as stored:
+            assert stored.format == "JPEG"
+            assert max(stored.size) <= 800
+        stored_size = os.path.getsize(filepath)
+        assert stored_size < len(large)  # فعليًا أصغر من الأصل، مش بس نفس الحجم
+        os.remove(filepath)
+
+    def test_upload_rejects_wrong_magic_bytes(self, client, db, manager_headers):
+        branch = _branch(db)
+        outlet = _outlet(db, branch)
+        item = _item(db, branch, outlet)
+        resp = client.post(
+            f"/api/v1/dining/items/{item.id}/image",
+            files={"file": ("fake.jpg", b"not a real jpeg content at all", "image/jpeg")},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 400
+
+    def test_upload_rejects_oversized_file(self, client, db, manager_headers):
+        branch = _branch(db)
+        outlet = _outlet(db, branch)
+        item = _item(db, branch, outlet)
+        oversized = b"\xff\xd8\xff" + b"\x00" * (2 * 1024 * 1024 + 1)
+        resp = client.post(
+            f"/api/v1/dining/items/{item.id}/image",
+            files={"file": ("big.jpg", oversized, "image/jpeg")},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 400

@@ -410,13 +410,21 @@ async def upload_item_image(
     _=Depends(get_manager_user),
 ):
     """T-05 — رفع صورة لصنف في قائمة الطعام (مدير+).
-    يقبل: image/jpeg, image/png, image/webp — حد أقصى 2 ميجابايت.
+    يقبل: image/jpeg, image/png, image/webp — حد أقصى 2 ميجابايت كمُدخَل.
 
     فحص مزدوج: content-type header + magic bytes فعلية من محتوى الملف —
     عشان نمنع content-type spoofing (رفع ملف تنفيذي بـ header image/jpeg).
-    """
+
+    2026-09-11: الصورة كانت بتتخزّن زي ما هي بالظبط (لحد 2 ميجا) وبتتحمّل
+    كاملة في شاشة الكاشير عشان تتعرض في مربع 44-96px — هدر حقيقي في
+    الباندويدث على تابلت. بعد الفحوصات الأمنية دي، الصورة بتتضغط/تتصغّر
+    (راجع resort_os.image_processing.compress_menu_photo — نفس الدالة
+    مستخدمة في سكريبت تعبئة الصور بالجملة، مفيش منطق مكرر) وتتحفظ JPEG
+    موحّد — نفس الشكل للكاشير، حجم ملف أصغر بكتير."""
     import os
     import uuid
+
+    from app.resort_os.image_processing import compress_menu_photo
 
     item = crud.get_item(db, item_id)
     if not item:
@@ -450,14 +458,18 @@ async def upload_item_image(
     if file.content_type == "image/webp" and len(contents) >= 12 and contents[8:12] != b"WEBP":
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "محتوى الملف لا يطابق نوعه المُعلَن")
 
-    ext = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}[file.content_type]
-    filename = f"{item_id}_{uuid.uuid4().hex[:8]}.{ext}"
+    try:
+        processed = compress_menu_photo(contents)
+    except Exception as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "تعذّر معالجة هذه الصورة") from exc
+
+    filename = f"{item_id}_{uuid.uuid4().hex[:8]}.jpg"
     uploads_dir = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "uploads", "menu_items")
     os.makedirs(uploads_dir, exist_ok=True)
     filepath = os.path.join(uploads_dir, filename)
 
     with open(filepath, "wb") as f:
-        f.write(contents)
+        f.write(processed)
 
     item.image_url = f"/uploads/menu_items/{filename}"
     db.commit()

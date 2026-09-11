@@ -332,6 +332,10 @@ class BeachLocationRead(BaseModel):
     checked_in_by:          Optional[int] = None
     created_at:             datetime
     updated_at:             datetime
+    # 2026-09-11: بيتحسب في الراوتر (كويري على dining_orders) — عشان كاشير
+    # الشاطئ يشوف على الخريطة إن الموقع ده عليه طلب دايننج لسه مفتوح، قبل
+    # ما يحاول checkout ويتفاجئ بالرفض (راجع services.checkout_location).
+    has_active_dining_order: bool = False
 
 
 class BeachLocationBulkCreate(BaseModel):

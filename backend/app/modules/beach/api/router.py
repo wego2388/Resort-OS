@@ -48,6 +48,34 @@ def _assert_beach_branch(db, user, branch_id: int, action_desc: str) -> None:
         raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
 
 
+_ACTIVE_DINING_STATUSES = ("held", "open", "in_kitchen", "served")
+
+
+def _location_ids_with_active_dining_order(db, location_ids: list[int]) -> set[int]:
+    """2026-09-11: جزء من إصلاح تعارض دايننج/شاطئ — يحسب أي المواقع دي عليها
+    طلب دايننج لسه مفتوح، عشان كاشير الشاطئ يشوفها على الخريطة قبل ما يحاول
+    checkout ويترفض (راجع services.checkout_location's guard)."""
+    from app.modules.dining.models import DiningOrder  # noqa: PLC0415
+
+    if not location_ids:
+        return set()
+    rows = (
+        db.query(DiningOrder.beach_location_id)
+        .filter(
+            DiningOrder.beach_location_id.in_(location_ids),
+            DiningOrder.status.in_(_ACTIVE_DINING_STATUSES),
+        )
+        .all()
+    )
+    return {row[0] for row in rows}
+
+
+def _enrich_location(db, loc) -> BeachLocationRead:
+    validated = BeachLocationRead.model_validate(loc)
+    validated.has_active_dining_order = bool(_location_ids_with_active_dining_order(db, [loc.id]))
+    return validated
+
+
 # ── WebSocket Live Map Manager ──────────────────────────────────────────
 # نفس نمط restaurant_manager (restaurant/api/router.py) وalerts_manager
 # (core/api/router.py) بالظبط — بث بسيط بالفرع، من غير أي بروتوكول ثنائي
@@ -600,8 +628,14 @@ def list_locations(
     branch_id: int = Query(...), location_type: Optional[str] = Query(None),
 ):
     _assert_beach_branch(db, user, branch_id, "عرض خريطة الشاطئ")
-    return [BeachLocationRead.model_validate(loc)
-            for loc in services.list_locations(db, branch_id, location_type)]
+    locations = services.list_locations(db, branch_id, location_type)
+    active_ids = _location_ids_with_active_dining_order(db, [loc.id for loc in locations])
+    result = []
+    for loc in locations:
+        validated = BeachLocationRead.model_validate(loc)
+        validated.has_active_dining_order = loc.id in active_ids
+        result.append(validated)
+    return result
 
 
 @router.post("/beach/locations/bulk", response_model=list[BeachLocationRead],

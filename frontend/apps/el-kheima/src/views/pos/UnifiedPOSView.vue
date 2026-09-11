@@ -9,7 +9,6 @@ import {
   AppIcon,
   AppSelect,
   EmptyState,
-  LoadingState,
   SearchInput,
   useConfirm,
   useToast,
@@ -312,16 +311,24 @@ const frequentItems = computed(() => {
     .slice(0, FREQ_TOP_N)
 })
 
+// 2026-09-11: البحث كان مقفول جوه الفئة المختارة بس — لو الكاشير واقف على
+// فئة "المشروبات" وكتب اسم صنف موجود في "الحلويات"، كان بيشوف "لا نتائج"
+// رغم إن الصنف موجود فعليًا في المنيو. أي بحث حقيقي (Talabat وغيره) بيدوّر
+// في القائمة كلها بمجرد ما تكتب — الفئة المختارة تبقى فلتر تصفّح بس لما
+// مفيش بحث نشط.
 const filteredItems = computed(() => {
   const query = searchQuery.value.trim().toLowerCase()
-  return items.value
-    .filter(item => {
-      if (selectedCategoryId.value !== 'all' && item.category_id !== Number(selectedCategoryId.value)) return false
-      if (!query) return true
-      return item.name.toLowerCase().includes(query) || (item.name_ar ?? '').toLowerCase().includes(query)
-    })
+  const pool = query
+    ? items.value
+    : items.value.filter(item => selectedCategoryId.value === 'all' || item.category_id === Number(selectedCategoryId.value))
+  return pool
+    .filter(item => !query || item.name.toLowerCase().includes(query) || (item.name_ar ?? '').toLowerCase().includes(query))
     .sort((a, b) => Number(b.is_available) - Number(a.is_available))
 })
+
+const isSearchingAcrossAllCategories = computed(() =>
+  searchQuery.value.trim().length > 0 && selectedCategoryId.value !== 'all',
+)
 
 // عدّاد الأصناف لكل فئة في الرف الجانبي — تسلسل بصري أوضح (2026-09-11،
 // جزء من التحسين التجميلي المطلوب) بدل قائمة نصوص مسطّحة بلا أي إشارة
@@ -334,6 +341,16 @@ const categoryItemCounts = computed<Record<number, number>>(() => {
   }
   return counts
 })
+
+// نقطة لون لكل فئة في الرف الجانبي — إيقاع بصري (كل فئة بلون مختلف عند
+// الراحة) بدل قائمة رمادية مسطّحة، من غير اختراع ألوان جديدة (نفس درجات
+// الألوان المستخدمة فعليًا في باقي الشاشة دي: blue/purple/amber/emerald/rose).
+const CATEGORY_DOT_COLORS = [
+  'bg-blue-400', 'bg-purple-400', 'bg-amber-400', 'bg-emerald-400', 'bg-rose-400', 'bg-primary-400',
+]
+function categoryDotClass(index: number): string {
+  return CATEGORY_DOT_COLORS[index % CATEGORY_DOT_COLORS.length]
+}
 
 const cartContextLabel = computed(() => {
   // شمسية/برجولة — يتحقق الأول قبل الطاولة
@@ -370,6 +387,19 @@ function categoryName(category: DiningCategory): string {
 
 function itemName(item: DiningItemRow): string {
   return localizedName(item)
+}
+
+// تمييز جزء البحث المطابق داخل اسم الصنف — بدون v-html (تقسيم نص عادي،
+// مفيش خطر حقن حتى لو الاسم مش موثوق 100%).
+function nameSegments(name: string, query: string): { text: string; match: boolean }[] {
+  if (!query) return [{ text: name, match: false }]
+  const idx = name.toLowerCase().indexOf(query)
+  if (idx === -1) return [{ text: name, match: false }]
+  return [
+    { text: name.slice(0, idx), match: false },
+    { text: name.slice(idx, idx + query.length), match: true },
+    { text: name.slice(idx + query.length), match: false },
+  ].filter(segment => segment.text.length > 0)
 }
 
 function itemPrice(item: DiningItemRow): number {
@@ -535,6 +565,7 @@ function addLineToCart(
     variantLabel: variant ? localizedName(variant) : null,
     name: item.name,
     nameAr: item.name_ar,
+    imageUrl: item.image_url ?? null,
     unitPrice: Number(variant ? variant.price : item.price) + extraPrice,
     quantity: 1,
     notes: choice.notes,
@@ -1230,7 +1261,7 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
             <AppBadge size="sm" :variant="selectedCategoryId === 'all' ? 'info' : 'neutral'">{{ items.length }}</AppBadge>
           </button>
           <button
-            v-for="category in categories"
+            v-for="(category, index) in categories"
             :key="category.id"
             type="button"
             :aria-pressed="selectedCategoryId === String(category.id)"
@@ -1242,7 +1273,10 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
             ]"
             @click="selectedCategoryId = String(category.id)"
           >
-            <span class="truncate">{{ categoryName(category) }}</span>
+            <span class="flex items-center gap-2 min-w-0">
+              <span class="h-2 w-2 rounded-full flex-shrink-0" :class="categoryDotClass(index)" aria-hidden="true" />
+              <span class="truncate">{{ categoryName(category) }}</span>
+            </span>
             <AppBadge size="sm" :variant="selectedCategoryId === String(category.id) ? 'info' : 'neutral'">
               {{ categoryItemCounts[category.id] ?? 0 }}
             </AppBadge>
@@ -1280,6 +1314,14 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
             </div>
           </div>
 
+          <div
+            v-if="isSearchingAcrossAllCategories"
+            class="px-3 lg:px-4 pt-2 text-xs font-semibold text-primary-700 dark:text-primary-300 flex items-center gap-1.5"
+          >
+            <AppIcon name="search" size="sm" />
+            {{ t('backoffice.pos.searchingAllCategories') }}
+          </div>
+
           <div ref="menuScrollEl" class="flex-1 min-h-0 overflow-y-auto overscroll-contain p-3 lg:p-4">
             <!-- "الأكثر طلبًا" — تتبّع محلي بالجهاز، راجع frequentItems -->
             <div v-if="frequentItems.length" class="mb-4">
@@ -1292,15 +1334,36 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
                   :key="`freq-${item.id}`"
                   type="button"
                   :disabled="cartLocked"
-                  class="flex-shrink-0 min-h-[72px] min-w-[148px] rounded-xl border-2 border-primary-200 dark:border-primary-800 bg-primary-50/60 dark:bg-primary-950/20 px-3 py-2 text-start hover:border-primary-400 active:scale-[0.97] transition-all disabled:opacity-60 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
+                  class="flex-shrink-0 min-h-[72px] min-w-[176px] max-w-[176px] rounded-xl border-2 border-primary-200 dark:border-primary-800 bg-primary-50/60 dark:bg-primary-950/20 p-2 text-start hover:border-primary-400 active:scale-[0.97] transition-all disabled:opacity-60 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 flex items-center gap-2.5"
                   @click="onItemClick(item)"
                 >
-                  <div class="font-bold text-gray-900 dark:text-gray-100 text-sm leading-snug line-clamp-2">{{ itemName(item) }}</div>
-                  <div class="text-xs font-black text-primary-800 dark:text-primary-300 tabular-nums mt-1">{{ formatMoney(itemPrice(item), currency) }}</div>
+                  <span class="flex-shrink-0 h-12 w-12 rounded-lg overflow-hidden bg-white/70 dark:bg-black/20 flex items-center justify-center">
+                    <img v-if="item.image_url" :src="item.image_url" :alt="itemName(item)" class="h-full w-full object-cover" loading="lazy" />
+                    <AppIcon v-else name="photo" size="sm" class="text-primary-400 dark:text-primary-700" />
+                  </span>
+                  <div class="min-w-0">
+                    <div class="font-bold text-gray-900 dark:text-gray-100 text-sm leading-snug line-clamp-2">{{ itemName(item) }}</div>
+                    <div class="text-xs font-black text-primary-800 dark:text-primary-300 tabular-nums mt-1">{{ formatMoney(itemPrice(item), currency) }}</div>
+                  </div>
                 </button>
               </div>
             </div>
-            <LoadingState v-if="menuLoading" :label="t('backoffice.pos.loadingMenu')" />
+            <!-- سكيلتون تحميل — إحساس "برنامج جاهز" بدل سبينر فاضي أثناء
+            تحميل المنيو الأول، بنفس شكل شبكة الأصناف الحقيقية بالظبط. -->
+            <div v-if="menuLoading" class="pos-products-grid" aria-hidden="true">
+              <div
+                v-for="n in 8"
+                :key="`skeleton-${n}`"
+                class="rounded-2xl border border-stone-200 dark:border-border overflow-hidden bg-white dark:bg-surface animate-pulse"
+              >
+                <div class="h-24 w-full bg-stone-200 dark:bg-gray-800" />
+                <div class="p-3 space-y-2">
+                  <div class="h-2.5 w-1/3 rounded bg-stone-200 dark:bg-gray-800" />
+                  <div class="h-3.5 w-4/5 rounded bg-stone-200 dark:bg-gray-800" />
+                  <div class="h-4 w-1/4 rounded bg-stone-200 dark:bg-gray-800 mt-3" />
+                </div>
+              </div>
+            </div>
             <EmptyState
               v-else-if="filteredItems.length === 0"
               icon="🍽️"
@@ -1314,30 +1377,51 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
                 type="button"
                 :disabled="cartLocked || !item.is_available"
                 :class="[
-                  'relative min-h-[138px] rounded-2xl border p-3 text-start shadow-sm active:scale-[0.97] transition-all flex flex-col justify-between gap-3 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
+                  'relative rounded-2xl border overflow-hidden text-start shadow-sm active:scale-[0.97] transition-all flex flex-col disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2',
                   item.is_available
-                    ? 'border-stone-200 dark:border-border bg-white dark:bg-surface hover:border-primary-400 hover:shadow-md disabled:opacity-60'
+                    ? 'border-stone-200 dark:border-border bg-white dark:bg-surface hover:border-primary-400 hover:shadow-lg disabled:opacity-60'
                     : 'border-stone-200 dark:border-border bg-stone-100 dark:bg-gray-900/40 opacity-60 grayscale-[35%]',
+                  itemQtyInCart(item.id) > 0 ? 'ring-2 ring-primary-500 ring-offset-2 dark:ring-offset-background' : '',
                 ]"
                 @click="onItemClick(item)"
               >
                 <!-- badge كمية: يظهر لو الصنف موجود في السلة -->
                 <span
                   v-if="itemQtyInCart(item.id) > 0"
-                  class="absolute -top-2 -end-2 z-10 min-w-[22px] h-[22px] bg-primary-700 text-white text-[11px] font-black rounded-full flex items-center justify-center px-1 shadow"
+                  class="absolute top-2 end-2 z-10 min-w-[24px] h-[24px] bg-primary-700 text-white text-[11px] font-black rounded-full flex items-center justify-center px-1.5 shadow-md ring-2 ring-white dark:ring-surface"
                   :aria-label="t('backoffice.pos.itemInCartQty', { qty: itemQtyInCart(item.id) })"
                 >{{ itemQtyInCart(item.id) }}</span>
-                <div class="w-full">
-                  <div class="flex items-start justify-between gap-2">
-                    <span class="text-xs font-semibold text-gray-400 uppercase">{{ item.station }}</span>
-                    <AppBadge v-if="!item.is_available" variant="danger" size="sm">{{ t('backoffice.pos.itemUnavailable') }}</AppBadge>
-                    <AppBadge v-else-if="(item.extra_groups ?? []).length" variant="info" size="sm">{{ t('backoffice.pos.extrasBadge') }}</AppBadge>
+
+                <!-- صورة الصنف — بديل بصري أنيق لو مفيش صورة مرفوعة -->
+                <div class="relative h-24 w-full flex-shrink-0 bg-gradient-to-br from-stone-100 to-stone-200 dark:from-gray-800 dark:to-gray-900">
+                  <img
+                    v-if="item.image_url"
+                    :src="item.image_url"
+                    :alt="itemName(item)"
+                    class="h-full w-full object-cover"
+                    loading="lazy"
+                  />
+                  <div v-else class="h-full w-full flex items-center justify-center">
+                    <AppIcon name="photo" class="text-stone-300 dark:text-gray-700" />
                   </div>
-                  <h3 class="font-black text-gray-950 dark:text-gray-100 leading-snug mt-3 line-clamp-2">{{ itemName(item) }}</h3>
+                  <AppBadge v-if="!item.is_available" variant="danger" size="sm" class="absolute bottom-1.5 start-1.5">{{ t('backoffice.pos.itemUnavailable') }}</AppBadge>
+                  <AppBadge v-else-if="(item.extra_groups ?? []).length" variant="info" size="sm" class="absolute bottom-1.5 start-1.5">{{ t('backoffice.pos.extrasBadge') }}</AppBadge>
                 </div>
-                <div class="flex items-end justify-between gap-2 w-full">
-                  <span v-if="(item.variants ?? []).some(variant => variant.is_available)" class="text-xs text-gray-500 dark:text-gray-400">{{ t('backoffice.pos.fromPrice') }}</span>
-                  <span class="text-lg font-black text-primary-800 dark:text-primary-300 tabular-nums">{{ formatMoney(itemPrice(item), currency) }}</span>
+
+                <div class="flex-1 min-h-0 flex flex-col justify-between gap-2 p-3">
+                  <div>
+                    <span class="text-[11px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">{{ item.station }}</span>
+                    <h3 class="font-black text-gray-950 dark:text-gray-100 leading-snug mt-0.5 line-clamp-2">
+                      <template v-for="(segment, index) in nameSegments(itemName(item), searchQuery.trim().toLowerCase())" :key="index">
+                        <mark v-if="segment.match" class="bg-amber-200 dark:bg-amber-500/40 text-inherit rounded px-0.5">{{ segment.text }}</mark>
+                        <template v-else>{{ segment.text }}</template>
+                      </template>
+                    </h3>
+                  </div>
+                  <div class="flex items-end justify-between gap-2 w-full">
+                    <span v-if="(item.variants ?? []).some(variant => variant.is_available)" class="text-xs text-gray-500 dark:text-gray-400">{{ t('backoffice.pos.fromPrice') }}</span>
+                    <span class="text-lg font-black text-primary-800 dark:text-primary-300 tabular-nums">{{ formatMoney(itemPrice(item), currency) }}</span>
+                  </div>
                 </div>
               </button>
             </div>

@@ -1490,6 +1490,28 @@ def checkout_location(
     if loc.status != "occupied":
         raise ValueError(f"الموقع {loc.number} مش مشغول حاليًا")
 
+    # 2026-09-11، جزء من نفس إصلاح تعارض الدايننج: لو الموقع ده عليه طلب
+    # دايننج لسه مفتوح (مش مدفوع/ملغي)، الـcheckout هيرجّع الموقع "available"
+    # وبعدين الدايننج نفسه بقى بيرفض أي طلب جديد عليه (راجع
+    # dining._services.orders.create_order) — بس الطلب القديم ده هيفضل
+    # معلّق على موقع بقى متاح لضيف تاني، من غير ما حد ياخد باله. لازم كاشير
+    # الشاطئ يقفل/يحصّل الفاتورة الأول قبل ما يعمل checkout.
+    from app.modules.dining.models import DiningOrder  # noqa: PLC0415
+
+    open_order = (
+        db.query(DiningOrder)
+        .filter(
+            DiningOrder.beach_location_id == location_id,
+            DiningOrder.status.notin_(("paid", "cancelled", "refunded")),
+        )
+        .first()
+    )
+    if open_order:
+        raise BeachConcurrencyError(
+            f"الموقع {loc.number} عليه طلب دايننج مفتوح ({open_order.order_number}) — "
+            "لازم يتحصّل أو يتلغي الأول قبل الـcheckout"
+        )
+
     if loc.towels_given > 0:
         return_data = BeachSellRequest(
             tx_type="towel_return", quantity=loc.towels_given, cashier_id=cashier_id,

@@ -174,14 +174,20 @@ const cartGroups = computed(() => {
             class="rounded-xl border border-stone-200 dark:border-border p-3 bg-white dark:bg-surface"
           >
             <div class="flex items-start justify-between gap-2">
-              <div class="min-w-0 flex-1">
-                <div class="font-bold text-gray-900 dark:text-gray-100 leading-snug">
-                  {{ name({ name: line.name, name_ar: line.nameAr }) }}
+              <div class="flex min-w-0 flex-1 gap-2.5">
+                <span class="flex-shrink-0 h-11 w-11 rounded-lg overflow-hidden bg-stone-100 dark:bg-gray-800 flex items-center justify-center">
+                  <img v-if="line.imageUrl" :src="line.imageUrl" :alt="line.name" class="h-full w-full object-cover" loading="lazy" />
+                  <AppIcon v-else name="photo" size="sm" class="text-stone-300 dark:text-gray-700" />
+                </span>
+                <div class="min-w-0 flex-1">
+                  <div class="font-bold text-gray-900 dark:text-gray-100 leading-snug">
+                    {{ name({ name: line.name, name_ar: line.nameAr }) }}
+                  </div>
+                  <div v-if="line.variantLabel" class="text-xs text-primary-700 dark:text-primary-300 mt-1">{{ line.variantLabel }}</div>
+                  <div v-if="line.extrasLabel" class="text-xs text-gray-500 dark:text-gray-400 mt-1 leading-relaxed">{{ line.extrasLabel }}</div>
+                  <div v-if="line.textAnswersLabel" class="text-xs text-amber-700 dark:text-amber-400 mt-1 leading-relaxed">✏️ {{ line.textAnswersLabel }}</div>
+                  <div v-if="line.notes" class="text-xs text-gray-500 dark:text-gray-400 mt-1">📝 {{ line.notes }}</div>
                 </div>
-                <div v-if="line.variantLabel" class="text-xs text-primary-700 dark:text-primary-300 mt-1">{{ line.variantLabel }}</div>
-                <div v-if="line.extrasLabel" class="text-xs text-gray-500 dark:text-gray-400 mt-1 leading-relaxed">{{ line.extrasLabel }}</div>
-                <div v-if="line.textAnswersLabel" class="text-xs text-amber-700 dark:text-amber-400 mt-1 leading-relaxed">✏️ {{ line.textAnswersLabel }}</div>
-                <div v-if="line.notes" class="text-xs text-gray-500 dark:text-gray-400 mt-1">📝 {{ line.notes }}</div>
               </div>
               <IconButton
                 icon="close"

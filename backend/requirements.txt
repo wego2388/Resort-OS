@@ -60,6 +60,10 @@ reportlab==5.0.0
 arabic-reshaper==3.0.1
 python-bidi==0.6.10
 qrcode[pil]==8.2
+# كان أصلاً transitive dependency عبر reportlab (بيستخدمه لتضمين صور جوه
+# الـPDF) — بقى مُثبَّت صريحًا هنا (2026-09-11) لأن dining/api/router.py
+# بقى بيستورده مباشرة لضغط/تصغير صور أصناف المنيو وقت الرفع.
+Pillow==12.2.0
 
 # ── Dev / Testing ─────────────────────────────────────────────────────────────
 pytest==8.3.4

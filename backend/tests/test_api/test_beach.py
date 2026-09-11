@@ -1915,6 +1915,71 @@ class TestBeachLocations:
         with pytest.raises(ValueError, match="مش مشغول"):
             services.checkout_location(db, branch.id, loc.id)
 
+    def test_checkout_rejected_while_dining_order_still_open(self, db):
+        """2026-09-11: كاشير الشاطئ مايقدرش يعمل checkout لموقع عليه طلب
+        دايننج لسه مفتوح — وإلا الموقع يرجع "available" والطلب يفضل معلّق
+        عليه من غير ما حد ياخد باله (راجع services.checkin_location's guard
+        الجديد على الجهة التانية في dining._services.orders.create_order)."""
+        from app.modules.dining.models import DiningOrder, Outlet
+
+        branch = make_branch(db)
+        loc = services.bulk_add_locations(db, branch.id, "umbrella", 1)[0]
+        services.checkin_location(
+            db, branch.id, loc.id, BeachLocationCheckinRequest(guests_count=1),
+        )
+        outlet = Outlet(branch_id=branch.id, name="مطعم الشاطئ", outlet_type="restaurant")
+        db.add(outlet)
+        db.commit()
+        order = DiningOrder(
+            branch_id=branch.id, outlet_id=outlet.id, beach_location_id=loc.id,
+            order_number=f"ORD-{uuid.uuid4().hex[:10]}", status="open",
+        )
+        db.add(order)
+        db.commit()
+
+        with pytest.raises(services.BeachConcurrencyError, match="طلب دايننج مفتوح"):
+            services.checkout_location(db, branch.id, loc.id)
+
+        order.status = "paid"
+        db.commit()
+        freed = services.checkout_location(db, branch.id, loc.id)
+        assert freed.status == "available"
+
+    def test_locations_list_flags_open_dining_order(self, client, db):
+        """GET /beach/locations يرجّع has_active_dining_order صح — عشان
+        كاشير الشاطئ يشوف على الخريطة إن الموقع عليه طلب أكل مفتوح قبل ما
+        يحاول checkout."""
+        from tests.conftest import _make_token
+        from app.modules.dining.models import DiningOrder, Outlet
+
+        branch = make_branch(db)
+        cashier = make_branch_linked_cashier(db, branch)
+        loc = services.bulk_add_locations(db, branch.id, "umbrella", 1)[0]
+        services.checkin_location(
+            db, branch.id, loc.id, BeachLocationCheckinRequest(guests_count=1),
+        )
+        outlet = Outlet(branch_id=branch.id, name="مطعم الشاطئ", outlet_type="restaurant")
+        db.add(outlet)
+        db.commit()
+        order = DiningOrder(
+            branch_id=branch.id, outlet_id=outlet.id, beach_location_id=loc.id,
+            order_number=f"ORD-{uuid.uuid4().hex[:10]}", status="open",
+        )
+        db.add(order)
+        db.commit()
+
+        headers = {"Authorization": f"Bearer {_make_token(cashier.email)}"}
+        resp = client.get("/api/v1/beach/locations", params={"branch_id": branch.id}, headers=headers)
+        assert resp.status_code == 200
+        body = next(item for item in resp.json() if item["id"] == loc.id)
+        assert body["has_active_dining_order"] is True
+
+        order.status = "paid"
+        db.commit()
+        resp2 = client.get("/api/v1/beach/locations", params={"branch_id": branch.id}, headers=headers)
+        body2 = next(item for item in resp2.json() if item["id"] == loc.id)
+        assert body2["has_active_dining_order"] is False
+
     def test_update_location_rejects_disabling_occupied_spot(self, db):
         branch = make_branch(db)
         loc = services.bulk_add_locations(db, branch.id, "umbrella", 1)[0]

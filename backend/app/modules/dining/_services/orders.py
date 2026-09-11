@@ -107,6 +107,27 @@ def create_order(
                 f"الطاولة {table.table_number} مشغولة بطلب نشط بالفعل ({conflicting.order_number})"
             )
 
+    if data.beach_location_id is not None:
+        # 2026-09-11، طلب Mohamed صراحةً: كاشير الدايننج كان يقدر يفتح طلب
+        # أكل على شمسية/برجولة "فاضية" (available) — يعني ضيف يقعد ياكل من
+        # غير ما يكون داخل رسميًا في نظام الشاطئ (بدون تذكرة دخول)، وكاشير
+        # الشاطئ لسه شايف الموقع فاضي على شاشته فيقدر يسجّل ضيف تاني عليه
+        # في نفس الوقت — تعارض حجز حقيقي + تسريب إيراد تذاكر دخول. الحل
+        # المتفق عليه: كاشير الشاطئ هو المسؤول الوحيد عن شغل الموقع (تشيك-إن
+        # حقيقي، تذكرة دخول مدفوعة)، ودايننج بس يتابع طلب أكل على موقع
+        # مشغول بالفعل.
+        from app.modules.beach.models import BeachLocation  # noqa: PLC0415
+
+        location = db.query(BeachLocation).filter(BeachLocation.id == data.beach_location_id).first()
+        if not location:
+            raise ValueError(f"الموقع {data.beach_location_id} غير موجود")
+        if location.branch_id != branch_id:
+            raise ValueError(f"الموقع {data.beach_location_id} لا يتبع هذا الفرع")
+        if location.status != "occupied":
+            raise ValueError(
+                f"الموقع {location.number} لسه مش مسجّل دخول عليه — لازم كاشير الشاطئ يسجّل دخول الضيف الأول"
+            )
+
     from app.modules.core.services import get_effective_vat_percentage  # noqa: PLC0415
 
     vat_pct = get_effective_vat_percentage(db, branch_id) / Decimal("100")
