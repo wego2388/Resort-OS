@@ -1,7 +1,7 @@
 # DOC-VAULT-01 — خزنة الوثائق الرسمية المشفرة
 
 **التاريخ:** 2026-09-12
-**الحالة:** COMPLETE / IMMUTABLE PRODUCTION ROLLOUT IN PROGRESS
+**الحالة:** COMPLETE / DEPLOYED
 **المنفذ:** Codex
 **المعتمد:** Mohamed
 
@@ -9,9 +9,9 @@
 
 تم تنفيذ خزنة واحدة داخل `resort-os` لوثائق المنشأة وملفات الموظفين، مع
 فصل كامل بين البيانات الوصفية في PostgreSQL والملفات المشفرة في volume خاص.
-بدأ rollout الإنتاج المرحلي بعد recovery set وصور rollback متحقق منهما؛
-طُبقت migration الإضافية وأصبح الـhead الحي `9f6b1d3e5a70`، بينما بقيت
-الخدمات القديمة صحية إلى أن تنتهي بوابات الاستبدال والدخان الحي.
+اكتمل rollout الإنتاج المرحلي عند release `1d2dc76` بعد recovery sets
+وصور rollback متحقق منها؛ الـhead الحي `9f6b1d3e5a70`، والخدمات وفحوصات
+الصحة والدخان الحي ناجحة.
 
 ## قرارات الأمان النهائية
 
@@ -141,12 +141,16 @@ Migration: `backend/alembic/versions/9f6b1d3e5a70_private_document_vault.py`
   390×844، 768×1024، 1024×768، 1280×800.
 - backup/restore drill: checksum صحيح وbyte-for-byte comparison ناجح.
 
-## المتبقي للإنتاج
+## أدلة الإنتاج
 
-1. commit/push للفرع المرشح وبناء release immutable من SHA صريح.
-2. recovery set جديد قبل الترحيل والتحقق منه.
-3. `alembic upgrade 9f6b1d3e5a70` ثم إعادة تشغيل Backend/Celery/Staff/Owner.
-4. إعادة تشغيل provisioning لصلاحية `owner_read_role` على `documents`.
-5. فحص health، migration، volume، logs، no-store، وصلاحيات live بدون إنشاء
-   وثيقة تجريبية أو كشف بيانات حقيقية.
-6. بعد نجاح النشر فقط تتحول الحالة إلى COMPLETE / DEPLOYED.
+1. release immutable حي: `1d2dc766385645ecab1d15c61ebf8510aaf68801`.
+2. recovery set قبل الترحيل `20260912_194415`، وقبل rollout بعد الترحيل
+   `20260912_195843`، وبعد النشر `20260912_200557`؛ dump/tar/checksums ناجحة.
+3. Alembic الحي `9f6b1d3e5a70`، والخدمات التسع Running، والصحية Healthy،
+   وRestartCount=0، وhealth gate `16/16`.
+4. volume `resort-os-prod_resort_documents` mounted عند
+   `/app/private-documents` بصلاحية `0700` ومملوك للمستخدم `resortos`، ولا
+   يوجد له mount في Nginx.
+5. Owner roles المقيدة متصلة فعليًا من الصورة الحية؛ GET المصادق لملخص
+   المول والوثائق نجح، و401 غير المصادق عليه يحمل `no-store`.
+6. لا وثائق تشغيل رُفعت لأجل الاختبار؛ `documents=0` ودفتر الانتهاء=0.

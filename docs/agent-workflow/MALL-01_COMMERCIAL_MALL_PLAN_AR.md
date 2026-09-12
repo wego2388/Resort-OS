@@ -1,7 +1,7 @@
 # MALL-01 — إدارة المول التجاري داخل Leasing
 
 **التاريخ:** 2026-09-12
-**الحالة:** OWNER SUMMARY COMPLETE LOCALLY / UNIT DATA GATE
+**الحالة:** OWNER SUMMARY DEPLOYED / UNIT DATA GATE
 **المنفذ:** Codex
 **المعتمد:** Mohamed
 
@@ -70,6 +70,8 @@
 - total/occupied/vacant/occupancy/map لا تُستنتج من العقود؛ ترجع unknown/null
   حتى اعتماد السجل الحقيقي.
 - Backend 3/3 للمسار الجديد، Owner responsive E2E 13/13، والبناء ناجح.
+- ملخص المول منشور عند Resort `1d2dc76`؛ smoke مصادق رجع 200 بلا tenant
+  PII وبقيت occupancy/map unknown كما تفرض بوابة البيانات.
 
 ### الواجهة
 
@@ -98,6 +100,6 @@
 
 ## الحالة الحالية
 
-لا يوجد مانع تقني. ملخص المول للمالك منفذ محليًا وقابل للنشر الآن. المانع
+لا يوجد مانع تقني. ملخص المول للمالك منفذ ومنشور على الإنتاج. المانع
 الوحيد الآمن لباقي MALL-01 هو master data المعتمدة اللازمة لـschema والوحدات
 والخريطة ونسبة الإشغال الحقيقية.

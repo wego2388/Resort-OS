@@ -1,7 +1,7 @@
 # حالة المشروع الحالية — El Kheima Beach Resort OS
 
-**آخر تحديث:** 2026-09-12 — **DOC-VAULT-01 وOwner Mall Summary مكتملان،
-والنشر المرحلي على الإنتاج قيد التنفيذ.** خزنة الوثائق الجديدة تستخدم volume خاصًا مشفرًا
+**آخر تحديث:** 2026-09-12 — **DOC-VAULT-01 وOwner Mall Summary منشوران
+ومتحققان على الإنتاج عند Resort `1d2dc76`.** خزنة الوثائق الجديدة تستخدم volume خاصًا مشفرًا
 خارج `/uploads`، وصلاحيات منفصلة للمنشأة وHR والموظف والمالك، وحذفًا منطقيًا
 قابلًا للاستعادة، وتنبيه انتهاء يوميًا، ونسخة تعافي مزدوجة للـDB والملفات.
 Alembic المحلي عند `9f6b1d3e5a70`؛ دورة migration الكاملة نجحت؛ Backend
@@ -12,18 +12,20 @@ responsive E2E **13/13**؛ type-check/i18n/build ناجحة للتطبيقين. 
 والمتحصل والمتأخرات والعقود من Leasing/Payments بلا tenant PII وبلا تخمين
 إجمالي الوحدات أو الشاغر أو الإشغال. Unit Registry والخريطة فقط ينتظران
 master data المعتمدة.
-بدأ الإصدار immutable بعد recovery set متحقق منه وصور rollback؛ بُنيت
-الصور المرشحة على الـVPS وطُبقت migration الإضافية الآمنة، فأصبح Alembic
-الإنتاج `9f6b1d3e5a70` مع بقاء الخدمات الحية القديمة صحية لحين الاستبدال
-المرحلي. كما أُصلح `provision_owner_db_roles.sql` واختُبر idempotently على
+تم الإصدار immutable بعد recovery set متحقق منه وصور rollback؛ أصبح
+Alembic الإنتاج `9f6b1d3e5a70`، والخدمات التسع Running، والصحية منها
+Healthy، وRestartCount=0، والنطاقات الأربعة HTTPS=200، وhealth gate
+**16/16**. كما أُصلح `provision_owner_db_roles.sql` واختُبر idempotently على
 PostgreSQL 16: Owner read لا يملك INSERT على الوثائق، وmetadata writer لا
-يملك SELECT على المدفوعات، مع INSERT-only للـaudit في الدورين.
-التسليم:
-`docs/agent-workflow/handoffs/2026-09-12_DOC-VAULT-01_ready-for-release_codex_handoff.md`.
+يملك SELECT على المدفوعات، مع INSERT-only للـaudit في الدورين. اختبار حي
+مصادق لملخص المول والوثائق نجح بلا tenant PII وبلا إشغال مخمّن؛ recovery
+set بعد النشر `20260912_200557` متحقق منه.
+التسليم الإنتاجي:
+`docs/agent-workflow/handoffs/2026-09-12_DOC-VAULT-01_owner-mall_production_codex_handoff.md`.
 
-**الخدمات الحية الحالية لم تتغير بعد:** تقييم ضيف QR بعد الدفع وإغلاق اعتمادية
+**محفوظ من الإصدار السابق داخل الإصدار الحالي:** تقييم ضيف QR بعد الدفع وإغلاق اعتمادية
 Tablet/PWA للكاشير والويتر منشوران على الإنتاج. Resort commit
-`76602f093f3f5b3dd28f77d4767ba7273de6b150` وMarketing commit
+`1d2dc766385645ecab1d15c61ebf8510aaf68801` وMarketing commit
 `e369bb418f1d8b91afc1a19bd3f946bac43d52e7` مدفوعان إلى فرعيهما
 الصريحين. أضيف `POST /dining/public/orders/{public_reference}/review` مربوط
 بنفس `X-Guest-Session` التي أنشأت الطلب، ولا يقبل إلا حالة `paid`. التقييم
@@ -45,10 +47,10 @@ Digital Hub صار يحفظ طلبات الجلسة ويتابعها كلها، 
 responsive **19/19**؛ production PWA build ناجح (`sw.js` + manifest)؛
 Marketing truth/type-check/build ناجحة وproduction audit صفر ثغرات. اختبار
 Backend الكامل جمع **3035** اختبارًا ووصل 100% بـexit 0 دون أي failure.
-الإنتاج الآن عند `/opt/resort-os-releases/76602f093f3f5b3dd28f77d4767ba7273de6b150`
-وMarketing عند
+نُشرت هذه الدفعة أصلًا عند Resort `76602f0` ثم بقيت محفوظة داخل الإصدار
+الحالي `1d2dc76`. Marketing ما زال عند
 `/opt/elkheima-marketing-releases/e369bb418f1d8b91afc1a19bd3f946bac43d52e7`؛
-Alembic `d2e4f6a8c0b1`. قبل الترحيل حُفظ dump متحقق منه
+وكان head الدفعة `d2e4f6a8c0b1`. قبل ترحيلها حُفظ dump متحقق منه
 `resort_os_20260912_095324.dump` وصور rollback. الخدمات التسع Running،
 الصحية منها healthy، RestartCount=0، والأربع نطاقات HTTPS تعيد 200؛
 healthcheck الآلي نجح، والمنافذ 5436/6381/8005 بقيت loopback-only.

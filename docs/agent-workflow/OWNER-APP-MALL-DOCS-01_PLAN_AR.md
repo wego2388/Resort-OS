@@ -1,7 +1,7 @@
 # OWNER-APP-MALL-DOCS-01 — تطبيق المالك: الوثائق والمول
 
 **التاريخ:** 2026-09-12
-**الحالة:** DOCS + MALL SUMMARY COMPLETE LOCALLY / UNIT MAP DATA GATE
+**الحالة:** DOCS + MALL SUMMARY DEPLOYED / UNIT MAP DATA GATE
 **المنفذ:** Codex
 **المعتمد:** Mohamed
 
@@ -68,7 +68,7 @@
 - [x] no-store وتنزيل آمن وعدم إظهار وثائق الموظفين.
 - [x] 5 + More وتنفيذ responsive/light/dark/text-scale-compatible.
 - [x] build و13/13 responsive E2E تشمل المول.
-- [ ] immutable production release وlive smoke.
+- [x] immutable production release وlive smoke.
 
 ### المول
 
@@ -76,10 +76,11 @@
 - [x] `/mall` responsive/a11y states وbranch/role/empty tests.
 - [ ] MALL-01 unit/map data gate معتمد.
 - [ ] Mall map/unit list/detail بعد إنشاء Unit Registry.
-- [ ] production deployment بعد backup وrollback.
+- [x] production deployment بعد backup وrollback.
 
 ## ملاحظة الإصدار
 
-جزء الوثائق وMall Summary جاهزان للنشر معًا ضمن الإصدار الحالي لكنهما غير
-منشورين بعد. لا نؤخرهما بسبب Unit Registry والخريطة؛ الواجهة تصرح بأن هذه
-القيم غير متاحة بدل عرض أرقام مصطنعة.
+جزء الوثائق وMall Summary منشوران معًا عند Resort `1d2dc76` بعد backup
+وrollback وhealth/live smoke ناجحة. Unit Registry والخريطة فقط ينتظران
+البيانات المعتمدة؛ الواجهة تصرح بأن هذه القيم غير متاحة بدل عرض أرقام
+مصطنعة.
