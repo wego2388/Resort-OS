@@ -1,8 +1,10 @@
 # حالة المشروع الحالية — El Kheima Beach Resort OS
 
 **آخر تحديث:** 2026-09-12 — **تقييم ضيف QR بعد الدفع وإغلاق اعتمادية
-Tablet/PWA للكاشير والويتر مكتملان محليًا؛ لا commit/push/deploy لهذه
-الدفعة.** أضيف `POST /dining/public/orders/{public_reference}/review` مربوط
+Tablet/PWA للكاشير والويتر منشوران على الإنتاج.** Resort commit
+`76602f093f3f5b3dd28f77d4767ba7273de6b150` وMarketing commit
+`e369bb418f1d8b91afc1a19bd3f946bac43d52e7` مدفوعان إلى فرعيهما
+الصريحين. أضيف `POST /dining/public/orders/{public_reference}/review` مربوط
 بنفس `X-Guest-Session` التي أنشأت الطلب، ولا يقبل إلا حالة `paid`. التقييم
 واحد لكل جلسة QR بفضل قيود قاعدة البيانات في migration
 `d2e4f6a8c0b1`، وstatus polling يعيد حالة التقييم لاستعادة آمنة بعد refresh.
@@ -22,8 +24,15 @@ Digital Hub صار يحفظ طلبات الجلسة ويتابعها كلها، 
 responsive **19/19**؛ production PWA build ناجح (`sw.js` + manifest)؛
 Marketing truth/type-check/build ناجحة وproduction audit صفر ثغرات. اختبار
 Backend الكامل جمع **3035** اختبارًا ووصل 100% بـexit 0 دون أي failure.
-التفاصيل:
-`docs/agent-workflow/handoffs/2026-09-12_pos-tablet-guest-rating_codex_handoff.md`.
+الإنتاج الآن عند `/opt/resort-os-releases/76602f093f3f5b3dd28f77d4767ba7273de6b150`
+وMarketing عند
+`/opt/elkheima-marketing-releases/e369bb418f1d8b91afc1a19bd3f946bac43d52e7`؛
+Alembic `d2e4f6a8c0b1`. قبل الترحيل حُفظ dump متحقق منه
+`resort_os_20260912_095324.dump` وصور rollback. الخدمات التسع Running،
+الصحية منها healthy، RestartCount=0، والأربع نطاقات HTTPS تعيد 200؛
+healthcheck الآلي نجح، والمنافذ 5436/6381/8005 بقيت loopback-only.
+التفاصيل الإنتاجية:
+`docs/agent-workflow/handoffs/2026-09-12_pos-tablet-guest-rating_production_codex_handoff.md`.
 
 **السابق:** 2026-09-11 — **جولة smart polish لشاشة الكاشير والويتر
 مكتملة ومختبرة محليًا؛ لا commit/push/deploy لهذه الدفعة.** أضيف حارس

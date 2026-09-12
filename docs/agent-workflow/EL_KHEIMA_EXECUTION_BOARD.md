@@ -1,8 +1,9 @@
 # لوحة التنفيذ الحية — El Kheima
 
 **آخر تحديث:** 2026-09-12 — POS-04 tablet/PWA closure وQR-REVIEW-01
-مكتملان ومختبران محليًا؛ لا commit/push/deploy. آخر تسليم:
-`docs/agent-workflow/handoffs/2026-09-12_pos-tablet-guest-rating_codex_handoff.md`.
+مكتملان ومنشوران على الإنتاج؛ Resort `76602f0` وMarketing `e369bb4`،
+وقاعدة البيانات `d2e4f6a8c0b1`. آخر تسليم:
+`docs/agent-workflow/handoffs/2026-09-12_pos-tablet-guest-rating_production_codex_handoff.md`.
 مراجعة ما قبل التشغيل ما زالت في
 `docs/agent-workflow/CODEX-REVIEW-01_pre-launch-critical-path-review_AR.md`.
 ⚠️ **ملاحظة مهمة:** إصدارات REL-18 لحد REL-22 (2026-08-20 → 2026-08-29)
@@ -41,8 +42,8 @@ CODEX-REVIEW-01 فوق) — بعدها UAT-01 وGo/No-Go النهائي
 
 | الحزمة | الحالة | النتيجة المطلوبة | المانع |
 |---|---|---|---|
-| POS-04 — cashier/waiter smart polish + tablet/PWA closure | COMPLETE / LOCAL ONLY | حماية draft تغطي التنقل/logout/operator-switch/PWA update؛ تبديل مشغّل waiter+ ومقيّد بالفرع/PIN؛ عداد وأولوية وcache آمن؛ دفع touch ≥44px؛ Lenovo landscape/portrait؛ 108 Vitest + 19 mock E2E + PWA build | device UAT ثم تفويض commit/deploy منفصل |
-| QR-REVIEW-01 — post-payment guest rating | COMPLETE / LOCAL ONLY | تقييم واحد لكل جلسة QR بعد `paid` فقط؛ استعادة بعد refresh؛ 1–3 داخلي و4–5 يعرض رابط Google الصحيح؛ table QR + room Hub؛ migration `d2e4f6a8c0b1` + rate limit؛ Marketing validate/audit أخضر | device UAT متعدد اللغات ثم تفويض دمج/نشر المستودعين |
+| POS-04 — cashier/waiter smart polish + tablet/PWA closure | COMPLETE / DEPLOYED | `76602f0` فعال؛ حماية draft تغطي التنقل/logout/operator-switch/PWA update؛ تبديل مشغّل waiter+ ومقيّد بالفرع/PIN؛ عداد وأولوية وcache آمن؛ دفع touch ≥44px؛ Lenovo landscape/portrait؛ 108 Vitest + 19 mock E2E + PWA build؛ live POS smoke ناجح | device UAT على الأجهزة الفعلية فقط |
+| QR-REVIEW-01 — post-payment guest rating | COMPLETE / DEPLOYED | `76602f0` + Marketing `e369bb4` فعالان؛ تقييم واحد لكل جلسة QR بعد `paid`؛ 1–3 داخلي و4–5 يعرض Google؛ migration `d2e4f6a8c0b1`؛ 3035 backend؛ Marketing validate/audit؛ live route/QR smoke ناجح | device UAT متعدد اللغات بعملية دفع فعلية فقط |
 | SRC-01 — exact-source preservation | COMPLETE | أرشيفات وchecksums قابلة لإعادة البناء | — |
 | REL-04 — staff control-plane deploy | COMPLETE | `679f76e` فعال على خدمات Resort المتغيرة | — |
 | REL-05 — multi-outlet POS fix | COMPLETE | `a3e8abb` فعال على تطبيق الموظفين والـedge | — |
@@ -79,6 +80,9 @@ CODEX-REVIEW-01 فوق) — بعدها UAT-01 وGo/No-Go النهائي
 | UAT-01 — operational acceptance | PENDING | جهاز/دور/لغة/شبكة/مال | ممثلو التشغيل والمالية |
 | DATA-02 — approved real master data | PARTIAL — PMS ROOMS COMPLETE | الغرف الحقيقية منشورة؛ باقي master data ينتظر اعتماد العمليات | المالك والتشغيل لباقي البيانات |
 | TIMESHARE-EXTRACTION-01 — فصل موديول الملكية الجزئية لمنتج مستقل داخل `wego-platform` (مش resort-os) — تفويض مباشر من Mohamed خارج دورة Codex، **قائد التنفيذ المكلَّف صراحة: Codex** | PENDING — Codex | خطة كاملة بالمراحل في `docs/agent-workflow/TIMESHARE-EXTRACTION-01_STANDALONE_APP_PLAN_AR.md`؛ الهدف: `products/timeshare` + `clients/el-kheima-timeshare` + web ERP + تطبيق موبايل حقيقي (KMP) لمالكي الملكية الجزئية في `/home/wego/wego-platform`، بجوار Sharm To Go/Divers؛ resort-os لم يُلمس؛ العميل الحالي لا يستخدم التيم شير فعليًا فالمخاطرة منخفضة | لا يوجد — البدء فورًا من المرحلة 1 في الخطة، جوه `wego-platform` |
+| DOC-VAULT-01 — أرشيف الوثائق الرسمية (وثائق المنشأة + ملفات الموظفين) | PENDING — Codex | جدول `documents` واحد بـ scope؛ 21 نوع وثيقة؛ رفع PDF/صور؛ soft delete؛ تحميل آمن؛ self-service للموظف؛ Celery تنبيهات 7/30/60 يوم؛ staff app + owner app؛ خطة كاملة في `docs/agent-workflow/DOC-VAULT-01_DOCUMENTS_MODULE_PLAN_AR.md` | لا يوجد — البدء من Phase 1 |
+| MALL-01 — إدارة المول التجاري (خريطة تفاعلية + وحدات + عقود + إشغال) | PENDING — Codex | جدول `mall_units` + توسعة leasing؛ بيانات حقيقية من الخرائط (11 وحدة مستخرجة)؛ SVG خريطة حية ملوّنة؛ إشغال + إيرادات شهرية؛ مزامنة حالة الوحدة مع العقد تلقائياً؛ Celery task يومي؛ خطة كاملة في `docs/agent-workflow/MALL-01_COMMERCIAL_MALL_PLAN_AR.md` | يتبع DOC-VAULT-01 (نفس migration chain) |
+| OWNER-APP-MALL-DOCS-01 — تطبيق المالك: تبويب المول + تبويب الوثائق | PENDING — Codex | إضافة تبويبين في bottom nav؛ MallScreen: خريطة حية + OccupancyBanner + UnitDetailSheet + تنبيهات؛ DocumentsScreen: ExpiryAlertsBanner + رفع + تحميل + ملفات الموظفين؛ MallMap.vue مكوّن مشترك في packages/ui؛ read-only للمالك؛ خطة كاملة في `docs/agent-workflow/OWNER-APP-MALL-DOCS-01_PLAN_AR.md` | يتبع MALL-01 + DOC-VAULT-01 (API يجب أن يكون جاهزاً) |
 
 ## ما اكتمل
 
@@ -167,8 +171,8 @@ docs/agent-workflow/handoffs/2026-08-30_REL-23-REL-24_production-deploy_claude_h
 
 ## آخر تسليم
 
-`docs/agent-workflow/handoffs/2026-09-12_pos-tablet-guest-rating_codex_handoff.md`
-(الأساس السابق: `docs/agent-workflow/handoffs/2026-09-11_cashier-waiter-smart-polish_codex_handoff.md`)
+`docs/agent-workflow/handoffs/2026-09-12_pos-tablet-guest-rating_production_codex_handoff.md`
+(التسليم المحلي السابق: `docs/agent-workflow/handoffs/2026-09-12_pos-tablet-guest-rating_codex_handoff.md`)
 
 ## التحديث التالي المطلوب
 
@@ -177,8 +181,8 @@ docs/agent-workflow/handoffs/2026-08-30_REL-23-REL-24_production-deploy_claude_h
 التحصيل المفرد والمقسّم أفقيًا ورأسيًا. بعدها نفّذ `served → paid → rating`
 من QR طاولة وHub غرفة وتحقق أن 4–5 فقط يعرض رابط Google المعتمد. افصل
 الشبكة بعد تحميل الشاشة ثم تحقق من رجوع المنيو والطاولات بلا كشف هوية
-الضيف. بعد الاعتماد يلزم تفويض منفصل للـcommit/push/deploy للمستودعين؛
-هذه الدفعة لم تلمس الإنتاج.
+الضيف. النشر نفسه مكتمل، لذلك المتبقي تسجيل الاعتماد التشغيلي على الأجهزة
+الحقيقية فقط.
 
 **تم**: REL-17c كامل على الإنتاج (17 أغسطس) — الضغط على كارت "إيراد
 اليوم"/"مصروفات اليوم" (شاشتي الآن/الأداء) بيفتح تفصيل حقيقي بالحساب ثم
