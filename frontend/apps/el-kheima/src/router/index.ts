@@ -259,6 +259,11 @@ const routes: RouteRecordRaw[] = [
       { path: 'crm', name: 'admin-crm', component: () => import('../views/admin/CRMView.vue'), meta: { requiredRoles: ['manager', 'admin', 'super_admin'], titleKey: 'backoffice.nav.crm' } },
       { path: 'maintenance', name: 'admin-maintenance', component: () => import('../views/admin/MaintenanceView.vue'), meta: { requiredRoles: ['manager', 'supervisor', 'admin', 'super_admin'], titleKey: 'backoffice.nav.maintenance' } },
       { path: 'leasing', name: 'admin-leasing', component: () => import('../views/admin/LeasingView.vue'), meta: { requiredRoles: ['manager', 'supervisor', 'admin', 'super_admin'], titleKey: 'backoffice.nav.leasing' } },
+      { path: 'documents', name: 'admin-documents', component: () => import('../views/documents/BranchDocumentsView.vue'), meta: {
+        requiredRoles: ['manager', 'supervisor', 'admin', 'super_admin'],
+        requiredPermission: 'documents.branch:view',
+        titleKey: 'backoffice.nav.documents',
+      } },
       { path: 'settings',    name: 'admin-settings',    component: () => import('../views/admin/SettingsView.vue'),    meta: { requiredRole: 'admin', titleKey: 'backoffice.nav.settings' } },
       { path: 'qr',          name: 'admin-qr',          component: () => import('../views/admin/QRGeneratorView.vue'),        meta: { requiredRoles: ['manager', 'supervisor', 'admin', 'super_admin'], titleKey: 'backoffice.nav.qrCodes' } },
       // DINING_CUTOVER_PLAN.md Batch 4 — dining-menu هو الافتراضي دلوقتي،
@@ -312,6 +317,11 @@ const routes: RouteRecordRaw[] = [
       { path: 'attendance', name: 'portal-attendance', component: () => import('../views/portal/AttendanceView.vue'), meta: { titleKey: 'backoffice.nav.attendance' } },
       { path: 'leaves', name: 'portal-leaves', component: () => import('../views/portal/LeavesView.vue'), meta: { titleKey: 'backoffice.nav.leaves' } },
       { path: 'payroll', name: 'portal-payroll', component: () => import('../views/portal/PayrollView.vue'), meta: { titleKey: 'backoffice.nav.payroll' } },
+      { path: 'documents', name: 'portal-documents', component: () => import('../views/portal/MyDocumentsView.vue'), meta: {
+        requiresBranch: true,
+        requiredRole: 'employee',
+        titleKey: 'backoffice.nav.myDocuments',
+      } },
       { path: 'profile', name: 'portal-profile', component: () => import('../views/portal/ProfileView.vue'), meta: { titleKey: 'backoffice.nav.profile' } },
     ],
   },

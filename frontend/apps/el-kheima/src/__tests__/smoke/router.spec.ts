@@ -49,6 +49,8 @@ describe('reference routes are registered', () => {
     '/admin/users',
     '/account/sessions',
     '/portal/profile',
+    '/portal/documents',
+    '/admin/documents',
     '/pos/dining',
     '/kds/dining',
   ])('resolves %s to a matched route', (path) => {
@@ -121,5 +123,33 @@ describe('auth guard', () => {
 
     await router.push('/ops/rooms')
     expect(router.currentRoute.value.path).toBe('/ops/rooms')
+  })
+
+  it('keeps the document vault fail-closed without its exact permission', async () => {
+    const auth = useAuthStore()
+    auth.token = 'test-token'
+    auth.user = {
+      id: 92,
+      username: 'manager-docs-test',
+      email: 'manager-docs@example.invalid',
+      full_name: 'Manager Documents Test',
+      role: 'manager',
+      branch_id: 1,
+    } satisfies User
+    auth.activeBranchId = 1
+
+    await router.push('/admin/documents')
+    expect(router.currentRoute.value.path).toBe('/portal/profile')
+
+    auth.effectivePermissions = [{
+      resource: 'documents.branch',
+      action: 'view',
+      label_ar: 'عرض وثائق المنشأة',
+      module: 'documents',
+      allowed: true,
+      source: 'role',
+    }]
+    await router.push('/admin/documents')
+    expect(router.currentRoute.value.path).toBe('/admin/documents')
   })
 })

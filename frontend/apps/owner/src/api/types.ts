@@ -645,3 +645,69 @@ export interface OwnerSearchResponse {
   results: SearchResultItem[]
   computed_at: string
 }
+
+// ─── Private organization document vault ───────────────────────────
+
+export interface OwnerDocument {
+  id: string
+  scope: 'branch'
+  employee_id: null
+  doc_type: string
+  visibility: 'owner_visible'
+  title: string
+  description: string | null
+  issue_date: string | null
+  expiry_date: string | null
+  original_filename: string
+  mime_type: string
+  size_bytes: number
+  sha256: string
+  version_number: number
+  uploaded_by: number | null
+  created_at: string
+  updated_at: string
+  days_until_expiry: number | null
+  is_deleted: false
+  is_superseded: false
+}
+
+export interface OwnerDocumentListResponse {
+  items: OwnerDocument[]
+  total: number
+  page: number
+  size: number
+}
+
+// ─── Mall readiness + PII-free leasing snapshot ────────────────────
+
+export interface OwnerMallContractSummary {
+  contract_id: number
+  contract_number: string
+  unit_description: string
+  status: 'draft' | 'active' | 'expired' | 'terminated'
+  start_date: string
+  end_date: string
+  days_until_expiry: number
+  scheduled_to_date: string
+  paid_to_date: string
+  due_outstanding: string
+}
+
+export interface OwnerMallSummaryResponse {
+  branch_id: number
+  registry_ready: boolean
+  map_available: boolean
+  registered_unit_count: number | null
+  occupied_unit_count: number | null
+  vacant_unit_count: number | null
+  occupancy_pct: string | null
+  total_contract_count: number
+  active_contract_count: number
+  expiring_within_30_days: number
+  scheduled_rent: string
+  accrued_rent: string
+  collected_rent: string
+  overdue_receivables: string
+  period: PeriodMeta
+  contracts: OwnerMallContractSummary[]
+}

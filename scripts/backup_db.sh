@@ -13,8 +13,11 @@
 #      ./scripts/backup_db.sh                  # backup + apply retention
 #      BACKUP_RETENTION_DAYS=30 ./scripts/backup_db.sh
 #
-#  Output: backups/resort_os_<UTC timestamp>.dump  (pg_dump custom format,
-#  compressed, restorable with pg_restore — see scripts/restore_db.sh)
+#  Output: one paired recovery set with the same UTC timestamp:
+#    backups/resort_os_<timestamp>.dump
+#    backups/resort_os_documents_<timestamp>.tar.gz
+#    backups/resort_os_<timestamp>.manifest.sha256
+#  Restore with restore_db.sh + restore_documents.sh.
 #
 #  Offsite sync (wagdy.md T-04, optional — the local backup/restore/
 #  systemd-timer flow above is completely unchanged if this isn't set):
@@ -98,6 +101,25 @@ fi
 SIZE="$(du -h "$DUMP_FILE" | cut -f1)"
 echo "✓ Backup complete: $DUMP_FILE ($SIZE)"
 
+# The database contains document metadata while the encrypted payload lives in
+# a private volume. Back up both under one timestamp or the vault is not a
+# coherent disaster-recovery set.
+ENV_FILE="$ENV_FILE" \
+BACKUP_DIR="$BACKUP_DIR" \
+BACKUP_TIMESTAMP="$TIMESTAMP" \
+DOCUMENT_BACKUP_PREFIX="$DB_NAME" \
+  "$ROOT/scripts/backup_documents.sh"
+DOCUMENT_ARCHIVE="$BACKUP_DIR/${DB_NAME}_documents_${TIMESTAMP}.tar.gz"
+DOCUMENT_CHECKSUM="$DOCUMENT_ARCHIVE.sha256"
+MANIFEST_FILE="$BACKUP_DIR/${DB_NAME}_${TIMESTAMP}.manifest.sha256"
+(
+  cd "$BACKUP_DIR"
+  sha256sum "$(basename "$DUMP_FILE")" "$(basename "$DOCUMENT_ARCHIVE")" \
+    > "$(basename "$MANIFEST_FILE")"
+)
+chmod 600 "$DUMP_FILE" "$MANIFEST_FILE"
+echo "✓ Paired recovery manifest: $MANIFEST_FILE"
+
 # ── Offsite sync (optional — see header) ────────────────────────────────────
 # Runs after the local dump is confirmed on disk, so a sync failure never
 # costs the local backup itself. Exits non-zero on sync failure (loud,
@@ -118,7 +140,13 @@ if [[ "$BACKUP_REMOTE_ENABLED" == "true" ]]; then
   [[ -n "$BACKUP_RCLONE_CONFIG" ]] && RCLONE_ARGS=(--config "$BACKUP_RCLONE_CONFIG")
 
   echo "→ Syncing to offsite remote: $BACKUP_RCLONE_REMOTE"
-  if rclone "${RCLONE_ARGS[@]}" copyto "$DUMP_FILE" "$BACKUP_RCLONE_REMOTE/$(basename "$DUMP_FILE")"; then
+  sync_failed=0
+  for recovery_file in "$DUMP_FILE" "$DOCUMENT_ARCHIVE" "$DOCUMENT_CHECKSUM" "$MANIFEST_FILE"; do
+    rclone "${RCLONE_ARGS[@]}" copyto \
+      "$recovery_file" "$BACKUP_RCLONE_REMOTE/$(basename "$recovery_file")" \
+      || sync_failed=1
+  done
+  if [[ "$sync_failed" -eq 0 ]]; then
     echo "✓ Offsite sync complete"
   else
     echo "✗ Offsite sync failed — local backup is still safe at $DUMP_FILE, but it is NOT off this server yet" >&2
@@ -133,7 +161,11 @@ while IFS= read -r -d '' old_file; do
   DELETED=$((DELETED + 1))
 done < <(
   find "$BACKUP_DIR" -maxdepth 1 -type f \
-    -name "${DB_NAME}_*.dump" -mtime "+${RETENTION_DAYS}" -print0
+    \( -name "${DB_NAME}_*.dump" \
+       -o -name "${DB_NAME}_documents_*.tar.gz" \
+       -o -name "${DB_NAME}_documents_*.tar.gz.sha256" \
+       -o -name "${DB_NAME}_*.manifest.sha256" \) \
+    -mtime "+${RETENTION_DAYS}" -print0
 )
 
 if [[ "$DELETED" -gt 0 ]]; then

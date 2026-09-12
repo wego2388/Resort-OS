@@ -102,6 +102,7 @@ def _import_all_models() -> None:
     import app.modules.core.models         # noqa: F401
     import app.modules.finance.models      # noqa: F401
     import app.modules.hr.models           # noqa: F401
+    import app.modules.documents.models    # noqa: F401
     import app.modules.dining.models       # noqa: F401
     import app.modules.pms.models          # noqa: F401
     import app.modules.beach.models        # noqa: F401

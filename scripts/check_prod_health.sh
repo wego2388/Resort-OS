@@ -114,7 +114,18 @@ else
     -name 'resort_os_*.dump' -mmin "-${RESORT_BACKUP_MAX_AGE_MINUTES}" \
     -size +0c -print -quit 2>/dev/null || true)
   if [[ -n "$fresh_backup" ]]; then
-    pass "backup-fresh"
+    backup_name="$(basename "$fresh_backup")"
+    backup_stamp="${backup_name#resort_os_}"
+    backup_stamp="${backup_stamp%.dump}"
+    document_backup="$RESORT_BACKUP_DIR/resort_os_documents_${backup_stamp}.tar.gz"
+    recovery_manifest="$RESORT_BACKUP_DIR/resort_os_${backup_stamp}.manifest.sha256"
+    if [[ -s "$document_backup" && -s "$document_backup.sha256" && -s "$recovery_manifest" ]] &&
+       (cd "$RESORT_BACKUP_DIR" && sha256sum -c "$(basename "$document_backup").sha256" >/dev/null 2>&1) &&
+       (cd "$RESORT_BACKUP_DIR" && sha256sum -c "$(basename "$recovery_manifest")" >/dev/null 2>&1); then
+      pass "backup-pair-fresh-and-verified"
+    else
+      fail "fresh database backup has no verified private-document recovery pair"
+    fi
   else
     fail "no non-empty database backup newer than ${RESORT_BACKUP_MAX_AGE_MINUTES} minutes"
   fi

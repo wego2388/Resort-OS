@@ -27,11 +27,16 @@ logger = logging.getLogger(__name__)
 
 
 class SensitiveNoStoreMiddleware(BaseHTTPMiddleware):
-    """Prevent caching for chat and financial credit responses, including errors."""
+    """Prevent caching for sensitive API responses, including errors."""
 
     async def dispatch(self, request: Request, call_next):
         response = await call_next(request)
-        if request.url.path.startswith(("/api/v1/chat", "/api/v1/credit")):
+        if request.url.path.startswith((
+            "/api/v1/chat",
+            "/api/v1/credit",
+            "/api/v1/documents",
+            "/api/v1/owner",
+        )):
             response.headers["Cache-Control"] = "no-store"
         return response
 
@@ -40,7 +45,7 @@ class SensitiveNoStoreMiddleware(BaseHTTPMiddleware):
 # DINING_CUTOVER_PLAN.md Batch 6 — restaurant/cafe اتشالوا (dining هو
 # المصدر الوحيد للحقيقة دلوقتي، راجع CLAUDE.md §18 للتاريخ الكامل).
 _MODULE_KEYS = (
-    "core", "finance", "inventory", "hr", "dining", "pms",
+    "core", "finance", "inventory", "hr", "documents", "dining", "pms",
     "timeshare", "beach", "maintenance", "crm", "analytics", "hub", "leasing",
     "chat", "owner", "credit",
 )

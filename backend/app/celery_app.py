@@ -118,6 +118,12 @@ celery_app.conf.beat_schedule = {
         "schedule": crontab(hour=8, minute=0, day_of_week=5),  # الجمعة
     },
 
+    # ─── Private document vault ──────────────────────────────────────
+    "documents-expiry-scan": {
+        "task": "app.tasks.document_tasks.scan_expiry_notifications",
+        "schedule": crontab(hour=8, minute=0),
+    },
+
     # ─── Maintenance ──────────────────────────────────────────────────
     "maintenance-preventive": {
         "task": "app.tasks.maintenance_tasks.generate_preventive_tasks",

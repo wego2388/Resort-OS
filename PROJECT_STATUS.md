@@ -1,7 +1,22 @@
 # حالة المشروع الحالية — El Kheima Beach Resort OS
 
-**آخر تحديث:** 2026-09-12 — **تقييم ضيف QR بعد الدفع وإغلاق اعتمادية
-Tablet/PWA للكاشير والويتر منشوران على الإنتاج.** Resort commit
+**آخر تحديث:** 2026-09-12 — **DOC-VAULT-01 وOwner Mall Summary مكتملان
+محليًا وجاهزان لإصدار immutable؛ لم يُنشرا بعد.** خزنة الوثائق الجديدة تستخدم volume خاصًا مشفرًا
+خارج `/uploads`، وصلاحيات منفصلة للمنشأة وHR والموظف والمالك، وحذفًا منطقيًا
+قابلًا للاستعادة، وتنبيه انتهاء يوميًا، ونسخة تعافي مزدوجة للـDB والملفات.
+Alembic المحلي عند `9f6b1d3e5a70`؛ دورة migration الكاملة نجحت؛ Backend
+**3049** اختبارًا وصل 100% بلا فشل؛ Staff Vitest **111/111**؛ Owner
+responsive E2E **13/13**؛ type-check/i18n/build ناجحة للتطبيقين. تطبيق
+المالك أخذ مسار مستندات read-only لـ`owner_visible` فقط وتنقل 5 + «المزيد».
+كما أضيف `/mall` و`GET /api/v1/owner/mall/summary`: يعرضان المجدول والمتحقق
+والمتحصل والمتأخرات والعقود من Leasing/Payments بلا tenant PII وبلا تخمين
+إجمالي الوحدات أو الشاغر أو الإشغال. Unit Registry والخريطة فقط ينتظران
+master data المعتمدة.
+التسليم:
+`docs/agent-workflow/handoffs/2026-09-12_DOC-VAULT-01_ready-for-release_codex_handoff.md`.
+
+**حالة الإنتاج الحالية لم تتغير:** تقييم ضيف QR بعد الدفع وإغلاق اعتمادية
+Tablet/PWA للكاشير والويتر منشوران على الإنتاج. Resort commit
 `76602f093f3f5b3dd28f77d4767ba7273de6b150` وMarketing commit
 `e369bb418f1d8b91afc1a19bd3f946bac43d52e7` مدفوعان إلى فرعيهما
 الصريحين. أضيف `POST /dining/public/orders/{public_reference}/review` مربوط

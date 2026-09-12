@@ -24,6 +24,8 @@ import type {
   ProductDetailResponse,
   OwnerSearchResponse,
   ShiftInvoiceLine,
+  OwnerDocumentListResponse,
+  OwnerMallSummaryResponse,
 } from './types'
 
 /**
@@ -226,4 +228,37 @@ export async function addToWatchlist(metricKey: string, displayOrder = 0): Promi
 
 export async function removeFromWatchlist(itemId: number): Promise<void> {
   await api.delete(`/api/v1/owner/watchlist/${itemId}`)
+}
+
+export async function fetchOwnerDocuments(params?: {
+  search?: string
+  doc_type?: string
+  page?: number
+  size?: number
+}): Promise<OwnerDocumentListResponse> {
+  const res = await api.get<OwnerDocumentListResponse>('/api/v1/owner/documents', { params })
+  return res.data
+}
+
+export async function fetchOwnerMallSummary(): Promise<OwnerMallSummaryResponse> {
+  const res = await api.get<OwnerMallSummaryResponse>('/api/v1/owner/mall/summary')
+  return res.data
+}
+
+export async function downloadOwnerDocument(documentId: string, filename: string): Promise<void> {
+  const response = await api.get<Blob>(`/api/v1/owner/documents/${documentId}/download`, {
+    responseType: 'blob',
+  })
+  const objectUrl = URL.createObjectURL(response.data)
+  try {
+    const anchor = document.createElement('a')
+    anchor.href = objectUrl
+    anchor.download = filename || 'document'
+    anchor.rel = 'noopener'
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+  } finally {
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1_000)
+  }
 }

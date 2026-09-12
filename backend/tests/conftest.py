@@ -83,6 +83,7 @@ def create_all_tables() -> None:
     import app.modules.core.models         # noqa: F401, PLC0415
     import app.modules.finance.models      # noqa: F401, PLC0415
     import app.modules.hr.models           # noqa: F401, PLC0415
+    import app.modules.documents.models    # noqa: F401, PLC0415
     import app.modules.pms.models          # noqa: F401, PLC0415
     import app.modules.beach.models        # noqa: F401, PLC0415
     import app.modules.maintenance.models  # noqa: F401, PLC0415

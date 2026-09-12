@@ -14,9 +14,12 @@ from __future__ import annotations
 import logging
 from datetime import date, timedelta
 from typing import Annotated
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
+from starlette.background import BackgroundTask
 
 from app.core.deps import get_owner_reader
 from app.modules.owner import services
@@ -35,6 +38,7 @@ from app.modules.owner.schemas import (
     ExpenseDetailResponse,
     HRSummaryResponse,
     NowHistoryResponse,
+    OwnerMallSummaryResponse,
     OwnerNowResponse,
     OwnerPerformanceResponse,
     OwnerSearchResponse,
@@ -49,6 +53,8 @@ from app.modules.owner.schemas import (
     ShiftMonitorResponse,
     SupplierDetailResponse,
 )
+from app.modules.documents import services as document_services
+from app.modules.documents.schemas import DocumentListRead
 from app.modules.credit.schemas import CreditReceivablesResponse
 from app.modules.finance.schemas import ShiftInvoiceLine
 
@@ -124,6 +130,125 @@ def _default_range() -> tuple[date, date]:
     """الشهر الحالي من 1 حتى اليوم."""
     today = services._cairo_today()
     return today.replace(day=1), today
+
+
+def _owner_document_download_response(
+    download: document_services.DocumentDownload,
+) -> StreamingResponse:
+    filename = download.document.original_filename.replace('"', "")
+    extension = {
+        "application/pdf": ".pdf",
+        "image/jpeg": ".jpg",
+        "image/png": ".png",
+        "image/webp": ".webp",
+    }.get(download.document.mime_type, "")
+
+    def chunks():
+        while chunk := download.file.read(256 * 1024):
+            yield chunk
+
+    return StreamingResponse(
+        chunks(),
+        media_type=download.document.mime_type,
+        headers={
+            "Cache-Control": _NO_STORE,
+            "Pragma": "no-cache",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "sandbox",
+            "Content-Length": str(download.document.size_bytes),
+            "Content-Disposition": (
+                f'attachment; filename="document{extension}"; '
+                f"filename*=UTF-8''{quote(filename, safe='')}"
+            ),
+        },
+        background=BackgroundTask(download.file.close),
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Owner-visible organization documents — never employee documents
+# ══════════════════════════════════════════════════════════════════════
+
+@router.get(
+    "/documents",
+    response_model=DocumentListRead,
+    name="owner_documents",
+    summary="وثائق المنشأة التي أتاحت الإدارة عرضها للمالك",
+)
+def owner_documents(
+    response: Response,
+    db: OwnerReadDb,
+    user=Depends(get_owner_reader),
+    doc_type: str | None = Query(None, max_length=50),
+    search: str | None = Query(None, min_length=1, max_length=100),
+    page: int = Query(1, ge=1),
+    size: int = Query(50, ge=1, le=100),
+):
+    response.headers["Cache-Control"] = _NO_STORE
+    branch_id = _get_branch(user)
+    try:
+        result = document_services.list_owner_visible_documents(
+            db,
+            branch_id=branch_id,
+            doc_type=doc_type,
+            search=search,
+            page=page,
+            size=size,
+        )
+    except Exception as exc:
+        raise _owner_error("OWNER_DOCUMENTS_FAILED", exc) from exc
+    _log_owner_audit(db, user, "owner_documents_opened", "document")
+    return result
+
+
+@router.get(
+    "/documents/{document_id}/download",
+    name="owner_document_download",
+    summary="تنزيل آمن لوثيقة منشأة متاحة للمالك",
+)
+def owner_document_download(
+    document_id: str,
+    db: OwnerReadDb,
+    user=Depends(get_owner_reader),
+):
+    branch_id = _get_branch(user)
+    try:
+        download = document_services.download_owner_visible_document(
+            db,
+            branch_id=branch_id,
+            public_id=document_id,
+        )
+    except document_services.DocumentNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "الوثيقة غير موجودة") from exc
+    except Exception as exc:
+        raise _owner_error("OWNER_DOCUMENT_DOWNLOAD_FAILED", exc) from exc
+    _log_owner_audit(db, user, "owner_document_downloaded", "document")
+    return _owner_document_download_response(download)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Mall readiness + real leasing snapshot — no inferred unit inventory
+# ══════════════════════════════════════════════════════════════════════
+
+@router.get(
+    "/mall/summary",
+    response_model=OwnerMallSummaryResponse,
+    name="owner_mall_summary",
+    summary="ملخص المول من عقود Leasing الفعلية دون تخمين سجل الوحدات",
+)
+def owner_mall_summary(
+    response: Response,
+    db: OwnerReadDb,
+    user=Depends(get_owner_reader),
+):
+    response.headers["Cache-Control"] = _NO_STORE
+    branch_id = _get_branch(user)
+    try:
+        result = services.get_mall_summary(db, branch_id)
+    except Exception as exc:
+        raise _owner_error("OWNER_MALL_SUMMARY_FAILED", exc) from exc
+    _log_owner_audit(db, user, "owner_mall_summary_opened", "lease_contract")
+    return result
 
 
 # ══════════════════════════════════════════════════════════════════════

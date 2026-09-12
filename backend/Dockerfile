@@ -59,7 +59,9 @@ COPY --from=builder /opt/venv /opt/venv
 WORKDIR /app
 COPY . /app
 
-RUN chown -R resortos:resortos /app /opt/venv
+RUN mkdir -p /app/private-documents \
+    && chown -R resortos:resortos /app /opt/venv \
+    && chmod 0700 /app/private-documents
 USER resortos
 
 EXPOSE 8005

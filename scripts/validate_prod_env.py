@@ -94,6 +94,21 @@ def validate(path: Path, repository_root: Path) -> list[str]:
     except (UnicodeEncodeError, ValueError):
         issues.append("FIELD_ENCRYPTION_KEY must be a valid Fernet key")
 
+    document_storage_root = values.get(
+        "DOCUMENT_STORAGE_ROOT", "private-documents"
+    ).rstrip("/")
+    if document_storage_root not in {"private-documents", "/app/private-documents"}:
+        issues.append(
+            "DOCUMENT_STORAGE_ROOT must target the private Docker volume at "
+            "/app/private-documents"
+        )
+    try:
+        document_limit_mb = int(values.get("DOCUMENT_MAX_FILE_SIZE_MB", "20"))
+    except ValueError:
+        document_limit_mb = 0
+    if not 1 <= document_limit_mb <= 100:
+        issues.append("DOCUMENT_MAX_FILE_SIZE_MB must be between 1 and 100")
+
     database_url = urlparse(
         values.get("DATABASE_URL", "").replace(
             "postgresql+psycopg://", "postgresql://", 1

@@ -73,6 +73,24 @@ const router = createRouter({
           component: () => import('../views/HRScreen.vue'),
           meta: { requiresAuth: true, title: 'الموظفين' },
         },
+        {
+          path: 'documents',
+          name: 'documents',
+          component: () => import('../views/DocumentsScreen.vue'),
+          meta: { requiresAuth: true, title: 'المستندات' },
+        },
+        {
+          path: 'mall',
+          name: 'mall',
+          component: () => import('../views/MallScreen.vue'),
+          meta: { requiresAuth: true, title: 'المول التجاري' },
+        },
+        {
+          path: 'more',
+          name: 'more',
+          component: () => import('../views/MoreScreen.vue'),
+          meta: { requiresAuth: true, title: 'المزيد' },
+        },
       ],
     },
     // fallback

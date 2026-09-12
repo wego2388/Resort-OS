@@ -111,6 +111,13 @@ class Settings(CoreSettings):
     # ── Field Encryption (national_id, passport) ──────────────────────
     FIELD_ENCRYPTION_KEY: Optional[str] = None
 
+    # ── Private document vault ────────────────────────────────────────
+    # Deliberately separate from /app/uploads, which app.main exposes as
+    # public static menu media. Files in this directory are encrypted and
+    # may only be read through authenticated /documents endpoints.
+    DOCUMENT_STORAGE_ROOT: str = "private-documents"
+    DOCUMENT_MAX_FILE_SIZE_MB: int = Field(default=20, ge=1, le=100)
+
     # ── Owner Intelligence Cockpit — restricted DB sessions (Decision 0004
     # §Isolation model item 5, security review 2026-08-11) ───────────────
     # DSNs لـPostgres roles محدودة الصلاحية فعليًا على مستوى الداتابيز —

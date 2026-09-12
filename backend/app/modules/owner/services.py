@@ -85,6 +85,9 @@ from app.modules.owner._services.details import (
 from app.modules.owner._services.search import (
     search_everything,
 )
+from app.modules.owner._services.mall_summary import (
+    get_mall_summary,
+)
 
 __all__ = [
     "crud", "OwnerAllocationRule", "OwnerWatchlist",
@@ -130,4 +133,5 @@ __all__ = [
     "get_supplier_detail",
     "get_product_detail",
     "search_everything",
+    "get_mall_summary",
 ]

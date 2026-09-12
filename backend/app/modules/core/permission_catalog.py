@@ -39,6 +39,42 @@ class PermissionCatalogEntry(TypedDict):
 
 PERMISSION_CATALOG: list[PermissionCatalogEntry] = [
     {
+        "resource": "documents.branch",
+        "action": "view",
+        "label_ar": "عرض وتنزيل وثائق المنشأة",
+        "label_en": "View and download branch documents",
+        "module": "documents",
+        "min_role_level": 50,
+        "endpoint": "GET /documents/branch; GET /documents/branch/{document_id}; GET /documents/branch/{document_id}/download",
+    },
+    {
+        "resource": "documents.branch",
+        "action": "manage",
+        "label_ar": "رفع وتعديل واسترجاع وثائق المنشأة",
+        "label_en": "Upload, edit, delete, and restore branch documents",
+        "module": "documents",
+        "min_role_level": 60,
+        "endpoint": "GET /documents/branch/deleted; POST/PATCH/DELETE /documents/branch/*",
+    },
+    {
+        "resource": "documents.employee",
+        "action": "view",
+        "label_ar": "عرض وتنزيل وثائق الموظفين السرية",
+        "label_en": "View and download confidential employee documents",
+        "module": "documents",
+        "min_role_level": 70,
+        "endpoint": "GET /documents/employee/*",
+    },
+    {
+        "resource": "documents.employee",
+        "action": "manage",
+        "label_ar": "رفع وتعديل واسترجاع وثائق الموظفين",
+        "label_en": "Upload, edit, delete, and restore employee documents",
+        "module": "documents",
+        "min_role_level": 70,
+        "endpoint": "GET /documents/employee/{employee_id}/deleted; POST/PATCH/DELETE /documents/employee/*",
+    },
+    {
         "resource": "credit.accounts",
         "action": "view",
         "label_ar": "عرض الحسابات الآجلة الشخصية وكشوفها",

@@ -2,7 +2,7 @@
 /**
  * AppShell — الغلاف الرئيسي للـ owner app.
  * - Safe area top/bottom (iPhone notch/Dynamic Island)
- * - Bottom navigation (Now + Performance + Sales + Expenses + Shifts + HR)
+ * - Five-item bottom navigation; lower-frequency destinations live in More.
  * - Logout button في الـ header (Decision 0004 §7b)
  * - Theme toggle + text-size control في الـ header (2026-08-17، طلب محمد
  *   الصريح بعد تجربة حقيقية: نص/أرقام صغيرة وهو لابس نظارة قراءة)
@@ -34,11 +34,14 @@ const navItems: ReadonlyArray<{ name: string; label: string; icon: IconName }> =
   { name: 'performance', label: 'الأداء',     icon: 'chart' },
   { name: 'sales',       label: 'المبيعات',   icon: 'cart' },
   { name: 'expenses',    label: 'المصروفات',  icon: 'cash' },
-  { name: 'shifts',      label: 'الورديات',   icon: 'bell' },
-  { name: 'hr',          label: 'الموظفين',   icon: 'users' },
+  { name: 'more',        label: 'المزيد',      icon: 'more-horizontal' },
 ]
 
-const activeNav = computed(() => route.name as string)
+const activeNav = computed(() => (
+  ['shifts', 'hr', 'documents', 'mall'].includes(String(route.name))
+    ? 'more'
+    : String(route.name)
+))
 
 const loggingOut = ref(false)
 

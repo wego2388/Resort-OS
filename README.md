@@ -109,7 +109,8 @@ Celery app factory, PDF/Excel report building, error handlers, health checks,
 logging, Sentry, WhatsApp/email notifications) lives in
 `backend/app/core/kernel/` — see `CLAUDE.md` §10 and §14 for the current map.
 
-Database backups: `scripts/backup_db.sh` / `scripts/restore_db.sh` (see
+Paired database + encrypted-document backups: `scripts/backup_db.sh`; restore
+with `scripts/restore_db.sh` and `scripts/restore_documents.sh` (see
 `DEPLOYMENT.md` §10 for scheduling and disaster-recovery instructions).
 
 For the deeper engineering charter (auth chain, role levels, critical

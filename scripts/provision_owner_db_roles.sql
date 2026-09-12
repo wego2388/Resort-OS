@@ -47,6 +47,10 @@ $$;
 GRANT CONNECT ON DATABASE resort_os TO owner_read_role;
 GRANT USAGE ON SCHEMA public TO owner_read_role;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO owner_read_role;
+-- Explicit for upgrades where this role was provisioned before the document
+-- vault migration and the migration owner differs from the DEFAULT PRIVILEGES
+-- grantor. Re-running this script after migration closes that PostgreSQL edge.
+GRANT SELECT ON documents TO owner_read_role;
 -- Future tables created after this script runs inherit the same SELECT-only
 -- grant automatically (matches this project's convention of tables being
 -- added via alembic migrations over time).

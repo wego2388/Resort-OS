@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 
-const ROUTES = ['now', 'performance', 'sales', 'expenses', 'shifts', 'hr']
+const ROUTES = ['now', 'performance', 'sales', 'expenses', 'more', 'shifts', 'hr', 'documents', 'mall']
 
 async function mockAuthenticatedOwner(page: Page, withNowData = false) {
   page.on('pageerror', error => console.error('Owner page error:', error.message))
@@ -103,6 +103,45 @@ async function mockAuthenticatedOwner(page: Page, withNowData = false) {
     if (withNowData && url.pathname === '/api/v1/owner/watchlist') {
       return route.fulfill({ status: 200, json: [] })
     }
+    if (url.pathname === '/api/v1/owner/mall/summary') {
+      return route.fulfill({
+        status: 200,
+        json: {
+          branch_id: 1,
+          registry_ready: false,
+          map_available: false,
+          registered_unit_count: null,
+          occupied_unit_count: null,
+          vacant_unit_count: null,
+          occupancy_pct: null,
+          total_contract_count: 1,
+          active_contract_count: 1,
+          expiring_within_30_days: 1,
+          scheduled_rent: '10000.00',
+          accrued_rent: '10000.00',
+          collected_rent: '7500.00',
+          overdue_receivables: '2500.00',
+          period: {
+            date_from: '2026-09-01',
+            date_to: '2026-09-12',
+            is_provisional: true,
+            computed_at: new Date().toISOString(),
+          },
+          contracts: [{
+            contract_id: 41,
+            contract_number: 'LC-202609-0041',
+            unit_description: 'محل الواجهة 4',
+            status: 'active',
+            start_date: '2026-01-01',
+            end_date: '2026-09-30',
+            days_until_expiry: 18,
+            scheduled_to_date: '90000.00',
+            paid_to_date: '87500.00',
+            due_outstanding: '2500.00',
+          }],
+        },
+      })
+    }
     // Error states are deliberate here: layout safety must not depend on a
     // specific production data shape, and every route still mounts its real
     // screen/component tree.
@@ -158,6 +197,22 @@ test.describe('owner decision view', () => {
     await expect.poll(() => salesRequests.some(raw =>
       new URL(raw).searchParams.get('date_from') === expectedStart,
     )).toBeTruthy()
+  })
+
+  test('mall screen exposes real lease facts without inventing occupancy', async ({ page }) => {
+    await mockAuthenticatedOwner(page)
+    await page.goto('/mall')
+
+    await expect(page.getByRole('heading', { name: 'المول التجاري', level: 2 })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'سجل الوحدات والخريطة بانتظار الاعتماد' })).toBeVisible()
+    await expect(page.getByText('متحصل فعليًا')).toBeVisible()
+    await expect(page.getByText('محل الواجهة 4')).toBeVisible()
+    await expect(page.getByText(/نسبة إشغال تخمينية/)).toBeVisible()
+
+    const overflow = await page.evaluate(() =>
+      document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    )
+    expect(overflow).toBeLessThanOrEqual(1)
   })
 })
 

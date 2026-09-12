@@ -621,6 +621,50 @@ class HRSummaryResponse(BaseModel):
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# Owner mall — useful leasing truth before the physical unit registry
+# ═══════════════════════════════════════════════════════════════════════
+
+class OwnerMallContractSummary(BaseModel):
+    """Lease-safe projection: operational/financial fields only, no tenant PII."""
+
+    contract_id: int
+    contract_number: str
+    unit_description: str
+    status: str
+    start_date: date
+    end_date: date
+    days_until_expiry: int
+    scheduled_to_date: Decimal
+    paid_to_date: Decimal
+    due_outstanding: Decimal
+
+
+class OwnerMallSummaryResponse(BaseModel):
+    """GET /api/v1/owner/mall/summary.
+
+    Occupancy deliberately stays ``None`` until an approved physical-unit
+    registry exists. Lease contracts cannot prove how many vacant units exist.
+    """
+
+    branch_id: int
+    registry_ready: bool = False
+    map_available: bool = False
+    registered_unit_count: int | None = None
+    occupied_unit_count: int | None = None
+    vacant_unit_count: int | None = None
+    occupancy_pct: Decimal | None = None
+    total_contract_count: int
+    active_contract_count: int
+    expiring_within_30_days: int
+    scheduled_rent: Decimal
+    accrued_rent: Decimal
+    collected_rent: Decimal
+    overdue_receivables: Decimal
+    period: PeriodMeta
+    contracts: list[OwnerMallContractSummary]
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # Phase 7d — Discount Analytics
 # Decision 0004 §7d: خصومات + مجموعات بالاسم. لا هاتف/email/national_id.
 # ═══════════════════════════════════════════════════════════════════════

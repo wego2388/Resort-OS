@@ -8,20 +8,32 @@ import PayrollTab from '../../components/hr/PayrollTab.vue'
 import LeavesTab from '../../components/hr/LeavesTab.vue'
 import LeaderboardTab from '../../components/hr/LeaderboardTab.vue'
 import RotaTab from '../../components/hr/RotaTab.vue'
+import EmployeeDocumentsTab from '../../components/hr/EmployeeDocumentsTab.vue'
 
 const { t } = useI18n()
 const auth = useAuthStore()
 const branchId = computed(() => auth.branchId)
-const tab = ref<'employees' | 'attendance' | 'payroll' | 'leaves' | 'leaderboard' | 'rota'>('employees')
+type HrTab = 'employees' | 'attendance' | 'payroll' | 'leaves' | 'leaderboard' | 'rota' | 'documents'
+const tab = ref<HrTab>('employees')
+const canViewEmployeeDocuments = computed(() =>
+  ['hr_manager', 'admin', 'super_admin'].includes(auth.role ?? '')
+  && auth.hasPermission('documents.employee:view'),
+)
 
-const tabsList = computed<{ val: typeof tab.value; label: string }[]>(() => [
-  { val: 'employees', label: t('backoffice.hr.tabs.employees') },
-  { val: 'attendance', label: t('backoffice.hr.tabs.attendance') },
-  { val: 'payroll', label: t('backoffice.hr.tabs.payroll') },
-  { val: 'leaves', label: t('backoffice.hr.tabs.leaves') },
-  { val: 'rota', label: `🗓️ ${t('backoffice.hr.tabs.rota')}` },
-  { val: 'leaderboard', label: `🏆 ${t('backoffice.hr.tabs.leaderboard')}` },
-])
+const tabsList = computed<{ val: HrTab; label: string }[]>(() => {
+  const tabs: { val: HrTab; label: string }[] = [
+    { val: 'employees', label: t('backoffice.hr.tabs.employees') },
+    { val: 'attendance', label: t('backoffice.hr.tabs.attendance') },
+    { val: 'payroll', label: t('backoffice.hr.tabs.payroll') },
+    { val: 'leaves', label: t('backoffice.hr.tabs.leaves') },
+    { val: 'rota', label: `🗓️ ${t('backoffice.hr.tabs.rota')}` },
+    { val: 'leaderboard', label: `🏆 ${t('backoffice.hr.tabs.leaderboard')}` },
+  ]
+  if (canViewEmployeeDocuments.value) {
+    tabs.push({ val: 'documents', label: `📂 ${t('backoffice.hr.tabs.documents')}` })
+  }
+  return tabs
+})
 </script>
 
 <template>
@@ -58,5 +70,8 @@ const tabsList = computed<{ val: typeof tab.value; label: string }[]>(() => [
 
     <!-- Leaderboard Tab -->
     <LeaderboardTab v-if="tab === 'leaderboard'" :branch-id="branchId" />
+
+    <!-- Employee documents deliberately remain HR-only; managers do not see this tab. -->
+    <EmployeeDocumentsTab v-if="tab === 'documents' && canViewEmployeeDocuments" />
   </div>
 </template>

@@ -114,6 +114,7 @@ const allSections = computed<NavSection[]>(() => [
       { path: '/admin/beach-admin',  label: t('backoffice.nav.beachAdmin'),     icon: '🏄',  requiredRoles: ['manager', 'supervisor', 'admin', 'super_admin'] },
       { path: '/admin/maintenance',  label: t('backoffice.nav.maintenance'),    icon: '🔧',  requiredRoles: ['manager', 'supervisor', 'admin', 'super_admin'] },
       { path: '/admin/leasing',      label: t('backoffice.nav.leasing'),        icon: '🏢',  requiredRoles: ['manager', 'supervisor', 'admin', 'super_admin'] },
+      { path: '/admin/documents',    label: t('backoffice.nav.documents'),      icon: '🗄️',  requiredRoles: ['manager', 'supervisor', 'admin', 'super_admin'], requiredPermission: 'documents.branch:view' },
     ],
   },
   {
@@ -160,6 +161,7 @@ const allSections = computed<NavSection[]>(() => [
       { path: '/portal/attendance', label: t('backoffice.nav.attendance'), icon: '⏰', requiresEmployee: true },
       { path: '/portal/leaves',     label: t('backoffice.nav.leaves'),     icon: '🌴', requiresEmployee: true },
       { path: '/portal/payroll',    label: t('backoffice.nav.payroll'),    icon: '💳', requiresEmployee: true },
+      { path: '/portal/documents',  label: t('backoffice.nav.myDocuments'), icon: '📂', requiresEmployee: true },
       { path: '/portal/profile',    label: t('backoffice.nav.profile'),    icon: '👤' },
       // Gate 2B3B — session & security self-service, reachable by any signed-in user.
       { path: '/account/sessions',  label: t('account.sessions.navLink'),  icon: '🔒' },
