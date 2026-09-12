@@ -10,11 +10,15 @@
 -- history that should replay identically everywhere (passwords differ
 -- per environment and must never be committed).
 --
--- Usage:
---   psql "$DATABASE_URL" \
---     -v owner_read_password='<generate a real secret>' \
---     -v owner_metadata_write_password='<generate a real secret>' \
---     -f scripts/provision_owner_db_roles.sql
+-- Usage (generate URL-safe secrets and keep them out of process arguments):
+--   export OWNER_READ_PASSWORD="$(openssl rand -hex 32)"
+--   export OWNER_METADATA_WRITE_PASSWORD="$(openssl rand -hex 32)"
+--   {
+--     printf '\\set owner_read_password %s\n' "$OWNER_READ_PASSWORD"
+--     printf '\\set owner_metadata_write_password %s\n' "$OWNER_METADATA_WRITE_PASSWORD"
+--     cat scripts/provision_owner_db_roles.sql
+--   } | psql
+--   unset OWNER_READ_PASSWORD OWNER_METADATA_WRITE_PASSWORD
 --
 -- After running, set in the environment (never commit the password):
 --   OWNER_READ_DATABASE_URL=postgresql+psycopg://owner_read_role:<pw>@host:port/resort_os
@@ -24,21 +28,45 @@
 -- GRANT statements are naturally idempotent in Postgres.
 -- ═══════════════════════════════════════════════════════════════════════
 
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'owner_read_role') THEN
-    CREATE ROLE owner_read_role LOGIN PASSWORD :'owner_read_password';
-  ELSE
-    ALTER ROLE owner_read_role LOGIN PASSWORD :'owner_read_password';
-  END IF;
+\set ON_ERROR_STOP on
+\if :{?owner_read_password}
+\else
+  \echo 'owner_read_password psql variable is required'
+  \quit 2
+\endif
+\if :{?owner_metadata_write_password}
+\else
+  \echo 'owner_metadata_write_password psql variable is required'
+  \quit 2
+\endif
 
-  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'owner_metadata_write_role') THEN
-    CREATE ROLE owner_metadata_write_role LOGIN PASSWORD :'owner_metadata_write_password';
-  ELSE
-    ALTER ROLE owner_metadata_write_role LOGIN PASSWORD :'owner_metadata_write_password';
-  END IF;
-END
-$$;
+-- psql does not interpolate :variables inside a DO $$...$$ body. Generate
+-- safely quoted CREATE/ALTER statements as query results, then execute them.
+SELECT format(
+  'CREATE ROLE owner_read_role LOGIN PASSWORD %L',
+  :'owner_read_password'
+)
+WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'owner_read_role')
+\gexec
+SELECT format(
+  'ALTER ROLE owner_read_role LOGIN PASSWORD %L',
+  :'owner_read_password'
+)
+\gexec
+
+SELECT format(
+  'CREATE ROLE owner_metadata_write_role LOGIN PASSWORD %L',
+  :'owner_metadata_write_password'
+)
+WHERE NOT EXISTS (
+  SELECT FROM pg_roles WHERE rolname = 'owner_metadata_write_role'
+)
+\gexec
+SELECT format(
+  'ALTER ROLE owner_metadata_write_role LOGIN PASSWORD %L',
+  :'owner_metadata_write_password'
+)
+\gexec
 
 -- ── OwnerReadSession — SELECT only, every business table ────────────────
 -- Connection privilege + read access to the whole public schema. No

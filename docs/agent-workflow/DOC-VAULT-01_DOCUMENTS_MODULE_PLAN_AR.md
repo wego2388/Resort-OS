@@ -1,7 +1,7 @@
 # DOC-VAULT-01 — خزنة الوثائق الرسمية المشفرة
 
 **التاريخ:** 2026-09-12
-**الحالة:** COMPLETE LOCALLY / READY FOR IMMUTABLE RELEASE
+**الحالة:** COMPLETE / IMMUTABLE PRODUCTION ROLLOUT IN PROGRESS
 **المنفذ:** Codex
 **المعتمد:** Mohamed
 
@@ -9,8 +9,9 @@
 
 تم تنفيذ خزنة واحدة داخل `resort-os` لوثائق المنشأة وملفات الموظفين، مع
 فصل كامل بين البيانات الوصفية في PostgreSQL والملفات المشفرة في volume خاص.
-الإنتاج لم يتغير بعد؛ الـhead الحي ما زال `d2e4f6a8c0b1`، والـhead المرشح
-للإصدار هو `9f6b1d3e5a70`.
+بدأ rollout الإنتاج المرحلي بعد recovery set وصور rollback متحقق منهما؛
+طُبقت migration الإضافية وأصبح الـhead الحي `9f6b1d3e5a70`، بينما بقيت
+الخدمات القديمة صحية إلى أن تنتهي بوابات الاستبدال والدخان الحي.
 
 ## قرارات الأمان النهائية
 
@@ -62,6 +63,13 @@ Migration: `backend/alembic/versions/9f6b1d3e5a70_private_document_vault.py`
 المحاسب والكاشير والنادل والمدير العام لا يرون مستندات HR السرية. الموظف
 لا يرى إلا `employee_visible` المرتبط بسجل HR الخاص بحسابه. كل اختلاف فرع
 أو موظف يرجع 404 في lookup الحساس لمنع IDOR disclosure.
+
+اتصال Owner بالإنتاج سيستخدم دوري PostgreSQL حقيقيين بدل fallback العام.
+أُصلح سكربت provisioning ليستخدم `format(%L)` و`\gexec` خارج `DO $$`،
+ويشترط متغيري السر قبل التنفيذ. اختبار PostgreSQL 16 المعزول مرّ مرتين
+متتاليتين وأثبت أن `owner_read_role` يقرأ الوثائق ولا يكتبها، وأن
+`owner_metadata_write_role` يحدّث جداول Owner فقط ولا يقرأ `payments`،
+وكلاهما لا يملك سوى INSERT المطلوب على `audit_logs`.
 
 ## سطح الـAPI المنفذ
 

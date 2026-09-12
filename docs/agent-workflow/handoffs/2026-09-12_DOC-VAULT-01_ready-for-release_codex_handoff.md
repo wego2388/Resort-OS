@@ -7,6 +7,12 @@
 **حالة الإنتاج وقت التسليم:** لم تتغير؛ Resort `76602f0`، Marketing
 `e369bb4`، Alembic `d2e4f6a8c0b1`.
 
+**تحديث rollout في اليوم نفسه:** recovery set وصور rollback وبناء الصور
+نجحت، وطُبقت migration فأصبح Alembic الحي `9f6b1d3e5a70` مع بقاء الخدمات
+القديمة صحية لحين الاستبدال. أصلح Codex سكربت أدوار Owner المقيدة قبل
+التفعيل؛ الاختبار المعزول على PostgreSQL 16 مرّ مرتين متتاليتين وأثبت
+least privilege المطلوب.
+
 ## النتيجة
 
 مرشح الإصدار يحتوي خزنة وثائق كاملة للمنشأة والموظفين، وOwner projection
@@ -68,6 +74,10 @@
   320/390/768/1024/1280؛ اختبار `/mall` يتحقق من data-gate والـoverflow.
 - `scripts/agent-check.sh --quick`: ناجح؛ **3049** test collected، Alembic
   head واحد، development/production Compose config وgit diff check ناجحة.
+- `scripts/provision_owner_db_roles.sql`: اختبار isolated + idempotent
+  ناجح؛ read role: documents SELECT=true/INSERT=false/audit INSERT=true؛
+  metadata role: watchlist UPDATE=true/payments SELECT=false/audit
+  INSERT=true. الأسرار مررت عبر stdin ولم تظهر في process arguments.
 
 ## Release checklist
 

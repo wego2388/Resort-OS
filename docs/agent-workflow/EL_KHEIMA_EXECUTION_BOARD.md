@@ -1,9 +1,10 @@
 # لوحة التنفيذ الحية — El Kheima
 
-**آخر تحديث:** 2026-09-12 — DOC-VAULT-01 وOwner Mall Summary مكتملان
-محليًا وجاهزان لإصدار immutable؛ لم يُنشرا بعد. الإنتاج ما زال على POS-04
-وQR-REVIEW-01 عند Resort `76602f0` وMarketing `e369bb4`، وقاعدة البيانات
-`d2e4f6a8c0b1`. آخر تسليم إنتاجي:
+**آخر تحديث:** 2026-09-12 — rollout إنتاج DOC-VAULT-01 وOwner Mall Summary
+قيد التنفيذ بعد build وrecovery set وrollback images. الخدمات الحية ما زالت
+على POS-04 وQR-REVIEW-01 عند Resort `76602f0` وMarketing `e369bb4`، لكن
+migration الإضافية طُبقت وقاعدة البيانات الآن `9f6b1d3e5a70`. سكربت أدوار
+Owner المقيدة أُصلح واختُبر idempotently على PostgreSQL 16 قبل تفعيله. آخر تسليم إنتاجي:
 `docs/agent-workflow/handoffs/2026-09-12_pos-tablet-guest-rating_production_codex_handoff.md`.
 مراجعة ما قبل التشغيل ما زالت في
 `docs/agent-workflow/CODEX-REVIEW-01_pre-launch-critical-path-review_AR.md`.
@@ -81,9 +82,9 @@ CODEX-REVIEW-01 فوق) — بعدها UAT-01 وGo/No-Go النهائي
 | UAT-01 — operational acceptance | PENDING | جهاز/دور/لغة/شبكة/مال | ممثلو التشغيل والمالية |
 | DATA-02 — approved real master data | PARTIAL — PMS ROOMS COMPLETE | الغرف الحقيقية منشورة؛ باقي master data ينتظر اعتماد العمليات | المالك والتشغيل لباقي البيانات |
 | TIMESHARE-EXTRACTION-01 — فصل موديول الملكية الجزئية لمنتج مستقل داخل `wego-platform` (مش resort-os) — تفويض مباشر من Mohamed خارج دورة Codex، **قائد التنفيذ المكلَّف صراحة: Codex** | PENDING — Codex | خطة كاملة بالمراحل في `docs/agent-workflow/TIMESHARE-EXTRACTION-01_STANDALONE_APP_PLAN_AR.md`؛ الهدف: `products/timeshare` + `clients/el-kheima-timeshare` + web ERP + تطبيق موبايل حقيقي (KMP) لمالكي الملكية الجزئية في `/home/wego/wego-platform`، بجوار Sharm To Go/Divers؛ resort-os لم يُلمس؛ العميل الحالي لا يستخدم التيم شير فعليًا فالمخاطرة منخفضة | لا يوجد — البدء فورًا من المرحلة 1 في الخطة، جوه `wego-platform` |
-| DOC-VAULT-01 — أرشيف الوثائق الرسمية (وثائق المنشأة + ملفات الموظفين) | COMPLETE LOCALLY / READY FOR RELEASE | private AES-GCM storage؛ permissions منفصلة؛ audit/soft-delete/restore؛ self-service محدود؛ تنبيهات يومية idempotent؛ Staff + Owner read-only؛ recovery set مزدوج | immutable release: backup + migration `9f6b1d3e5a70` + rollout + live smoke |
+| DOC-VAULT-01 — أرشيف الوثائق الرسمية (وثائق المنشأة + ملفات الموظفين) | COMPLETE / PRODUCTION ROLLOUT IN PROGRESS | private AES-GCM storage؛ permissions منفصلة؛ audit/soft-delete/restore؛ self-service محدود؛ تنبيهات يومية idempotent؛ Staff + Owner read-only؛ recovery set مزدوج؛ migration الحية `9f6b1d3e5a70` | تفعيل Owner DB roles المقيدة + rollout + live smoke |
 | MALL-01 — إدارة المول التجاري (خريطة تفاعلية + وحدات + عقود + إشغال) | APPROVED / DATA GATE | توسعة leasing؛ وحدات قابلة للتأجير مع قيود منع التداخل؛ خريطة semantic + list fallback؛ أرقام مالية مفصّلة | اعتماد سجل الوحدات والخريطة الفعليين؛ مستقل وظيفيًا عن DOC-VAULT |
-| OWNER-APP-MALL-DOCS-01 — تطبيق المالك: المول + الوثائق | DOCS + MALL SUMMARY COMPLETE LOCALLY / UNIT MAP DATA GATE | وثائق Owner مصفاة؛ خمس وجهات + «المزيد»؛ `/mall` بأرقام Leasing/Payments الحقيقية وعقود بلا PII أو إشغال مخمّن؛ 13/13 responsive | Unit Registry والخريطة فقط ينتظران master data؛ الإصدار الحالي جاهز للنشر |
+| OWNER-APP-MALL-DOCS-01 — تطبيق المالك: المول + الوثائق | COMPLETE / PRODUCTION ROLLOUT IN PROGRESS / UNIT MAP DATA GATE | وثائق Owner مصفاة؛ خمس وجهات + «المزيد»؛ `/mall` بأرقام Leasing/Payments الحقيقية وعقود بلا PII أو إشغال مخمّن؛ 13/13 responsive؛ DB roles مقيدة مختبرة | استكمال rollout؛ Unit Registry والخريطة فقط ينتظران master data |
 
 ## ما اكتمل
 
