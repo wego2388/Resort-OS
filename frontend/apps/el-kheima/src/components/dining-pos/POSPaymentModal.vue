@@ -750,7 +750,7 @@ async function onCreditApproval(approval: Approval) {
           <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400">{{ t('backoffice.pos.payment.channel') }}</label>
           <select
             v-model.number="selectedPaymentChannelId"
-            class="w-full rounded-lg border-2 border-stone-200 dark:border-border bg-white dark:bg-surface px-3 py-2 text-sm font-medium"
+            class="w-full min-h-11 rounded-lg border-2 border-stone-200 dark:border-border bg-white dark:bg-surface px-3 py-2 text-sm font-medium"
           >
             <option v-for="ch in channelsForCurrentMethod" :key="ch.id" :value="ch.id">
               {{ ch.name_ar || ch.name }}{{ ch.is_default ? ` (${t('backoffice.pos.payment.channelDefault')})` : '' }}
@@ -769,7 +769,7 @@ async function onCreditApproval(approval: Approval) {
                 type="button"
                 :aria-pressed="cashCurrency === opt.value"
                 :class="[
-                  'px-3 py-1.5 rounded-lg border-2 text-sm font-bold transition-colors',
+                  'min-h-11 px-3 py-2 rounded-lg border-2 text-sm font-bold transition-colors touch-manipulation',
                   cashCurrency === opt.value
                     ? 'border-primary-700 bg-primary-50 text-primary-800'
                     : 'border-stone-200 text-gray-600 hover:border-primary-300 dark:border-border dark:text-gray-300',
@@ -870,7 +870,7 @@ async function onCreditApproval(approval: Approval) {
               <h3 class="font-bold text-gray-900 dark:text-gray-100">{{ t('backoffice.pos.payment.checkedInRoom') }}</h3>
               <p class="text-sm text-gray-500 dark:text-gray-400">{{ t('backoffice.pos.payment.roomOnlyHint') }}</p>
             </div>
-            <AppButton variant="ghost" size="sm" :loading="roomsLoading" @click="loadCheckedInRooms">
+            <AppButton variant="ghost" size="sm" class="min-h-11" :loading="roomsLoading" @click="loadCheckedInRooms">
               {{ t('backoffice.pos.payment.refreshRooms') }}
             </AppButton>
           </div>
@@ -928,6 +928,7 @@ async function onCreditApproval(approval: Approval) {
                 v-if="splitRows.length > 2"
                 variant="ghost"
                 size="sm"
+                class="min-h-11"
                 @click="removeSplitRow(row.key)"
               >
                 {{ t('backoffice.pos.payment.removeTender') }}
@@ -958,7 +959,7 @@ async function onCreditApproval(approval: Approval) {
                 type="button"
                 :aria-pressed="(row.cashCurrency || 'EGP') === opt.value"
                 :class="[
-                  'px-2 py-1 rounded-lg border text-xs font-bold transition-colors',
+                  'min-h-11 px-3 py-2 rounded-lg border text-xs font-bold transition-colors touch-manipulation',
                   (row.cashCurrency || 'EGP') === opt.value
                     ? 'border-primary-700 bg-primary-50 text-primary-800'
                     : 'border-stone-200 text-gray-600 hover:border-primary-300 dark:border-border dark:text-gray-300',
@@ -992,6 +993,7 @@ async function onCreditApproval(approval: Approval) {
           <AppButton
             variant="outline"
             block
+            class="min-h-11"
             :disabled="splitRows.length >= 10"
             @click="addSplitRow"
           >
@@ -1021,7 +1023,7 @@ async function onCreditApproval(approval: Approval) {
             :key="holder"
             type="button"
             :class="[
-              'min-h-[42px] flex-1 rounded-xl border-2 px-3 font-bold',
+              'min-h-11 flex-1 rounded-xl border-2 px-3 font-bold touch-manipulation',
               creditHolderType === holder ? 'border-amber-600 bg-white text-amber-900' : 'border-amber-200 text-gray-600',
             ]"
             @click="selectCreditHolderType(holder)"
@@ -1038,7 +1040,7 @@ async function onCreditApproval(approval: Approval) {
             :placeholder="t('backoffice.pos.payment.creditEmployeeId')"
             @keyup.enter="loadCreditAccount"
           >
-          <AppButton variant="outline" @click="loadCreditAccount">
+          <AppButton variant="outline" class="min-h-11" @click="loadCreditAccount">
             {{ t('backoffice.pos.payment.creditLookup') }}
           </AppButton>
         </div>

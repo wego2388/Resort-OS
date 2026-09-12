@@ -1,8 +1,48 @@
 # حالة المشروع الحالية — El Kheima Beach Resort OS
 
-**آخر تحديث:** 2026-09-11 — **Unified Dining POS صار Tablet-first PWA
-للكاشير والويتر، مع مسار QR حي موزع بين workers. منفّذ ومختبَر محليًا فقط؛
-لا commit/push/deploy.** الـmanifest الإنتاجي الآن `standalone` ويبدأ من
+**آخر تحديث:** 2026-09-12 — **تقييم ضيف QR بعد الدفع وإغلاق اعتمادية
+Tablet/PWA للكاشير والويتر مكتملان محليًا؛ لا commit/push/deploy لهذه
+الدفعة.** أضيف `POST /dining/public/orders/{public_reference}/review` مربوط
+بنفس `X-Guest-Session` التي أنشأت الطلب، ولا يقبل إلا حالة `paid`. التقييم
+واحد لكل جلسة QR بفضل قيود قاعدة البيانات في migration
+`d2e4f6a8c0b1`، وstatus polling يعيد حالة التقييم لاستعادة آمنة بعد refresh.
+واجهتا `/s/:token` وDigital Hub تتابعان `served → paid` بدل إيقاف المتابعة
+مبكرًا؛ تعرضان 1–5 نجوم، تحفظان كل تقييم داخليًا، وتعرضان رابط Google
+Business `https://g.page/r/CelR6rfY5VCeEAI/review` فقط بعد حفظ 4–5 نجوم.
+Digital Hub صار يحفظ طلبات الجلسة ويتابعها كلها، ورابط التقييم القديم في
+محتوى الردود التسويقية تم تصحيحه.
+
+في تطبيق الموظفين، تبديل المشغّل يستخدم endpoint جديدًا waiter+ يعيد فقط
+مشغلي الفرع النشط أصحاب PIN؛ حارس المسودة يغطي التنقل والخروج والتبديل
+والآن تحديث PWA أيضًا، وlogout لم يعد يتسابق مع التنقل. أهداف لمس التحصيل
+والعملات والإغلاق والتقسيم ≥44px، واختبارات نافذة الدفع تغطي Lenovo
+894×533 أفقيًا و800×1280 رأسيًا. التحقق المنتهي: migration chain الحقيقي
+3/3؛ اختبارات QR/analytics/rate-limit المستهدفة ناجحة؛ frontend type-check
+وi18n (**6705 مفتاحًا لكل لغة**) وVitest **108/108**؛ Playwright mock
+responsive **19/19**؛ production PWA build ناجح (`sw.js` + manifest)؛
+Marketing truth/type-check/build ناجحة وproduction audit صفر ثغرات. اختبار
+Backend الكامل جمع **3035** اختبارًا ووصل 100% بـexit 0 دون أي failure.
+التفاصيل:
+`docs/agent-workflow/handoffs/2026-09-12_pos-tablet-guest-rating_codex_handoff.md`.
+
+**السابق:** 2026-09-11 — **جولة smart polish لشاشة الكاشير والويتر
+مكتملة ومختبرة محليًا؛ لا commit/push/deploy لهذه الدفعة.** أضيف حارس
+مغادرة غير متزامن للسلة غير المرسلة (مع إلغاء الطلب المرحلي على السيرفر
+قبل السماح بالخروج) وحارس `beforeunload`، وصار badge السلة يجمع الكميات
+الفعلية. الطلبات النشطة لديها الآن فرزا `الأولوية الآن` و`طلباتي` وترتيب
+role-aware: guest QR بلا نادل، ثم served للكاشير، ثم أي طلب عمره 45 دقيقة،
+ثم طلبات المستخدم والأقدم. cache القراءة الأوفلاين صار v2 معزولًا بـuser
+id، يمسح مفاتيح الإصدار القديم، ويصفّر اسم/هاتف الضيف قبل حفظ الطاولات.
+أضيف `workbox-window` كاعتماد مباشر لإعادة إنتاج PWA build بشكل سليم.
+
+التحقق: `vue-tsc --noEmit` ناجح؛ i18n متطابق عند **6696 مفتاحًا لكل لغة**؛
+Vitest **108/108**؛ Playwright mock responsive **16/16** ويغطي الكاشير
+والويتر، عداد الكمية، حارس المغادرة، وخصوصية cache؛ production build نجح
+وولّد `sw.js` وmanifest. لا Backend أو migration أو بيانات تغيرت. التفاصيل:
+`docs/agent-workflow/handoffs/2026-09-11_cashier-waiter-smart-polish_codex_handoff.md`.
+
+**السابق:** 2026-09-11 — **Unified Dining POS صار Tablet-first PWA
+للكاشير والويتر، مع مسار QR حي موزع بين workers.** الـmanifest الإنتاجي الآن `standalone` ويبدأ من
 `/pos/dining`، بأيقونات El Kheima عادية وmaskable وApple، launch colors،
 install prompt، و`orientation:any` عمدًا لدعم landscape للكاشير وportrait
 للويتر. الواجهة اختُبرت على Lenovo Tab One بدقة 1340×800، وعلى viewport

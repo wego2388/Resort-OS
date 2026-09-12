@@ -38,6 +38,7 @@ from app.modules.core._services.pins import (
     set_pin,
     get_pin_status,
     list_eligible_approvers,
+    list_terminal_operators,
     verify_pin,
     resolve_pin_approval,
     PinBranchMismatchError,
@@ -45,6 +46,7 @@ from app.modules.core._services.pins import (
     PIN_MAX_ATTEMPTS,
     PIN_LOCKOUT_SECONDS,
     PIN_SWITCH_MAX_ROLE_LEVEL,
+    TERMINAL_OPERATOR_ROLES,
 )
 from app.modules.core._services.branches import (
     get_branch_or_404,
@@ -123,6 +125,7 @@ __all__ = [
     "set_pin",
     "get_pin_status",
     "list_eligible_approvers",
+    "list_terminal_operators",
     "verify_pin",
     "resolve_pin_approval",
     "PinBranchMismatchError",
@@ -130,6 +133,7 @@ __all__ = [
     "PIN_MAX_ATTEMPTS",
     "PIN_LOCKOUT_SECONDS",
     "PIN_SWITCH_MAX_ROLE_LEVEL",
+    "TERMINAL_OPERATOR_ROLES",
     "get_branch_or_404",
     "create_branch",
     "update_branch",

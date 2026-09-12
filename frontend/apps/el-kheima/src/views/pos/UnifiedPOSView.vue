@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { onBeforeRouteLeave } from 'vue-router'
 import { api, ENDPOINTS, useAuthStore, useResortWebSocket } from '@resort-os/core'
 import { useStaffFormat } from '@resort-os/core/i18n/staff'
 import { useAlertSound, useOfflineQueue, useOrderDiscount, usePrintDocument } from '@resort-os/core/composables'
@@ -38,6 +39,10 @@ import type {
   POSWorkspace,
   VenueTable,
 } from '../../components/dining-pos/types'
+import {
+  registerOperationalDraftGuard,
+  type OperationalDraftExitReason,
+} from '../../composables/operationalDraftGuard'
 
 const { t, locale } = useI18n()
 const { formatMoney, name } = useStaffFormat()
@@ -219,6 +224,17 @@ onWsMessage((message: any) => {
 const listSeparator = computed(() => locale.value === 'ar' ? '، ' : ', ')
 const cartLocked = computed(() => pendingOrderId.value !== null)
 const hasItems = computed(() => cart.value.length > 0)
+const cartItemCount = computed(() => cart.value.reduce((sum, line) => sum + line.quantity, 0))
+const hasUnsentDraft = computed(() =>
+  hasItems.value ||
+  pendingOrderId.value !== null ||
+  appendToOrderId.value !== null ||
+  selectedTableId.value !== null ||
+  selectedBeachLocationId.value !== null ||
+  selectedCustomer.value !== null ||
+  extraNote.value.trim().length > 0 ||
+  guestName.value.trim().length > 0,
+)
 const cartSubtotal = computed(() => cart.value.reduce((sum, line) => sum + line.unitPrice * line.quantity, 0))
 const activeGuestOrderCount = computed(() =>
   activeOrders.value.filter(order => order.source === 'guest_qr').length,
@@ -256,11 +272,35 @@ const orderTypeOptions = computed<Array<{ value: OrderType; label: string; icon:
 // (نفس نمط FREQ_STORAGE_PREFIX تحت بالظبط)، ولو أي فشل شبكة حصل، الشاشة
 // بترجع لآخر نسخة معروفة بدل ما تفضى — والمزامنة الفعلية بترجع أوتوماتيك
 // أول ما isOnline يرجع true (راجع الـ watch تحت).
-const CACHE_STORAGE_PREFIX = 'pos:dining:cache:'
+const LEGACY_CACHE_STORAGE_PREFIX = 'pos:dining:cache:'
+const CACHE_STORAGE_PREFIX = 'pos:dining:cache:v2:'
+
+function cacheStorageKey(key: string): string {
+  // كل موظف يشوف cache محطته فقط؛ لا تنتقل حالة تشغيلية بين كاشير ونادل
+  // يستخدمان نفس التابلت بالتبادل.
+  return `${CACHE_STORAGE_PREFIX}${auth.user?.id ?? 'anonymous'}:${key}`
+}
+
+function clearLegacyDiningCache() {
+  // الإصدار القديم كان يخزّن بيانات الطاولة كما رجعت من الـ API، بما فيها
+  // اسم/هاتف الضيف. امسحه مرة عند الترقية مع إبقاء cache v2 الآمن.
+  try {
+    const keysToRemove: string[] = []
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const key = localStorage.key(index)
+      if (key?.startsWith(LEGACY_CACHE_STORAGE_PREFIX) && !key.startsWith(CACHE_STORAGE_PREFIX)) {
+        keysToRemove.push(key)
+      }
+    }
+    for (const key of keysToRemove) localStorage.removeItem(key)
+  } catch {
+    // بعض أوضاع الخصوصية تمنع localStorage بالكامل؛ الكاش تحسين اختياري.
+  }
+}
 
 function loadCached<T>(key: string): T | null {
   try {
-    const raw = localStorage.getItem(`${CACHE_STORAGE_PREFIX}${key}`)
+    const raw = localStorage.getItem(cacheStorageKey(key))
     return raw ? (JSON.parse(raw) as T) : null
   } catch {
     return null
@@ -269,7 +309,7 @@ function loadCached<T>(key: string): T | null {
 
 function saveCached<T>(key: string, value: T) {
   try {
-    localStorage.setItem(`${CACHE_STORAGE_PREFIX}${key}`, JSON.stringify(value))
+    localStorage.setItem(cacheStorageKey(key), JSON.stringify(value))
   } catch {
     // localStorage ممكن يبقى غير متاح (وضع خاص/سعة ممتلئة) — الكاش تحسين
     // إضافي بس، مفيش داعي يوقف تدفق الطلب لأجله.
@@ -460,7 +500,14 @@ async function loadTables() {
   try {
     const { data } = await api.get(ENDPOINTS.dining.tables(branchId.value ?? 0))
     tables.value = data
-    saveCached(cacheKey, data)
+    // نحتاج حالة/رقم الطلب للأوفلاين، لكن اسم وهاتف الضيف لا يلزم تخزينهما
+    // على الجهاز. العرض المتصل يظل كاملًا من tables.value أعلاه.
+    const offlineSafeTables = (data as VenueTable[]).map(table => ({
+      ...table,
+      active_order_guest_name: null,
+      active_order_guest_phone: null,
+    }))
+    saveCached(cacheKey, offlineSafeTables)
   } catch {
     const cached = loadCached<VenueTable[]>(cacheKey)
     if (cached) {
@@ -669,7 +716,7 @@ function resetDraft() {
   selectedBeachLocationId.value = null
 }
 
-async function cancelAndResetDraft(): Promise<boolean> {
+async function cancelAndResetDraft(refreshAfter = true): Promise<boolean> {
   if (pendingOrderId.value !== null) {
     try {
       await api.patch(ENDPOINTS.dining.orderStatus(pendingOrderId.value), { status: 'cancelled' })
@@ -679,7 +726,7 @@ async function cancelAndResetDraft(): Promise<boolean> {
     }
   }
   resetDraft()
-  await Promise.all([loadTables(), loadActiveOrders()])
+  if (refreshAfter) await Promise.all([loadTables(), loadActiveOrders()])
   return true
 }
 
@@ -1051,6 +1098,50 @@ function handleKeydown(event: KeyboardEvent) {
   }
 }
 
+function handleBeforeUnload(event: BeforeUnloadEvent) {
+  if (!hasUnsentDraft.value) return
+  event.preventDefault()
+  // مطلوب لبعض المتصفحات القديمة؛ النص نفسه يحدده المتصفح لأسباب أمنية.
+  event.returnValue = ''
+}
+
+function draftExitCopy(reason: OperationalDraftExitReason) {
+  const key = reason === 'logout'
+    ? 'logout'
+    : reason === 'operator-switch'
+      ? 'switchOperator'
+      : reason === 'app-update'
+        ? 'updateApp'
+        : 'leave'
+  return {
+    title: t(`backoffice.pos.cart.${key}Title`),
+    message: t(`backoffice.pos.cart.${key}Message`),
+    confirmText: t(`backoffice.pos.cart.${key}Confirm`),
+  }
+}
+
+async function confirmDraftExit(reason: OperationalDraftExitReason): Promise<boolean> {
+  if (!hasUnsentDraft.value) return true
+  const copy = draftExitCopy(reason)
+  const accepted = await confirm({
+    title: copy.title,
+    message: copy.message,
+    confirmText: copy.confirmText,
+    cancelText: t('backoffice.pos.cart.stay'),
+    danger: true,
+  })
+  if (!accepted) return false
+  return cancelAndResetDraft(false)
+}
+
+onBeforeRouteLeave(() => {
+  // جلسة انتهت من خارج الشاشة: اترك حارس الراوتر العام يعيد المستخدم للدخول.
+  if (!auth.user) return true
+  return confirmDraftExit('navigate')
+})
+
+let unregisterDraftGuard = () => {}
+
 watch([selectedCategoryId, searchQuery], () => {
   if (menuScrollEl.value) menuScrollEl.value.scrollTop = 0
 })
@@ -1069,11 +1160,18 @@ watch(isOnline, (online, wasOnline) => {
 })
 
 onMounted(async () => {
+  unregisterDraftGuard = registerOperationalDraftGuard(confirmDraftExit)
+  clearLegacyDiningCache()
   await loadOutlets()
   await Promise.all([loadMenu(), loadTables(), loadActiveOrders()])
   window.addEventListener('keydown', handleKeydown)
+  window.addEventListener('beforeunload', handleBeforeUnload)
 })
-onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
+onUnmounted(() => {
+  unregisterDraftGuard()
+  window.removeEventListener('keydown', handleKeydown)
+  window.removeEventListener('beforeunload', handleBeforeUnload)
+})
 </script>
 
 <template>
@@ -1170,7 +1268,7 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
         >
           <AppIcon name="cart" size="sm" />
           <span>{{ t('backoffice.pos.workspaceNav.order') }}</span>
-          <AppBadge v-if="cart.length" variant="warning" size="sm">{{ cart.length }}</AppBadge>
+          <AppBadge v-if="cartItemCount" variant="warning" size="sm">{{ cartItemCount }}</AppBadge>
         </button>
         <button
           type="button"
@@ -1231,6 +1329,8 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
         :tables="tables"
         :loading="activeOrdersLoading"
         :initial-outlet-id="selectedOutletId"
+        :current-user-id="auth.user?.id ?? null"
+        :can-settle-payment="auth.hasRole('cashier')"
         @open="openOrder"
         @refresh="loadActiveOrders"
       />
@@ -1469,7 +1569,7 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
           class="pos-mobile-cart md:hidden fixed z-30 inset-x-4 min-h-[60px] rounded-2xl bg-primary-800 text-white px-4 shadow-xl flex items-center justify-between gap-3 font-black active:scale-[0.99]"
           @click="mobileCartOpen = true"
         >
-          <span>🛒 {{ t('backoffice.pos.cart.mobileCart', { count: cart.length }) }}</span>
+          <span>🛒 {{ t('backoffice.pos.cart.mobileCart', { count: cartItemCount }) }}</span>
           <span class="tabular-nums">{{ formatMoney(pendingOrderSummary?.total ?? cartSubtotal, currency) }}</span>
         </button>
 
@@ -1595,6 +1695,14 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
 .pos-command-bar :deep(button),
 .pos-order-grid :deep(button) {
   touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.pos-category-rail,
+.pos-menu-toolbar,
+.pos-menu,
+.pos-cart {
+  -webkit-overflow-scrolling: touch;
 }
 
 @media (max-width: 1279px) {

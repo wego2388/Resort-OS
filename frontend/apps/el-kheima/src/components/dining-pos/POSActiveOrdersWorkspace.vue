@@ -12,6 +12,8 @@ const props = defineProps<{
   tables: VenueTable[]
   loading: boolean
   initialOutletId?: number | null
+  currentUserId: number | null
+  canSettlePayment: boolean
 }>()
 const emit = defineEmits<{
   open: [orderId: number]
@@ -42,8 +44,27 @@ const outletOptions = computed<SelectOption[]>(() => [
   })),
 ])
 
+function isMine(order: ActiveOrder): boolean {
+  return props.currentUserId !== null && order.waiter_id === props.currentUserId
+}
+
+function isUnassignedGuestOrder(order: ActiveOrder): boolean {
+  return order.source === 'guest_qr' && order.status === 'open' && order.waiter_id == null
+}
+
+function needsAttention(order: ActiveOrder): boolean {
+  return isUnassignedGuestOrder(order) ||
+    (props.canSettlePayment && order.status === 'served') ||
+    elapsedMinutes(order.created_at) >= 45
+}
+
+const attentionOrderCount = computed(() => props.orders.filter(needsAttention).length)
+const mineOrderCount = computed(() => props.orders.filter(isMine).length)
+
 const statusFilters = computed(() => [
   { value: 'all', label: t('backoffice.pos.activeOrders.all'), count: props.orders.length },
+  { value: 'attention', label: t('backoffice.pos.activeOrders.attention'), count: attentionOrderCount.value },
+  { value: 'mine', label: t('backoffice.pos.activeOrders.mine'), count: mineOrderCount.value },
   {
     value: 'guest_qr',
     label: t('backoffice.pos.guestOrder.filter'),
@@ -61,15 +82,29 @@ function countStatus(status: string): number {
 const filteredOrders = computed(() => {
   const normalized = query.value.trim().toLowerCase()
   return props.orders.filter(order => {
+    if (statusFilter.value === 'attention' && !needsAttention(order)) return false
+    if (statusFilter.value === 'mine' && !isMine(order)) return false
     if (statusFilter.value === 'guest_qr' && order.source !== 'guest_qr') return false
-    if (!['all', 'guest_qr'].includes(statusFilter.value) && order.status !== statusFilter.value) return false
+    if (!['all', 'attention', 'mine', 'guest_qr'].includes(statusFilter.value) && order.status !== statusFilter.value) return false
     if (outletFilter.value !== 'all' && order.outlet_id !== Number(outletFilter.value)) return false
     if (!normalized) return true
     return order.order_number.toLowerCase().includes(normalized) ||
       tableLabel(order).toLowerCase().includes(normalized) ||
       outletName(order.outlet_id).toLowerCase().includes(normalized)
-  }).sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+  }).sort((a, b) => {
+    const priorityDifference = orderPriorityRank(a) - orderPriorityRank(b)
+    if (priorityDifference !== 0) return priorityDifference
+    return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+  })
 })
+
+function orderPriorityRank(order: ActiveOrder): number {
+  if (isUnassignedGuestOrder(order)) return 0
+  if (props.canSettlePayment && order.status === 'served') return 1
+  if (elapsedMinutes(order.created_at) >= 45) return 2
+  if (isMine(order)) return 3
+  return 4
+}
 
 function outletName(outletId: number): string {
   const outlet = props.outlets.find(item => item.id === outletId)
@@ -177,6 +212,24 @@ function orderUrgencyClass(order: { status: string; created_at: string }): strin
         </div>
       </div>
 
+      <button
+        v-if="attentionOrderCount > 0"
+        type="button"
+        data-testid="pos-smart-focus"
+        class="w-full min-h-[64px] rounded-2xl border-2 border-amber-300 bg-amber-50 px-4 py-3 text-start text-amber-950 shadow-sm transition-colors hover:bg-amber-100 active:scale-[0.995] dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-100 dark:hover:bg-amber-950/50"
+        @click="statusFilter = 'attention'"
+      >
+        <span class="flex items-center justify-between gap-3">
+          <span class="min-w-0">
+            <span class="block font-black">⚡ {{ t('backoffice.pos.activeOrders.smartFocusTitle', { count: attentionOrderCount }) }}</span>
+            <span class="mt-0.5 block text-xs font-semibold text-amber-800 dark:text-amber-200">
+              {{ canSettlePayment ? t('backoffice.pos.activeOrders.smartFocusCashierHint') : t('backoffice.pos.activeOrders.smartFocusWaiterHint') }}
+            </span>
+          </span>
+          <span class="flex-shrink-0 text-sm font-black">{{ t('backoffice.pos.activeOrders.showPriority') }} ←</span>
+        </span>
+      </button>
+
       <div class="flex gap-2 overflow-x-auto pb-1" role="tablist" :aria-label="t('backoffice.pos.activeOrders.statusFilter')">
         <button
           v-for="filter in statusFilters"
@@ -245,6 +298,9 @@ function orderUrgencyClass(order: { status: string; created_at: string }): strin
                 </div>
               </div>
               <div class="flex flex-col items-end gap-1.5">
+                <AppBadge v-if="needsAttention(order)" variant="danger" size="sm">
+                  ⚡ {{ t('backoffice.pos.activeOrders.priorityBadge') }}
+                </AppBadge>
                 <AppBadge v-if="order.source === 'guest_qr'" variant="warning" size="sm">
                   📲 {{ t('backoffice.pos.guestOrder.badge') }}
                 </AppBadge>

@@ -148,7 +148,7 @@ onBeforeUnmount(restorePreviousFocus)
         ]">
           <div v-if="title" class="flex items-center justify-between px-6 py-4 border-b border-stone-100 dark:border-border flex-shrink-0">
             <h2 :id="titleId" class="text-lg font-bold text-gray-900 dark:text-gray-100">{{ title }}</h2>
-            <button @click="emit('close')" :aria-label="closeLabel" class="p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
+            <button @click="emit('close')" :aria-label="closeLabel" class="flex h-11 w-11 touch-manipulation items-center justify-center rounded-xl hover:bg-gray-100 active:scale-90 dark:hover:bg-gray-700 transition-colors">
               <svg class="w-5 h-5 text-gray-500 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
               </svg>

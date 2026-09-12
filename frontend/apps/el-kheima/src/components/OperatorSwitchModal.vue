@@ -15,6 +15,7 @@ import { ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api, useAuthStore, ENDPOINTS } from '@resort-os/core'
 import { AppModal, AppButton, useToast } from '@resort-os/ui'
+import { confirmOperationalDraftExit } from '../composables/operationalDraftGuard'
 
 const emit = defineEmits<{ close: [] }>()
 // لا props مطلوبة — الـ component مكتفية بنفسها وتقرأ من auth store.
@@ -35,10 +36,9 @@ const error = ref('')
 
 onMounted(async () => {
   try {
-    // min_level=20 عشان تجيب كل الموظفين التشغيليين (مش المديرين بس زي
-    // شاشة موافقة الـ PIN) — الباك إند برضه بيرفض أي هدف فوق مستوى مدير
-    // (PIN_SWITCH_MAX_ROLE_LEVEL) بغض النظر عن اللي القائمة دي بترجعه.
-    const { data } = await api.get(ENDPOINTS.core.pinApprovers, { params: { min_level: 20 } })
+    // عقد مخصص للمشغّلين: waiter+، نفس الفرع، دور صالة مسموح، وله PIN.
+    // لا نعيد استخدام approvers لأنها cashier-only وقائمة موافقات لا تبديل.
+    const { data } = await api.get(ENDPOINTS.core.pinOperators)
     operators.value = data.filter((o: Operator) => o.id !== auth.user?.id)
   } catch {
     error.value = t('backoffice.operatorSwitch.loadError')
@@ -61,6 +61,9 @@ async function confirmSwitch() {
   busy.value = true
   error.value = ''
   try {
+    // الطلب الحالي لازم يُلغى تحت هوية صاحبه القديمة قبل إصدار token
+    // للمشغّل الجديد؛ غير كده البيع التالي قد يُنسب للشخص الخطأ.
+    if (!await confirmOperationalDraftExit('operator-switch')) return
     await auth.pinSwitch(selectedId.value, pin.value)
     toast.success(t('backoffice.operatorSwitch.switchSuccess', { name: auth.user?.full_name }))
     emit('close')

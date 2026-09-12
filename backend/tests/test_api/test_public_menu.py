@@ -25,6 +25,7 @@ import uuid
 from decimal import Decimal
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 
@@ -757,3 +758,110 @@ class TestPublicOrderStatusEndpoint:
             f"/api/v1/dining/public/orders/{reference}", headers=headers,
         )
         assert poll_resp.status_code == 200, poll_resp.text
+
+
+class TestPaidQrOrderReview:
+    @staticmethod
+    def _make_order(client: TestClient, db):
+        branch = make_branch(db)
+        enable_self_order(db, branch)
+        outlet = make_outlet(db, branch)
+        category = make_category(db, branch, outlet)
+        item = make_item(db, branch, outlet, category)
+        table = make_table(db, branch, outlet)
+        headers = guest_session_headers(client, db, branch, table)
+        response = client.post(
+            "/api/v1/dining/public/orders",
+            json={
+                "outlet_id": outlet.id,
+                "items": [{"item_id": item.id, "quantity": 1}],
+            },
+            headers=headers,
+        )
+        assert response.status_code == 201, response.text
+        return branch, headers, response.json()["public_reference"]
+
+    def test_review_requires_paid_order_and_issuing_session(self, client: TestClient, db):
+        _branch, headers, reference = self._make_order(client, db)
+
+        before_payment = client.post(
+            f"/api/v1/dining/public/orders/{reference}/review",
+            json={"rating": 5},
+            headers=headers,
+        )
+        assert before_payment.status_code == 409
+
+        other_branch = make_branch(db)
+        other_outlet = make_outlet(db, other_branch, "مطعم آخر")
+        other_table = make_table(db, other_branch, other_outlet)
+        other_headers = guest_session_headers(client, db, other_branch, other_table)
+        wrong_session = client.post(
+            f"/api/v1/dining/public/orders/{reference}/review",
+            json={"rating": 5},
+            headers=other_headers,
+        )
+        assert wrong_session.status_code == 404
+
+    def test_high_rating_is_saved_once_and_returns_exact_google_link(self, client: TestClient, db):
+        from app.modules.analytics.models import GuestReview
+        from app.modules.dining import crud as dining_crud
+
+        _branch, headers, reference = self._make_order(client, db)
+        order = dining_crud.get_order_by_guest_public_reference(db, reference)
+        order.status = "paid"
+        db.commit()
+
+        first = client.post(
+            f"/api/v1/dining/public/orders/{reference}/review",
+            json={"rating": 5, "comment": "خدمة ممتازة"},
+            headers=headers,
+        )
+        assert first.status_code == 200, first.text
+        assert first.json() == {
+            "submitted": True,
+            "already_submitted": False,
+            "rating": 5,
+            "google_review_url": "https://g.page/r/CelR6rfY5VCeEAI/review",
+        }
+
+        # Retry مختلف لا يبدّل رأي الضيف ولا ينشئ صفاً ثانياً.
+        replay = client.post(
+            f"/api/v1/dining/public/orders/{reference}/review",
+            json={"rating": 1},
+            headers=headers,
+        )
+        assert replay.status_code == 200, replay.text
+        assert replay.json()["already_submitted"] is True
+        assert replay.json()["rating"] == 5
+        assert db.query(GuestReview).filter(
+            GuestReview.dining_order_id == order.id,
+        ).count() == 1
+
+        recovered = client.get(
+            f"/api/v1/dining/public/orders/{reference}", headers=headers,
+        )
+        assert recovered.status_code == 200
+        assert recovered.json()["review_submitted"] is True
+        assert recovered.json()["review_rating"] == 5
+        assert recovered.json()["google_review_url"] == (
+            "https://g.page/r/CelR6rfY5VCeEAI/review"
+        )
+
+    @pytest.mark.parametrize("rating", [1, 2, 3])
+    def test_google_link_is_not_returned_below_four_stars(
+        self, client: TestClient, db, rating: int,
+    ):
+        _branch, headers, reference = self._make_order(client, db)
+        from app.modules.dining import crud as dining_crud
+
+        order = dining_crud.get_order_by_guest_public_reference(db, reference)
+        order.status = "paid"
+        db.commit()
+
+        response = client.post(
+            f"/api/v1/dining/public/orders/{reference}/review",
+            json={"rating": rating, "comment": "نحتاج تحسين السرعة"},
+            headers=headers,
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["google_review_url"] is None

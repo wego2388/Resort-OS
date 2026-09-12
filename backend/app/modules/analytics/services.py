@@ -151,8 +151,76 @@ def submit_review(
     return review
 
 
+def get_guest_session_review(db: Session, guest_session_id: int) -> GuestReview | None:
+    """يرجع تقييم تجربة جلسة QR، إن وُجد."""
+    from app.modules.analytics.models import GuestReview
+
+    return db.query(GuestReview).filter(
+        GuestReview.guest_session_id == guest_session_id,
+    ).first()
+
+
+def submit_dining_order_review(
+    db: Session,
+    *,
+    dining_order_id: int,
+    guest_session_id: int,
+    branch_id: int,
+    guest_name: str | None,
+    rating: int,
+    comment: str | None,
+) -> tuple[GuestReview, bool]:
+    """يسجل تقييم طلب QR مرة واحدة ويرجع ``(review, replayed)``.
+
+    الـendpoint المستدعي هو المسؤول عن إثبات أن الطلب مدفوع ومملوك لنفس
+    جلسة الضيف. الـunique index هنا هو backstop للتزامن: ضغطتان متزامنتان
+    أو retry بعد انقطاع الرد لا تنشئان تقييمين ولا شكويين.
+    """
+    from sqlalchemy.exc import IntegrityError
+
+    from app.modules.analytics.models import GuestReview
+
+    existing = get_guest_session_review(db, guest_session_id)
+    if existing:
+        return existing, True
+
+    review = GuestReview(
+        branch_id=branch_id,
+        dining_order_id=dining_order_id,
+        guest_session_id=guest_session_id,
+        guest_name=guest_name or "ضيف QR",
+        overall_rating=rating,
+        comment=comment,
+        source="dining_qr",
+        is_published=rating >= 3,
+        reviewed_at=business_today(settings.TIMEZONE),
+    )
+    db.add(review)
+    try:
+        db.commit()
+        db.refresh(review)
+    except IntegrityError as exc:
+        db.rollback()
+        existing = get_guest_session_review(db, guest_session_id)
+        if existing:
+            return existing, True
+        raise ValueError("تعذّر تثبيت التقييم؛ حاول مرة أخرى") from exc
+
+    if rating <= 2:
+        try:
+            _create_complaint_activity(
+                db, branch_id, None, None, rating,
+                dining_order_id=dining_order_id,
+            )
+        except Exception as exc:
+            logger.error("Failed to create dining review complaint activity: %s", exc)
+
+    return review, False
+
+
 def _create_complaint_activity(
     db, branch_id: int, booking_id: int | None, timeshare_visit_id: int | None, rating: int,
+    dining_order_id: int | None = None,
 ) -> None:
     """ينشئ Activity(complaint) في CRM عند تقييم ≤ 2."""
     from app.modules.crm.models import Activity, Customer
@@ -175,6 +243,8 @@ def _create_complaint_activity(
         ref_label = f"حجز #{booking_id}"
     elif timeshare_visit_id:
         ref_label = f"زيارة ملكية جزئية #{timeshare_visit_id}"
+    elif dining_order_id:
+        ref_label = f"طلب مطعم QR #{dining_order_id}"
     else:
         ref_label = "تقييم يدوي (بدون حجز أو زيارة)"
     db.add(Activity(

@@ -261,6 +261,7 @@ const cartGroups = computed(() => {
         variant="outline"
         size="sm"
         block
+        class="min-h-11"
         :disabled="cart.length === 0"
         :loading="applyingDiscount"
         @click="emit('discount')"

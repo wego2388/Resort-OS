@@ -817,6 +817,24 @@ class GuestOrderRead(BaseModel):
     total:        Decimal
     items_count:  int
     message:      str
+    review_submitted: bool = False
+    review_rating: int | None = None
+    google_review_url: str | None = None
+
+
+class GuestDiningReviewCreate(BaseModel):
+    """تقييم مختصر مرتبط بطلب QR مدفوع وجلسة الضيف الحالية."""
+    model_config = ConfigDict(extra="forbid")
+
+    rating: int = Field(..., ge=1, le=5)
+    comment: str | None = Field(None, max_length=2000)
+
+
+class GuestDiningReviewRead(BaseModel):
+    submitted: bool = True
+    already_submitted: bool
+    rating: int
+    google_review_url: str | None = None
 
 
 # ── Outlet Sales Report ───────────────────────────────────────────────────────

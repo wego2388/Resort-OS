@@ -637,6 +637,56 @@ class TestPinCredentials:
         resp = client.get("/api/v1/pins/approvers", headers=waiter_headers)
         assert resp.status_code == 403
 
+    def test_waiter_lists_only_same_branch_terminal_operators_with_pin(
+        self, client: TestClient, db,
+    ):
+        """قائمة تبديل المشغّل مختلفة عن approvers: الويتر يقرأها، لكنها
+        تعرض فقط مشغّل صالة له PIN وعضوية فعالة في نفس الفرع."""
+        from app.core.kernel.models.user import User
+        from app.modules.core import services as core_services
+        from app.modules.core.models import Branch, UserBranchMembership
+        from tests.conftest import _create_test_user, _make_token
+
+        suffix = uuid.uuid4().hex[:8]
+        waiter_email = f"operator-waiter-{suffix}@test.local"
+        cashier_email = f"operator-cashier-{suffix}@test.local"
+        manager_email = f"operator-manager-{suffix}@test.local"
+        waiter_id = _create_test_user(waiter_email, "waiter")
+        cashier_id = _create_test_user(cashier_email, "cashier")
+        manager_id = _create_test_user(manager_email, "manager")
+        waiter = db.get(User, waiter_id)
+        cashier = db.get(User, cashier_id)
+        manager = db.get(User, manager_id)
+        branch = Branch(
+            name="Operator Picker Branch",
+            name_ar="فرع قائمة المشغلين",
+            code=f"OP-{uuid.uuid4().hex[:8].upper()}",
+        )
+        db.add(branch)
+        db.flush()
+        db.add_all([
+            UserBranchMembership(
+                user_id=user.id,
+                branch_id=branch.id,
+                is_default=True,
+                is_active=True,
+            )
+            for user in (waiter, cashier, manager)
+        ])
+        db.commit()
+        core_services.set_pin(db, cashier.id, "2468", created_by=cashier.id)
+
+        resp = client.get(
+            "/api/v1/pins/operators",
+            headers={"Authorization": f"Bearer {_make_token(waiter_email, branch_id=branch.id)}"},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json() == [{
+            "id": cashier.id,
+            "full_name": cashier.full_name,
+            "role": "cashier",
+        }]
+
     def test_pin_switch_issues_real_token_for_target_user(self, client: TestClient, db, waiter_headers, cashier_headers):
         """موظف تاني (كاشير) بيبدّل على نفس الـ terminal session (واتر مسجّل
         دخوله) — التوكن الجديد لازم يمثّل الكاشير فعليًا، مش الواتر."""

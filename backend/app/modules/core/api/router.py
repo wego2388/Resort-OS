@@ -1172,6 +1172,24 @@ def list_pin_approvers(db: DbDep, _user=Depends(get_cashier_user), min_level: in
     ]
 
 
+@router.get("/pins/operators", response_model=list[ApproverOption])
+def list_pin_operators(db: DbDep, user=Depends(get_waiter_user)):
+    """قائمة دنيا لتبديل مشغّل جهاز الـPOS داخل الفرع الحالي.
+
+    endpoint منفصل عن approvers حتى لا نخفض حماية قائمة الموافقات، وحتى
+    يستطيع الويتر الرجوع إلى كاشير على الجهاز نفسه. لا يعرض إلا أدوار
+    تشغيل الصالة التي لها PIN وعضوية فعالة في نفس الفرع.
+    """
+    branch_id = services.get_user_branch_id(db, user)
+    if branch_id is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "اختر فرعًا نشطًا قبل تبديل المشغّل")
+    return [
+        ApproverOption.model_validate(operator)
+        for operator in services.list_terminal_operators(db, branch_id)
+        if operator.id != user.id
+    ]
+
+
 @router.post("/pins/me", response_model=PinCredentialRead, status_code=status.HTTP_201_CREATED)
 def set_my_pin(data: PinSetRequest, db: DbDep, user=Depends(get_waiter_user)):
     """أي موظف تشغيلي (نادل فأعلى) يقدر يضبط PIN بنفسه — للموافقات اللي

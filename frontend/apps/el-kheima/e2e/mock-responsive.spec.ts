@@ -5,6 +5,21 @@ async function mockCashier(
   locale: 'ar' | 'en',
   role: 'cashier' | 'waiter' = 'cashier',
 ) {
+  let activeRole: 'cashier' | 'waiter' = role
+  let activeUserId = role === 'cashier' ? 8101 : 8102
+  const activeUser = () => ({
+    id: activeUserId,
+    email: `${activeRole}-layout@example.invalid`,
+    username: `${activeRole}-layout`,
+    full_name: locale === 'ar'
+      ? (activeRole === 'cashier' ? 'كاشير اختبار التجاوب' : 'نادل اختبار التجاوب')
+      : (activeRole === 'cashier' ? 'Responsive Test Cashier' : 'Responsive Test Waiter'),
+    role: activeRole,
+    is_active: true,
+    must_change_password: false,
+    two_factor_enabled: false,
+    preferred_language: locale,
+  })
   await page.route('**/api/v1/**', async (route) => {
     const url = new URL(route.request().url())
     if (url.pathname === '/api/v1/auth/refresh') {
@@ -15,17 +30,7 @@ async function mockCashier(
         status: 200,
         json: {
           contract_version: 1,
-          user: {
-            id: 8101,
-            email: `${role}-layout@example.invalid`,
-            username: `${role}-layout`,
-            full_name: locale === 'ar' ? 'كاشير اختبار التجاوب' : 'Responsive Test Cashier',
-            role,
-            is_active: true,
-            must_change_password: false,
-            two_factor_enabled: false,
-            preferred_language: locale,
-          },
+          user: activeUser(),
           branches: [{
             id: 1,
             code: 'ELK',
@@ -48,6 +53,26 @@ async function mockCashier(
     }
     if (url.pathname === '/api/v1/finance/shifts/current') {
       return route.fulfill({ status: 404, json: { detail: 'no open shift in layout fixture' } })
+    }
+    if (url.pathname === '/api/v1/pins/operators') {
+      const targetRole = activeRole === 'cashier' ? 'waiter' : 'cashier'
+      return route.fulfill({ status: 200, json: [{
+        id: targetRole === 'cashier' ? 8101 : 8102,
+        full_name: locale === 'ar'
+          ? (targetRole === 'cashier' ? 'كاشير اختبار التجاوب' : 'نادل اختبار التجاوب')
+          : (targetRole === 'cashier' ? 'Responsive Test Cashier' : 'Responsive Test Waiter'),
+        role: targetRole,
+      }] })
+    }
+    if (url.pathname === '/api/v1/pins/switch') {
+      const body = route.request().postDataJSON() as { user_id: number }
+      activeUserId = body.user_id
+      activeRole = body.user_id === 8101 ? 'cashier' : 'waiter'
+      return route.fulfill({ status: 200, json: {
+        access_token: `${activeRole}-switched-token`,
+        token_type: 'bearer',
+        user: activeUser(),
+      } })
     }
     if (url.pathname === '/api/v1/dining/outlets') {
       return route.fulfill({ status: 200, json: [{
@@ -91,6 +116,7 @@ async function mockCashier(
         order_type: 'dine_in', total: '310.00', guests_count: 2, created_at: '2026-09-11T08:00:00Z',
         source: 'guest_qr', guest_name: locale === 'ar' ? 'ضيف الطاولة' : 'Table guest', guest_phone: null,
         beach_location_id: null, beach_location_label: null, b2b_contract_id: null, hotel_name: null,
+        waiter_id: null, waiter_name: null,
       }]
       const status = url.searchParams.get('status')
       const items = all.filter(order => !status || order.status === status)
@@ -226,9 +252,11 @@ test('Dining POS keeps the cart thumb-reachable in Lenovo Tab One portrait', asy
   await page.goto('/pos/dining')
   await page.getByRole('button', { name: 'طلب جديد', exact: true }).click()
   await page.getByRole('button', { name: /فراخ مشوية/ }).click()
+  await page.getByRole('button', { name: /فراخ مشوية/ }).click()
 
   const cartButton = page.locator('.pos-mobile-cart')
   await expect(cartButton).toBeVisible()
+  await expect(cartButton).toContainText('السلة (2)')
   const bounds = await cartButton.evaluate(element => {
     const rect = element.getBoundingClientRect()
     return { bottom: rect.bottom, height: rect.height, viewport: window.innerHeight }
@@ -335,6 +363,9 @@ test('Cashier sees guest-order ownership and add-item controls, then enters spli
   await mockCashier(page, 'ar')
   await page.goto('/pos/dining')
   await page.getByRole('button', { name: /الطلبات النشطة/ }).click()
+  await expect(page.getByRole('tab', { name: /الأولوية الآن · 1/ })).toBeVisible()
+  await expect(page.getByRole('tab', { name: /طلباتي · 0/ })).toBeVisible()
+  await expect(page.getByTestId('pos-smart-focus')).toContainText('1 طلب يحتاج انتباهك الآن')
   await page.getByRole('button', { name: /ORD-GUEST-51/ }).click()
 
   await expect(page.getByText('هذا الطلب أرسله الضيف عبر QR')).toBeVisible()
@@ -345,17 +376,146 @@ test('Cashier sees guest-order ownership and add-item controls, then enters spli
   await expect(page.getByRole('tab', { name: 'تقسيم الدفع' })).toHaveAttribute('aria-selected', 'true')
 })
 
+for (const viewport of [
+  { width: 894, height: 533, label: 'compact landscape' },
+  { width: 800, height: 1280, label: 'portrait' },
+]) {
+  test(`payment flow remains scroll-contained with touch targets on Lenovo ${viewport.label}`, async ({ page }) => {
+    await page.setViewportSize(viewport)
+    await mockCashier(page, 'ar')
+    await page.goto('/pos/dining')
+    await page.getByRole('button', { name: /الطلبات النشطة/ }).click()
+    await page.getByRole('button', { name: /ORD-GUEST-51/ }).click()
+    await page.getByRole('button', { name: 'تحصيل الدفع' }).click()
+
+    const dialog = page.getByRole('dialog', { name: 'تحصيل الطلب' })
+    await expect(dialog).toBeVisible()
+
+    const assertDialogGeometry = async () => {
+      const geometry = await dialog.evaluate((element) => {
+        const rect = element.getBoundingClientRect()
+        const visibleButtons = [...element.querySelectorAll<HTMLElement>('button')]
+          .filter(button => {
+            const bounds = button.getBoundingClientRect()
+            return bounds.width > 0 && bounds.height > 0
+          })
+          .map(button => button.getBoundingClientRect().height)
+        return {
+          top: rect.top,
+          bottom: rect.bottom,
+          left: rect.left,
+          right: rect.right,
+          viewportWidth: window.innerWidth,
+          viewportHeight: window.innerHeight,
+          visibleButtons,
+          documentOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        }
+      })
+      expect(geometry.top).toBeGreaterThanOrEqual(-1)
+      expect(geometry.bottom).toBeLessThanOrEqual(geometry.viewportHeight + 1)
+      expect(geometry.left).toBeGreaterThanOrEqual(-1)
+      expect(geometry.right).toBeLessThanOrEqual(geometry.viewportWidth + 1)
+      expect(geometry.documentOverflow).toBeLessThanOrEqual(1)
+      expect(geometry.visibleButtons.length).toBeGreaterThan(5)
+      for (const height of geometry.visibleButtons) expect(height).toBeGreaterThanOrEqual(44)
+    }
+
+    await assertDialogGeometry()
+    await dialog.getByRole('tab', { name: 'تقسيم الدفع' }).click()
+    await assertDialogGeometry()
+  })
+}
+
 test('Waiter uses the same guest-order workspace without receiving cashier settlement controls', async ({ page }) => {
   await page.setViewportSize({ width: 894, height: 533 })
   await mockCashier(page, 'ar', 'waiter')
   await page.goto('/pos/dining')
   await page.getByRole('button', { name: /الطلبات النشطة/ }).click()
+  await expect(page.getByRole('tab', { name: /الأولوية الآن · 1/ })).toBeVisible()
+  await expect(page.getByTestId('pos-smart-focus')).toContainText('طلبات ضيوف بلا مسؤول')
   await page.getByRole('button', { name: /ORD-GUEST-51/ }).click()
 
   await expect(page.getByRole('button', { name: /أتولى المتابعة/ })).toBeVisible()
   await expect(page.getByRole('button', { name: /إضافة أصناف للفاتورة/ })).toBeVisible()
   await expect(page.getByRole('button', { name: /تحصيل الدفع/ })).toHaveCount(0)
   await expect(page.getByRole('button', { name: /تقسيم الدفع/ })).toHaveCount(0)
+})
+
+test('Dining POS protects an unsent draft before leaving the cashier workspace', async ({ page }) => {
+  await page.setViewportSize({ width: 894, height: 533 })
+  await mockCashier(page, 'ar')
+  await page.goto('/pos/dining')
+  await page.getByRole('button', { name: 'طلب جديد', exact: true }).click()
+  await page.getByRole('button', { name: /فراخ مشوية/ }).click()
+  await page.getByRole('button', { name: /فراخ مشوية/ }).click()
+  await expect(page.getByRole('button', { name: /طلب جديد/ })).toContainText('2')
+
+  const shiftLink = page.getByRole('link', { name: /الوردية/ })
+  await shiftLink.click()
+  await expect(page.getByRole('heading', { name: 'مغادرة الطلب الحالي؟' })).toBeVisible()
+  await page.getByRole('button', { name: 'كمّل الطلب' }).click()
+  await expect(page).toHaveURL(/\/pos\/dining$/)
+  await expect(page.getByRole('button', { name: /طلب جديد/ })).toContainText('2')
+
+  await shiftLink.click()
+  await page.getByRole('button', { name: 'إلغاء الطلب والمغادرة' }).click()
+  await expect(page).toHaveURL(/\/pos\/shift$/)
+})
+
+test('Dining POS isolates offline cache by operator and strips guest identity', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem('pos:dining:cache:tables:1', JSON.stringify([{
+      active_order_guest_name: 'legacy guest',
+      active_order_guest_phone: '01000000000',
+    }]))
+  })
+  await mockCashier(page, 'ar')
+  await page.goto('/pos/dining')
+  await expect(page.getByText('طلب ضيف').first()).toBeVisible()
+
+  const cacheState = await page.evaluate(() => {
+    const tableKey = Object.keys(window.localStorage)
+      .find(key => key === 'pos:dining:cache:v2:8101:tables:1')
+    const cachedTables = tableKey
+      ? JSON.parse(window.localStorage.getItem(tableKey) ?? '[]')
+      : []
+    return {
+      legacyExists: window.localStorage.getItem('pos:dining:cache:tables:1') !== null,
+      tableKey,
+      guestName: cachedTables[0]?.active_order_guest_name,
+      guestPhone: cachedTables[0]?.active_order_guest_phone,
+    }
+  })
+
+  expect(cacheState).toEqual({
+    legacyExists: false,
+    tableKey: 'pos:dining:cache:v2:8101:tables:1',
+    guestName: null,
+    guestPhone: null,
+  })
+})
+
+test('Operator switch cancels the old draft before attributing work to the next employee', async ({ page }) => {
+  await page.setViewportSize({ width: 894, height: 533 })
+  await mockCashier(page, 'ar')
+  await page.goto('/pos/dining')
+  await page.getByRole('button', { name: 'طلب جديد', exact: true }).click()
+  await page.getByRole('button', { name: /فراخ مشوية/ }).click()
+
+  await page.getByRole('button', { name: /كاشير اختبار التجاوب/ }).click()
+  await page.getByRole('button', { name: /نادل اختبار التجاوب/ }).click()
+  await page.getByPlaceholder('PIN').fill('2468')
+  await page.getByRole('button', { name: 'تأكيد', exact: true }).click()
+
+  await expect(page.getByRole('heading', { name: 'تبديل المشغّل والطلب ما زال مفتوحًا؟' })).toBeVisible()
+  await page.getByRole('button', { name: 'كمّل الطلب' }).click()
+  await expect(page.getByText('كاشير اختبار التجاوب').first()).toBeVisible()
+  await expect(page.getByRole('button', { name: /طلب جديد/ })).toContainText('1')
+
+  await page.getByRole('button', { name: 'تأكيد', exact: true }).click()
+  await page.getByRole('button', { name: 'إلغاء الطلب ثم التبديل' }).click()
+  await expect(page.getByText('نادل اختبار التجاوب').first()).toBeVisible()
+  await expect(page.getByRole('button', { name: /طلب جديد/ })).not.toContainText('1')
 })
 
 for (const locale of ['ar', 'en'] as const) {

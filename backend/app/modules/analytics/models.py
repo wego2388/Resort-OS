@@ -66,6 +66,16 @@ class GuestReview(Base, TimestampMixin):
             postgresql_where=text("timeshare_visit_id IS NOT NULL"),
             sqlite_where=text("timeshare_visit_id IS NOT NULL"),
         ),
+        Index(
+            "uq_guest_review_dining_order", "dining_order_id", unique=True,
+            postgresql_where=text("dining_order_id IS NOT NULL"),
+            sqlite_where=text("dining_order_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_guest_review_guest_session", "guest_session_id", unique=True,
+            postgresql_where=text("guest_session_id IS NOT NULL"),
+            sqlite_where=text("guest_session_id IS NOT NULL"),
+        ),
     )
 
     id:              Mapped[int]           = mapped_column(primary_key=True)
@@ -74,6 +84,15 @@ class GuestReview(Base, TimestampMixin):
     # تقييم يُربط إما بحجز فندقي (PMS) أو بزيارة ملكية جزئية — الاثنين مسموحين
     # لكن ليسا نفس الجدول (وحدات الملكية الجزئية مبنى منفصل عن غرف الفندق، §timeshare).
     timeshare_visit_id: Mapped[int | None] = mapped_column(ForeignKey("timeshare_visits.id", ondelete="SET NULL"), nullable=True)
+    # تقييم طلب QR بعد الدفع. الربط بالطلب نفسه (وليس بالجلسة فقط) يمنع
+    # تكرار التقييم عند refresh/retry، ويسمح للضيف بتقييم طلب جديد لاحقًا
+    # داخل نفس جلسة الطاولة أو الغرفة.
+    dining_order_id: Mapped[int | None] = mapped_column(
+        ForeignKey("dining_orders.id", ondelete="SET NULL"), nullable=True,
+    )
+    guest_session_id: Mapped[int | None] = mapped_column(
+        ForeignKey("guest_sessions.id", ondelete="SET NULL"), nullable=True,
+    )
     guest_name:      Mapped[str]           = mapped_column(String(200))
     overall_rating:  Mapped[int]           = mapped_column(Integer)        # 1-5
     comment:         Mapped[str | None]    = mapped_column(Text, nullable=True)

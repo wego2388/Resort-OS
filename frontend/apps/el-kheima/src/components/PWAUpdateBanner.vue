@@ -6,12 +6,16 @@
 import { useI18n } from 'vue-i18n'
 import { useRegisterSW } from 'virtual:pwa-register/vue'
 import { AppIcon } from '@resort-os/ui'
+import { confirmOperationalDraftExit } from '../composables/operationalDraftGuard'
 
 const { t } = useI18n()
 const { needRefresh, updateServiceWorker } = useRegisterSW()
 
-function reload() {
-  updateServiceWorker(true)
+async function reload() {
+  // التحديث يعيد تحميل الصفحة فعليًا؛ مرّره بنفس حارس المسودة المستخدم
+  // للتنقل والخروج حتى لا تضيع سلة مفتوحة بسبب ضغطة عابرة على التابلت.
+  if (!await confirmOperationalDraftExit('app-update')) return
+  await updateServiceWorker(true)
 }
 </script>
 

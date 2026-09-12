@@ -730,6 +730,20 @@ class TestRateLimitWiring:
         assert statuses[:30] == [200] * 30, statuses
         assert statuses[30] == 429, statuses
 
+    def test_paid_qr_review_dynamic_path_actually_returns_429(self, client, db):
+        """مسار التقييم ديناميكي (فيه public_reference)، لذلك لا يدخل خريطة
+        التطابق الحرفي. يثبت الاختبار أن middleware يلتقط suffix /review
+        ويطبّق حد الكتابة 20/60 حتى قبل تحقق جلسة الضيف."""
+        statuses = [
+            client.post(
+                "/api/v1/dining/public/orders/ord-rate-limit-test/review",
+                json={"rating": 5},
+            ).status_code
+            for _ in range(21)
+        ]
+        assert statuses[:20] == [422] * 20, statuses
+        assert statuses[20] == 429, statuses
+
 
 # ── 8b: rate-limit identity resists X-Forwarded-For spoofing (Codex security
 #        review، 2026-07-17) ────────────────────────────────────────────────

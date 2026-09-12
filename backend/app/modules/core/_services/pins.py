@@ -25,6 +25,7 @@ from app.modules.core._services.authorization import (
 
 PIN_MAX_ATTEMPTS = 3       # 3 محاولات غلط = قفل
 PIN_LOCKOUT_SECONDS = 60   # دقيقة واحدة
+TERMINAL_OPERATOR_ROLES = ("waiter", "cashier", "supervisor", "manager")
 
 
 def assert_can_manage_target_pin(db: Session, actor, target_user_id: int, action_desc: str) -> None:
@@ -94,6 +95,31 @@ def list_eligible_approvers(db: Session, min_level: int = 60) -> list:
 
     roles = [role for role, level in ROLE_LEVELS.items() if level >= min_level]
     return crud.list_users_by_roles(db, roles)
+
+
+def list_terminal_operators(db: Session, branch_id: int) -> list:
+    """مشغّلو POS القابلون للتبديل بالـPIN داخل الفرع النشط فقط.
+
+    تختلف عمدًا عن ``list_eligible_approvers``: تلك قائمة موافقات للكاشير
+    حسب مستوى أدنى، أما هذه فقائمة تشغيل waiter↔cashier لا تعرض موظفًا بلا
+    PIN ولا دورًا خارج تشغيل الصالة، وتفرض عضوية الفرع قبل كشف الاسم.
+    """
+    from app.core.kernel.models.user import User  # noqa: PLC0415
+
+    return (
+        db.query(User)
+        .join(UserBranchMembership, UserBranchMembership.user_id == User.id)
+        .join(PinCredential, PinCredential.user_id == User.id)
+        .filter(
+            User.role.in_(TERMINAL_OPERATOR_ROLES),
+            User.is_active.is_(True),
+            User.deleted_at.is_(None),
+            UserBranchMembership.branch_id == branch_id,
+            UserBranchMembership.is_active.is_(True),
+        )
+        .order_by(User.full_name)
+        .all()
+    )
 
 
 def verify_pin(db: Session, user_id: int, pin: str) -> bool:

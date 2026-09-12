@@ -187,6 +187,14 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 limit = ("public", 60, 60)
             elif request.url.path.startswith("/api/v1/dining/public/orders/"):
                 limit = ("public", 60, 60)
+        elif (
+            limit is None
+            and request.method == "POST"
+            and request.url.path.startswith("/api/v1/dining/public/orders/")
+            and request.url.path.endswith("/review")
+        ):
+            # كتابة عامة مرتبطة بجلسة الضيف — أضيق من polling القراءة.
+            limit = ("public", 20, 60)
         if limit:
             prefix, max_requests, window = limit
             ip = _client_ip(request)

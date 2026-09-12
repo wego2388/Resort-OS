@@ -39,6 +39,7 @@ export const ENDPOINTS = {
     alertsWs: (branchId: number) => `/api/v1/ws/alerts/${branchId}`,
     // PIN تشغيلي — راجع backend/app/modules/core/models.py::PinCredential
     pinApprovers: '/api/v1/pins/approvers',
+    pinOperators: '/api/v1/pins/operators',
     pinSwitch: '/api/v1/pins/switch',
     // self-service: GET حالة PIN بتاعي / POST لضبطه أو تجديده
     pinMe: '/api/v1/pins/me',

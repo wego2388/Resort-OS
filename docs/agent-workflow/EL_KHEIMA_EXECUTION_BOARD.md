@@ -1,7 +1,10 @@
 # لوحة التنفيذ الحية — El Kheima
 
-**آخر تحديث:** 2026-08-30 — طلب مراجعة مستقلة جديد من Codex قبل التشغيل
-الحقيقي: `docs/agent-workflow/CODEX-REVIEW-01_pre-launch-critical-path-review_AR.md`.
+**آخر تحديث:** 2026-09-12 — POS-04 tablet/PWA closure وQR-REVIEW-01
+مكتملان ومختبران محليًا؛ لا commit/push/deploy. آخر تسليم:
+`docs/agent-workflow/handoffs/2026-09-12_pos-tablet-guest-rating_codex_handoff.md`.
+مراجعة ما قبل التشغيل ما زالت في
+`docs/agent-workflow/CODEX-REVIEW-01_pre-launch-critical-path-review_AR.md`.
 ⚠️ **ملاحظة مهمة:** إصدارات REL-18 لحد REL-22 (2026-08-20 → 2026-08-29)
 اتنفّذت ونُشرت فعليًا على نفس الـVPS من غير ما تتسجّل في اللوحة دي —
 تفاصيلها الكاملة في `docs/agent-workflow/handoffs/` (كل ملف باسم
@@ -38,6 +41,8 @@ CODEX-REVIEW-01 فوق) — بعدها UAT-01 وGo/No-Go النهائي
 
 | الحزمة | الحالة | النتيجة المطلوبة | المانع |
 |---|---|---|---|
+| POS-04 — cashier/waiter smart polish + tablet/PWA closure | COMPLETE / LOCAL ONLY | حماية draft تغطي التنقل/logout/operator-switch/PWA update؛ تبديل مشغّل waiter+ ومقيّد بالفرع/PIN؛ عداد وأولوية وcache آمن؛ دفع touch ≥44px؛ Lenovo landscape/portrait؛ 108 Vitest + 19 mock E2E + PWA build | device UAT ثم تفويض commit/deploy منفصل |
+| QR-REVIEW-01 — post-payment guest rating | COMPLETE / LOCAL ONLY | تقييم واحد لكل جلسة QR بعد `paid` فقط؛ استعادة بعد refresh؛ 1–3 داخلي و4–5 يعرض رابط Google الصحيح؛ table QR + room Hub؛ migration `d2e4f6a8c0b1` + rate limit؛ Marketing validate/audit أخضر | device UAT متعدد اللغات ثم تفويض دمج/نشر المستودعين |
 | SRC-01 — exact-source preservation | COMPLETE | أرشيفات وchecksums قابلة لإعادة البناء | — |
 | REL-04 — staff control-plane deploy | COMPLETE | `679f76e` فعال على خدمات Resort المتغيرة | — |
 | REL-05 — multi-outlet POS fix | COMPLETE | `a3e8abb` فعال على تطبيق الموظفين والـedge | — |
@@ -162,10 +167,18 @@ docs/agent-workflow/handoffs/2026-08-30_REL-23-REL-24_production-deploy_claude_h
 
 ## آخر تسليم
 
-`docs/agent-workflow/handoffs/2026-08-17_REL-17c_owner-app-account-drilldown_claude_handoff.md`
-(السابق: `docs/agent-workflow/handoffs/2026-08-17_REL-17b_owner-app-light-mode-readability_claude_handoff.md`)
+`docs/agent-workflow/handoffs/2026-09-12_pos-tablet-guest-rating_codex_handoff.md`
+(الأساس السابق: `docs/agent-workflow/handoffs/2026-09-11_cashier-waiter-smart-polish_codex_handoff.md`)
 
 ## التحديث التالي المطلوب
+
+نفّذ device UAT على جهاز الكاشير والويتر الفعليين: أنشئ سلة وحاول الانتقال
+للوردية والتحديث وتبديل المشغّل، راجع «الأولوية الآن» لكل دور، واختبر
+التحصيل المفرد والمقسّم أفقيًا ورأسيًا. بعدها نفّذ `served → paid → rating`
+من QR طاولة وHub غرفة وتحقق أن 4–5 فقط يعرض رابط Google المعتمد. افصل
+الشبكة بعد تحميل الشاشة ثم تحقق من رجوع المنيو والطاولات بلا كشف هوية
+الضيف. بعد الاعتماد يلزم تفويض منفصل للـcommit/push/deploy للمستودعين؛
+هذه الدفعة لم تلمس الإنتاج.
 
 **تم**: REL-17c كامل على الإنتاج (17 أغسطس) — الضغط على كارت "إيراد
 اليوم"/"مصروفات اليوم" (شاشتي الآن/الأداء) بيفتح تفصيل حقيقي بالحساب ثم

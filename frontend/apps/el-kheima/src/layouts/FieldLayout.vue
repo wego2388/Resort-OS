@@ -5,7 +5,7 @@
 // connectivity indicator (useOfflineQueue) since both apps queue orders
 // offline via the same composable.
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { useRouter, useRoute } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { useAuthStore } from '@resort-os/core'
 import { useStaffFormat } from '@resort-os/core/i18n/staff'
 import { useOfflineQueue } from '@resort-os/core/composables'
@@ -16,8 +16,8 @@ import OperatorSwitchModal from '../components/OperatorSwitchModal.vue'
 import LanguageSwitcher from '../components/LanguageSwitcher.vue'
 import PWAInstallButton from '../components/PWAInstallButton.vue'
 import { AppBadge, ThemeToggle } from '@resort-os/ui'
+import { confirmOperationalDraftExit } from '../composables/operationalDraftGuard'
 
-const router = useRouter()
 const route = useRoute()
 const auth = useAuthStore()
 const { t, locale } = useI18n()
@@ -86,10 +86,13 @@ const allNavItems = computed(() => [
 
 const navItems = computed(() => allNavItems.value.filter(item => auth.hasRole(item.minRole)))
 
-function logout() {
+async function logout() {
   mobileMenuOpen.value = false
-  auth.logout()
-  router.push('/login')
+  if (!await confirmOperationalDraftExit('logout')) return
+  // auth.logout ينتظر إبطال جلسة السيرفر، ينظف الحالة المحلية، ثم يعمل
+  // location.replace بنفسه. router.push الموازي كان race ويبدأ تنقلًا قبل
+  // اكتمال الخروج (ويصطدم أيضًا بحارس draft في شاشة الدايننج).
+  await auth.logout()
 }
 </script>
 
@@ -129,8 +132,14 @@ function logout() {
           <GuestAlertsBell />
 
           <!-- Connectivity dot -->
-          <div class="flex items-center gap-1.5">
-            <span class="h-2.5 w-2.5 rounded-full"
+          <div
+            class="flex items-center gap-1.5"
+            role="status"
+            aria-live="polite"
+            :aria-label="isOnline ? t('common.online') : t('common.offline')"
+            :title="isOnline ? t('common.online') : t('common.offline')"
+          >
+            <span aria-hidden="true" class="h-2.5 w-2.5 rounded-full"
               :class="isOnline ? 'bg-[#10B981]' : 'bg-amber-500 animate-pulse'" />
             <span v-if="pendingCount > 0"
               class="rounded-full bg-amber-100 px-1.5 py-0.5 text-xs font-bold text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">

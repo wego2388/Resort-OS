@@ -41,6 +41,7 @@ from app.core.kernel.realtime import DistributedWebSocketManager
 from app.modules.core import services as core_services
 from app.modules.core.schemas import PaginatedResponse
 from app.modules.credit import services as credit_services
+from app.modules.analytics import services as analytics_services
 from app.modules.dining import crud, payment_policy, services
 from app.modules.dining.models import DiningKitchenTicket, DiningOrder, VenueTable
 from app.modules.dining.schemas import (
@@ -67,6 +68,8 @@ from app.modules.dining.schemas import (
     DiningTableRead,
     DiningTableUpdate,
     FoodCostReportResponse,
+    GuestDiningReviewCreate,
+    GuestDiningReviewRead,
     GuestOrderCreate,
     GuestOrderRead,
     GuestServiceMenuResponse,
@@ -104,6 +107,29 @@ from app.resort_os.food_cost_engine import DEFAULT_FOOD_COST_THRESHOLD_PCT
 from app.resort_os.timezone_utils import business_today
 
 router = APIRouter(tags=["dining"])
+
+GOOGLE_BUSINESS_REVIEW_URL = "https://g.page/r/CelR6rfY5VCeEAI/review"
+
+
+def _guest_order_review_state(db, order: DiningOrder) -> dict:
+    """يرجع أقل قدر لازم للواجهة لاستعادة حالة التقييم بعد refresh."""
+    review = (
+        analytics_services.get_guest_session_review(db, order.guest_session_id)
+        if order.guest_session_id else None
+    )
+    if not review:
+        return {
+            "review_submitted": False,
+            "review_rating": None,
+            "google_review_url": None,
+        }
+    return {
+        "review_submitted": True,
+        "review_rating": review.overall_rating,
+        "google_review_url": (
+            GOOGLE_BUSINESS_REVIEW_URL if review.overall_rating >= 4 else None
+        ),
+    }
 
 
 def _assert_outlet_branch(db, user, outlet_id: int, action_desc: str):
@@ -1582,6 +1608,7 @@ async def create_guest_order(
             total=order.total,
             items_count=sum(i.quantity for i in order.items),
             message="تم استلام طلبك! سيصل إليك قريباً 🍽️",
+            **_guest_order_review_state(db, order),
         )
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
@@ -1610,9 +1637,62 @@ def get_guest_order_status(
             total=order.total,
             items_count=sum(i.quantity for i in order.items),
             message="تم استلام طلبك وسيتم تحديث حالته تلقائيًا",
+            **_guest_order_review_state(db, order),
         )
     except ValueError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+
+
+@router.post(
+    "/dining/public/orders/{public_reference}/review",
+    response_model=GuestDiningReviewRead,
+    tags=["dining-public"],
+    summary="تقييم طلب QR مدفوع — مربوط بجلسة الضيف",
+)
+def submit_guest_order_review(
+    public_reference: str,
+    data: GuestDiningReviewCreate,
+    db: DbDep,
+    x_guest_session: str = Header(..., alias="X-Guest-Session"),
+):
+    """يحفظ التقييم الداخلي أولاً، ثم يعيد رابط Google فقط لـ4–5 نجوم.
+
+    المرجع العشوائي وحده غير كافٍ: لازم نفس جلسة الضيف التي أنشأت الطلب،
+    والطلب لازم يكون ``paid``. التكرار آمن ويرجع التقييم الأصلي بدل إنشاء
+    صف جديد أو تغيير اختيار الضيف بعد تثبيته.
+    """
+    try:
+        session, _location = core_services.resolve_guest_session(db, x_guest_session)
+        order = crud.get_order_by_guest_public_reference(db, public_reference)
+        if not order or order.guest_session_id != session.id:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "الطلب غير موجود")
+        if order.status != "paid":
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "التقييم متاح بعد إتمام دفع الطلب",
+            )
+
+        review, replayed = analytics_services.submit_dining_order_review(
+            db,
+            dining_order_id=order.id,
+            guest_session_id=session.id,
+            branch_id=order.branch_id,
+            guest_name=session.guest_name or order.guest_name,
+            rating=data.rating,
+            comment=data.comment,
+        )
+        return GuestDiningReviewRead(
+            already_submitted=replayed,
+            rating=review.overall_rating,
+            google_review_url=(
+                GOOGLE_BUSINESS_REVIEW_URL
+                if review.overall_rating >= 4 else None
+            ),
+        )
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
 
